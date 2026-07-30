@@ -1,0 +1,27 @@
+stages:
+  - verify
+  - build
+  - test
+
+variables:
+  CMAKE_BUILD_TYPE: Release
+
+verify:format-and-lint-placeholder:
+  stage: verify
+  script:
+    - echo "Phase 1 placeholder: add formatting/lint checks in later phases"
+
+build:cmake:
+  stage: build
+  script:
+    - cmake -S . -B build -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+    - cmake --build build --config ${CMAKE_BUILD_TYPE}
+  artifacts:
+    when: always
+    paths:
+      - build/
+
+test:ctest:
+  stage: test
+  script:
+    - ctest --test-dir build --output-on-failure

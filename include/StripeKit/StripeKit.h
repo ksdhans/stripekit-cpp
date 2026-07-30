@@ -1,0 +1,25 @@
+/** StripeKit.h
+ * 
+ * A library for interacting with the Stripe API.
+ * 
+ * @author Hans de Ruiter
+ * 
+ * @license See LICENSE.md for details.
+ */
+
+#pragma once
+
+#include <string_view>
+
+namespace stripekit {
+
+// Get StripeKit version information.
+
+std::string_view version();
+int version_major();
+int version_minor();
+int version_patch();
+std::string_view build_id();
+std::string_view build_date();
+
+} // namespace stripekit

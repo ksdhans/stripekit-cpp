@@ -142,7 +142,7 @@ Deliverables:
 3. Validate each new adapter against the same sandbox E2E contract suite.
 
 ## Implementation Checklist
-- [ ] Repository initialized with BSD-3-Clause and baseline docs.
+- [x] Repository initialized with BSD-3-Clause and baseline docs.
 - [ ] Core public API and models implemented.
 - [ ] Webhook signature verification implemented.
 - [ ] Drogon outbound and inbound adapters implemented.
