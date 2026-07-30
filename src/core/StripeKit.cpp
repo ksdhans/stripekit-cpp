@@ -1,6 +1,6 @@
-/** stripekit.cpp
+/** StripeKit.cpp
  * 
- * See header file for information.
+ * See header file for details.
  */
 
 #include "StripeKit/StripeKit.h"

@@ -9,6 +9,12 @@
 
 #pragma once
 
+#include "StripeKit/Callback.h"
+#include "StripeKit/Client.h"
+#include "StripeKit/Errors.h"
+#include "StripeKit/Models.h"
+#include "StripeKit/RequestOptions.h"
+
 #include <string_view>
 
 namespace stripekit {

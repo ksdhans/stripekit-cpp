@@ -19,7 +19,7 @@ Things that may be done later (if the need arises):
 
 - Broad direct `payment_intents` client surface.
 - Non-card payment methods.
-- Webhook families outside checkout/subscription/invoice/dispute/refund MVP set.
+- Webhook families outside the current checkout/subscription/invoice/dispute/refund scope.
 - Additional first-party framework adapters beyond Drogon.
 - Expanded billing portal configuration helpers beyond session creation.
 
@@ -51,16 +51,39 @@ cmake --install build --prefix "$PWD/build/install"
 
 ## Integrating With Your Project(s)
 
-**TODO: Make this clearer for a developer who has never used this before**
-
-The project exports a package config so downstream consumers can use:
+StripeKit exports a CMake package config, so downstream consumers can link it with:
 
 ```cmake
 find_package(StripeKit CONFIG REQUIRED)
 target_link_libraries(your_target PRIVATE StripeKit::stripekit)
 ```
 
-**TODO: Add details of build options (e.g., how to use your own libsodium or drogon instead of StripeKit fetching it)**
+By default, StripeKit uses FetchContent for dependencies it needs when no existing dependency is provided. If your project already provides libsodium or Drogon, set the matching external switch and let CMake discover the dependency through the normal package search rules:
+
+```bash
+cmake -S . -B build \
+	-DUSE_EXTERNAL_LIBSODIUM=ON \
+	-DUSE_EXTERNAL_DROGON=ON
+```
+
+When the external switches are on, StripeKit looks for existing CMake targets first. That means a parent project can add libsodium or Drogon before adding StripeKit, and StripeKit will reuse those targets instead of building or fetching a second copy.
+
+`find_package()` follows normal CMake discovery rules. For an installed dependency, point CMake at the install prefix or package config location using the standard hints:
+
+- `CMAKE_PREFIX_PATH`
+- `<PackageName>_ROOT` when the package supports it
+- `<PackageName>_DIR` for package config locations
+
+For example, if your system installs libsodium and Drogon under a common prefix, you can point CMake at that prefix and let `find_package()` do the rest:
+
+```bash
+cmake -S . -B build \
+	-DUSE_EXTERNAL_LIBSODIUM=ON \
+	-DUSE_EXTERNAL_DROGON=ON \
+	-DCMAKE_PREFIX_PATH="/opt/libsodium;/opt/drogon"
+```
+
+If you are already building libsodium or Drogon in the parent project, StripeKit will also reuse the existing `sodium` or `Drogon::Drogon` target when it is present. If the dependency lives only in source form and does not publish a package config, add it before StripeKit with `add_subdirectory()` so the target already exists when StripeKit configures.
 
 ## Versioning
 
