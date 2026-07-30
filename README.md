@@ -93,6 +93,11 @@ Version metadata is generated at build time via:
 
 See `docs/versioning.md` for release and tag policy.
 
+## API Documentation
+
+- Public API reference is documented with Doxygen comments in headers under `include/StripeKit/`.
+- Additional usage notes are in `docs/`.
+
 ## Project Layout
 
 - `include/StripeKit/` public headers
@@ -100,10 +105,10 @@ See `docs/versioning.md` for release and tag policy.
 - `src/adapters/drogon/` the drogon backend
 - `tests/unit/` fast isolated unit tests
 - `tests/integration/` adapter integration tests
-- `tests/e2e_sandbox/` Stripe sandbox E2E tests
+- `tests/sandbox/` Stripe sandbox E2E tests
 - `examples/` consumer examples
 - `docs/` project documentation
 
 ## License
 
-This project has a BSD-3-Clause license. See `LICENSE.md`.
+This project has a BSD-3-Clause license. See `LICENSE`.
