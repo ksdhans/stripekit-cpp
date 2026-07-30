@@ -37,6 +37,12 @@ Repository URL stub:
 11. Idempotency policy:
    - Support idempotency keys on all outbound Stripe `POST` operations.
    - Provide safe retry behavior with idempotency propagation.
+12. Business-logic boundary policy:
+   - StripeKit provides Stripe API access, verification, and normalized event signals.
+   - Entitlement state transitions and billing business policy remain in application or framework code.
+13. Card payment-method policy for MVP:
+   - MVP supports card-based flows only.
+   - Keep webhook/event contracts extensible so delayed and non-card payment methods can be added later without API breakage.
 
 ## Scope
 
@@ -55,6 +61,10 @@ In scope:
    - `customer.subscription.deleted`
    - `invoice.paid`
    - `invoice.payment_failed`
+- Required asynchronous post-payment card events for SaaS safety:
+   - `charge.dispute.created`
+   - `charge.dispute.closed`
+   - `charge.refunded`
 - Test pyramid including sandbox E2E.
 - GitLab CI with protected secrets and abuse controls.
 - Packaging and integration documentation.
@@ -64,6 +74,7 @@ Out of scope:
 - ZitaForge billing business state machine internals.
 - Direct, broad PaymentIntent client surface in MVP (unless required by concrete product flow).
 - Non-MVP webhook families outside checkout/subscription/invoice set.
+- Non-card payment methods in MVP.
 
 ## Suggested Repository Structure
 
@@ -104,6 +115,9 @@ Deliverables:
    - Stripe error type/code/message, HTTP status, request id, retryability.
 7. Define async interface pattern:
    - Coroutine-first methods plus callback compatibility overloads.
+8. Define event-signal boundary:
+   - Core emits verified, parsed Stripe event signals and metadata.
+   - Core does not enforce app entitlement/business transitions.
 
 Deliverables:
 - Stable public headers and core interfaces.
@@ -116,6 +130,7 @@ Deliverables:
 4. Keep API surface independent of Drogon types where possible in core headers.
 5. Implement idempotency header propagation for outbound `POST` requests.
 6. Implement webhook dispatch for required MVP event types and deterministic ack/retry outcomes.
+7. Implement de-duplication and replay-safe dispatch guidance for repeated webhook deliveries.
 
 Deliverables:
 - Working Drogon adapter package as the only first-party runtime backend in MVP.
@@ -142,11 +157,14 @@ Deliverables:
    - Drogon outbound adapter behavior.
    - Drogon webhook endpoint processing and dispatch.
    - Callback compatibility wrappers for coroutine-backed outbound operations.
+   - Duplicate webhook delivery handling and idempotent dispatch behavior.
 3. Sandbox E2E tests:
    - Real Stripe test-mode lifecycle flows.
    - Webhook delivery and replay behavior.
-   - Subscription checkout success path with entitlement grant after `invoice.paid`.
-   - Failed renewal/payment path with entitlement downgrade/hold after `invoice.payment_failed`.
+   - Subscription checkout success path with `invoice.paid` signal emission for app-level entitlement decisions.
+   - Failed renewal/payment path with `invoice.payment_failed` signal emission for app-level entitlement decisions.
+   - Card dispute lifecycle signal path (`charge.dispute.created` and `charge.dispute.closed`).
+   - Card refund signal path (`charge.refunded`).
 
 Acceptance criteria:
 - Fast unit/integration checks reliable in MR pipelines.
@@ -191,7 +209,7 @@ Deliverables:
 - [ ] Webhook signature verification implemented.
 - [ ] Drogon outbound and inbound adapters implemented (including idempotency propagation and required webhook dispatch).
 - [ ] Dependency injection and fallback fetching wired.
-- [ ] Unit/integration/sandbox E2E suites implemented (including invoice-based entitlement scenarios).
+- [ ] Unit/integration/sandbox E2E suites implemented (including invoice-based entitlement signals, dispute events, and refund signal coverage).
 - [ ] GitLab CI gating and protected secret policy implemented.
 - [ ] Packaging and consumer integration docs completed.
 - [ ] README Status and Roadmap updated to reflect exact MVP-supported vs deferred API/event scope.

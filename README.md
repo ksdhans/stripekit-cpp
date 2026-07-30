@@ -9,12 +9,19 @@ This is part of a larger project of mine, which is a full web app framework/star
 
 ## Status
 
-Phase 1 foundation is in place:
+Still a work in progress.
 
-- Buildable CMake skeleton.
-- Install and export targets for downstream CMake consumers.
-- Generated version header integration.
-- Baseline docs, license, and CI placeholders.
+**TODO: Update once we reach MVP**
+
+## Roadmap
+
+Things that may be done later (if the need arises):
+
+- Broad direct `payment_intents` client surface.
+- Non-card payment methods.
+- Webhook families outside checkout/subscription/invoice/dispute/refund MVP set.
+- Additional first-party framework adapters beyond Drogon.
+- Expanded billing portal configuration helpers beyond session creation.
 
 ## Build
 
@@ -44,6 +51,8 @@ cmake --install build --prefix "$PWD/build/install"
 
 ## Integrating With Your Project(s)
 
+**TODO: Make this clearer for a developer who has never used this before**
+
 The project exports a package config so downstream consumers can use:
 
 ```cmake
@@ -51,7 +60,7 @@ find_package(StripeKit CONFIG REQUIRED)
 target_link_libraries(your_target PRIVATE StripeKit::stripekit)
 ```
 
-**TODO: Add details of build options (e.g., how to use your own libsodium or drogon instead of StripeKit fetching it**
+**TODO: Add details of build options (e.g., how to use your own libsodium or drogon instead of StripeKit fetching it)**
 
 ## Versioning
 
