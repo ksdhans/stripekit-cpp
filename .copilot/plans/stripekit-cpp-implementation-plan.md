@@ -50,7 +50,8 @@ Repository URL stub:
    - Provide optional SQLite store adapter as a convenience default for Drogon consumers.
 15. Callback delivery policy:
    - Callback overloads must invoke completion exactly once.
-   - Drogon adapter callback completions execute on the Drogon event loop thread owning request context.
+   - Drogon adapter callback completions execute on the Drogon event loop bound to the operation context.
+   - For operations without request context, callbacks execute on a configured default adapter event loop.
 16. Crypto implementation policy:
    - MVP uses libsodium-backed HMAC verification implementation.
    - Keep an internal crypto interface boundary so future backend substitution does not require public API breakage.
@@ -58,6 +59,24 @@ Repository URL stub:
    - StripeKit defines a logger interface with app-configurable log level filtering.
    - Adapters should bridge to framework-native logging when available.
    - If no logger is provided and backend logging bridge is unavailable, fallback to console logging.
+   - Default Drogon level mapping:
+     - `trace` -> `TRACE`
+     - `debug` -> `DEBUG`
+     - `info` -> `INFO`
+     - `warn` -> `WARN`
+     - `error` -> `ERROR`
+18. Webhook lifecycle policy:
+   - Define explicit handling for duplicate-processed, duplicate-inflight, retryable-store-error, and fatal-store-error outcomes.
+   - Define stale-inflight reclaim timeout semantics so crash/restart does not block later deliveries indefinitely.
+   - Default stale-inflight reclaim timeout: 15 minutes (configurable).
+   - Default outcome policy aligned with Stripe webhook retry guidance:
+     - `duplicate-processed` -> return success/ack (`2xx`).
+     - `duplicate-inflight` -> return retryable response (`5xx`) so Stripe retries later.
+     - `retryable-store-error` -> return retryable response (`5xx`).
+     - `fatal-store-error` -> return retryable response (`5xx`) and emit high-severity logs/metrics.
+19. Logging safety policy:
+   - Never log secrets or full sensitive payloads (for example: API keys, webhook secrets, authorization headers, and raw card/bank details).
+   - Structured logs must redact sensitive fields by default.
 
 ## Scope
 
@@ -101,7 +120,7 @@ Out of scope:
 - src/adapters/drogon/
 - tests/unit/
 - tests/integration/
-- tests/e2e_sandbox/
+- tests/sandbox/
 - examples/
 - docs/
 - cmake/
@@ -138,6 +157,9 @@ Deliverables:
    - Configurable retention/TTL semantics.
    - Framework/app-owned persistence implementation.
    - Include explicit claim outcomes (for example: claimed, duplicate-processed, duplicate-inflight, retryable-store-error, fatal-store-error).
+   - Define stale-inflight reclaim timeout and re-claim behavior after process crashes.
+   - Default stale-inflight reclaim timeout is 15 minutes, configurable by application.
+   - Define default response mapping for each claim outcome, with `2xx` for already-processed duplicates and `5xx` for retryable conditions.
 10. Define persistence adapter contract defaults:
    - In-memory store implementation for tests/local development.
    - Optional SQLite adapter implementation suitable for app-owned SQLite deployments.
@@ -149,6 +171,7 @@ Deliverables:
    - Log levels (trace/debug/info/warn/error) and per-client configurable threshold.
    - Structured context fields for request id, event id, webhook type, retry attempt, and adapter name.
    - Null logger behavior and console fallback behavior.
+   - Required redaction behavior for secrets and sensitive payload fields.
 
 Deliverables:
 - Stable public headers and core interfaces.
@@ -162,6 +185,7 @@ Deliverables:
 5. Implement idempotency header propagation for outbound `POST` requests.
 6. Implement webhook dispatch for required MVP event types and deterministic ack/retry outcomes.
 7. Implement de-duplication and replay-safe dispatch for repeated webhook deliveries using app-provided store interface.
+   - Implement stale-inflight reclaim behavior based on configured timeout.
 8. Ensure callback overload completions are delivered exactly once on documented adapter execution context.
 9. Provide optional SQLite store adapter wiring path for Drogon users who want a turnkey default.
 10. Bridge StripeKit logs into Drogon logger with configurable level mapping.
@@ -196,11 +220,13 @@ Deliverables:
    - Drogon webhook endpoint processing and dispatch.
    - Callback compatibility wrappers for coroutine-backed outbound operations.
    - Duplicate webhook delivery handling and idempotent dispatch behavior.
+   - Crash/restart stale-inflight reclaim behavior.
    - Drogon callback execution context behavior.
    - Drogon log bridge behavior and level mapping.
+   - Redaction behavior for sensitive log fields.
 3. Sandbox E2E tests:
    - Real Stripe test-mode lifecycle flows.
-   - Webhook delivery and replay behavior.
+   - Webhook delivery, replay, and recovery behavior.
    - Subscription checkout success path with `invoice.paid` signal emission for app-level entitlement decisions.
    - Failed renewal/payment path with `invoice.payment_failed` signal emission for app-level entitlement decisions.
    - Card dispute lifecycle signal path (`charge.dispute.created` and `charge.dispute.closed`).
@@ -252,4 +278,4 @@ Deliverables:
 - [ ] Unit/integration/sandbox E2E suites implemented (including invoice-based entitlement signals, dispute events, and refund signal coverage).
 - [ ] GitLab CI gating and protected secret policy implemented.
 - [ ] Packaging and consumer integration docs completed.
-- [ ] README Status and Roadmap updated to reflect exact MVP-supported vs deferred API/event scope.
+- [ ] README refreshed for MVP release messaging and public-facing scope summary.
