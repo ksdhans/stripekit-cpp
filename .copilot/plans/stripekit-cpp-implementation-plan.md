@@ -43,6 +43,21 @@ Repository URL stub:
 13. Card payment-method policy for MVP:
    - MVP supports card-based flows only.
    - Keep webhook/event contracts extensible so delayed and non-card payment methods can be added later without API breakage.
+14. Webhook de-duplication storage policy:
+   - StripeKit defines a store interface; the host app/framework provides the concrete durable store.
+   - Preferred MVP deployment uses the app's primary database through that interface.
+   - Provide in-memory store for tests and local development.
+   - Provide optional SQLite store adapter as a convenience default for Drogon consumers.
+15. Callback delivery policy:
+   - Callback overloads must invoke completion exactly once.
+   - Drogon adapter callback completions execute on the Drogon event loop thread owning request context.
+16. Crypto implementation policy:
+   - MVP uses libsodium-backed HMAC verification implementation.
+   - Keep an internal crypto interface boundary so future backend substitution does not require public API breakage.
+17. Logging policy:
+   - StripeKit defines a logger interface with app-configurable log level filtering.
+   - Adapters should bridge to framework-native logging when available.
+   - If no logger is provided and backend logging bridge is unavailable, fallback to console logging.
 
 ## Scope
 
@@ -73,7 +88,7 @@ Out of scope:
 - App billing policies and UI logic.
 - ZitaForge billing business state machine internals.
 - Direct, broad PaymentIntent client surface in MVP (unless required by concrete product flow).
-- Non-MVP webhook families outside checkout/subscription/invoice set.
+- Non-MVP webhook families outside checkout/subscription/invoice/dispute/refund set.
 - Non-card payment methods in MVP.
 
 ## Suggested Repository Structure
@@ -118,6 +133,22 @@ Deliverables:
 8. Define event-signal boundary:
    - Core emits verified, parsed Stripe event signals and metadata.
    - Core does not enforce app entitlement/business transitions.
+9. Define webhook de-duplication store contract:
+   - Atomic first-seen claim/mark by Stripe event id.
+   - Configurable retention/TTL semantics.
+   - Framework/app-owned persistence implementation.
+   - Include explicit claim outcomes (for example: claimed, duplicate-processed, duplicate-inflight, retryable-store-error, fatal-store-error).
+10. Define persistence adapter contract defaults:
+   - In-memory store implementation for tests/local development.
+   - Optional SQLite adapter implementation suitable for app-owned SQLite deployments.
+   - Document recommendation to use app primary database unless strict isolation is required.
+11. Define callback compatibility contract:
+   - Exactly-once completion semantics.
+   - Adapter-documented callback execution context.
+12. Define logging contract:
+   - Log levels (trace/debug/info/warn/error) and per-client configurable threshold.
+   - Structured context fields for request id, event id, webhook type, retry attempt, and adapter name.
+   - Null logger behavior and console fallback behavior.
 
 Deliverables:
 - Stable public headers and core interfaces.
@@ -130,7 +161,10 @@ Deliverables:
 4. Keep API surface independent of Drogon types where possible in core headers.
 5. Implement idempotency header propagation for outbound `POST` requests.
 6. Implement webhook dispatch for required MVP event types and deterministic ack/retry outcomes.
-7. Implement de-duplication and replay-safe dispatch guidance for repeated webhook deliveries.
+7. Implement de-duplication and replay-safe dispatch for repeated webhook deliveries using app-provided store interface.
+8. Ensure callback overload completions are delivered exactly once on documented adapter execution context.
+9. Provide optional SQLite store adapter wiring path for Drogon users who want a turnkey default.
+10. Bridge StripeKit logs into Drogon logger with configurable level mapping.
 
 Deliverables:
 - Working Drogon adapter package as the only first-party runtime backend in MVP.
@@ -153,11 +187,17 @@ Deliverables:
    - Request/response model behavior.
    - Error mapping and idempotency utilities.
    - Exception taxonomy behavior and retryability hints.
+   - Webhook de-duplication store contract behavior.
+   - Claim outcome semantics and retryability mapping.
+   - Callback exactly-once completion contract behavior.
+   - Logger threshold and fallback behavior.
 2. Integration tests:
    - Drogon outbound adapter behavior.
    - Drogon webhook endpoint processing and dispatch.
    - Callback compatibility wrappers for coroutine-backed outbound operations.
    - Duplicate webhook delivery handling and idempotent dispatch behavior.
+   - Drogon callback execution context behavior.
+   - Drogon log bridge behavior and level mapping.
 3. Sandbox E2E tests:
    - Real Stripe test-mode lifecycle flows.
    - Webhook delivery and replay behavior.
