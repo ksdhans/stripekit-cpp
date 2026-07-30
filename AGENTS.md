@@ -19,3 +19,5 @@ Do NOT prefix classes/structs/enums/variables with type indicators (so no C<clas
 Documentation should be focused on how the API/function/class/method is used. Think "what does a developer who wants to use this need to know?" Exclude implementation details, and do NOT mention which modules use something. Favour simple language over jargon and large complex words.
 
 Functions and code internal to source-files should also be documented (e.g., static functions).
+
+Discussions about how we implement things do NOT belong in the project's documentation. 

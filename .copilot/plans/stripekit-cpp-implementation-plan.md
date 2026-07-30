@@ -271,11 +271,11 @@ Deliverables:
 
 ## Implementation Checklist
 - [x] Repository initialized with BSD-3-Clause and baseline docs.
-- [ ] Core public API and models implemented (customers, checkout sessions, subscriptions, billing portal sessions).
-- [ ] Webhook signature verification implemented.
+- [ ] Core public API and models implemented (customers, checkout sessions, subscriptions, billing portal sessions). (Public contracts/models are present; concrete outbound client implementation is still pending.)
+- [x] Webhook signature verification implemented.
 - [ ] Drogon outbound and inbound adapters implemented (including idempotency propagation and required webhook dispatch).
-- [ ] Dependency injection and fallback fetching wired.
+- [x] Dependency injection and fallback fetching wired.
 - [ ] Unit/integration/sandbox E2E suites implemented (including invoice-based entitlement signals, dispute events, and refund signal coverage).
 - [ ] GitLab CI gating and protected secret policy implemented.
-- [ ] Packaging and consumer integration docs completed.
+- [ ] Packaging and consumer integration docs completed. (Install/export and basic integration docs exist; full migration guidance is still pending.)
 - [ ] README refreshed for MVP release messaging and public-facing scope summary.
