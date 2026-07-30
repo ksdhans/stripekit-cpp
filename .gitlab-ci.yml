@@ -1,4 +1,6 @@
 ---
+image: debian:bookworm
+
 stages:
   - verify
   - build
@@ -6,6 +8,11 @@ stages:
 
 variables:
   CMAKE_BUILD_TYPE: Release
+
+before_script:
+  - apt-get update
+  - apt-get install -y --no-install-recommends ca-certificates cmake g++ git
+  - apt-get install -y --no-install-recommends make pkg-config
 
 verify:format-and-lint-placeholder:
   stage: verify
@@ -15,6 +22,7 @@ verify:format-and-lint-placeholder:
 build:cmake:
   stage: build
   script:
+    - mkdir -p build
     - cmake -S . -B build -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
     - cmake --build build --config ${CMAKE_BUILD_TYPE}
   artifacts:
