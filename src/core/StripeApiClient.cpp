@@ -5,9 +5,8 @@
 
 #include "StripeKit/StripeApiClient.h"
 
+#include "JsonValue.h"
 #include "StripeKit/Callback.h"
-
-#include <json/json.h>
 
 #include <cctype>
 #include <iomanip>
@@ -18,29 +17,6 @@
 namespace stripekit {
 
 namespace {
-
-Json::Value parse_json(std::string_view body) {
-    Json::CharReaderBuilder builder;
-    std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
-    Json::Value root;
-    std::string errors;
-    if (!reader->parse(body.data(), body.data() + body.size(), &root, &errors)) {
-        throw ConfigurationException("Stripe returned invalid JSON: " + errors);
-    }
-    return root;
-}
-
-std::string string_value(const Json::Value& object, const char* name) {
-    return object.isMember(name) && object[name].isString() ? object[name].asString() : std::string{};
-}
-
-std::int64_t integer_value(const Json::Value& object, const char* name) {
-    return object.isMember(name) && object[name].isInt64() ? object[name].asInt64() : 0;
-}
-
-bool boolean_value(const Json::Value& object, const char* name) {
-    return object.isMember(name) && object[name].isBool() && object[name].asBool();
-}
 
 std::unordered_map<std::string, std::string> metadata_value(const Json::Value& object) {
     std::unordered_map<std::string, std::string> metadata;
@@ -192,42 +168,42 @@ void send_and_parse(HTTPClient& http_client,
 } // namespace
 
 Customer JsonStripeResponseParser::parse_customer(const HttpResponse& response) const {
-    const auto object = parse_json(response.body);
-    return Customer{.id = string_value(object, "id"), .email = string_value(object, "email"),
-                    .name = string_value(object, "name"), .livemode = boolean_value(object, "livemode"),
+    const auto object = json_value::parse(response.body);
+    return Customer{.id = json_value::string(object, "id"), .email = json_value::string(object, "email"),
+                    .name = json_value::string(object, "name"), .livemode = json_value::boolean(object, "livemode"),
                     .metadata = metadata_value(object)};
 }
 
 CheckoutSession JsonStripeResponseParser::parse_checkout_session(const HttpResponse& response) const {
-    const auto object = parse_json(response.body);
-    return CheckoutSession{.id = string_value(object, "id"), .customer_id = string_value(object, "customer"),
-        .subscription_id = string_value(object, "subscription"), .status = string_value(object, "status"),
-        .mode = string_value(object, "mode"), .url = string_value(object, "url"),
-        .currency = string_value(object, "currency"), .amount_total = integer_value(object, "amount_total"),
-        .livemode = boolean_value(object, "livemode"), .metadata = metadata_value(object)};
+    const auto object = json_value::parse(response.body);
+    return CheckoutSession{.id = json_value::string(object, "id"), .customer_id = json_value::string(object, "customer"),
+        .subscription_id = json_value::string(object, "subscription"), .status = json_value::string(object, "status"),
+        .mode = json_value::string(object, "mode"), .url = json_value::string(object, "url"),
+        .currency = json_value::string(object, "currency"), .amount_total = json_value::integer(object, "amount_total"),
+        .livemode = json_value::boolean(object, "livemode"), .metadata = metadata_value(object)};
 }
 
 Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& response) const {
-    const auto object = parse_json(response.body);
-    return Subscription{.id = string_value(object, "id"), .customer_id = string_value(object, "customer"),
-        .status = string_value(object, "status"), .current_period_start_unix = integer_value(object, "current_period_start"),
-        .current_period_end_unix = integer_value(object, "current_period_end"),
-        .cancel_at_period_end = boolean_value(object, "cancel_at_period_end"),
-        .livemode = boolean_value(object, "livemode"), .metadata = metadata_value(object)};
+    const auto object = json_value::parse(response.body);
+    return Subscription{.id = json_value::string(object, "id"), .customer_id = json_value::string(object, "customer"),
+        .status = json_value::string(object, "status"), .current_period_start_unix = json_value::integer(object, "current_period_start"),
+        .current_period_end_unix = json_value::integer(object, "current_period_end"),
+        .cancel_at_period_end = json_value::boolean(object, "cancel_at_period_end"),
+        .livemode = json_value::boolean(object, "livemode"), .metadata = metadata_value(object)};
 }
 
 BillingPortalSession JsonStripeResponseParser::parse_billing_portal_session(const HttpResponse& response) const {
-    const auto object = parse_json(response.body);
-    return BillingPortalSession{.id = string_value(object, "id"), .customer_id = string_value(object, "customer"),
-        .url = string_value(object, "url"), .return_url = string_value(object, "return_url"),
-        .created_unix = integer_value(object, "created"), .livemode = boolean_value(object, "livemode")};
+    const auto object = json_value::parse(response.body);
+    return BillingPortalSession{.id = json_value::string(object, "id"), .customer_id = json_value::string(object, "customer"),
+        .url = json_value::string(object, "url"), .return_url = json_value::string(object, "return_url"),
+        .created_unix = json_value::integer(object, "created"), .livemode = json_value::boolean(object, "livemode")};
 }
 
 StripeErrorPayload JsonStripeResponseParser::parse_error(const HttpResponse& response) const {
-    const auto root = parse_json(response.body);
+    const auto root = json_value::parse(response.body);
     const auto& error = root["error"];
-    StripeErrorPayload payload{.type = error_type(string_value(error, "type")), .code = string_value(error, "code"),
-        .message = string_value(error, "message"), .http_status = response.status_code,
+    StripeErrorPayload payload{.type = error_type(json_value::string(error, "type")), .code = json_value::string(error, "code"),
+        .message = json_value::string(error, "message"), .http_status = response.status_code,
         .retryable = retryable_status(response.status_code)};
     const auto request_id = response.headers.find("request-id");
     if (request_id != response.headers.end()) {

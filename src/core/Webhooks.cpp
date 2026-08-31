@@ -5,51 +5,26 @@
 
 #include "StripeKit/Webhooks.h"
 
+#include "JsonValue.h"
 #include "StripeKit/Errors.h"
 
-#include <json/json.h>
-
-#include <memory>
 #include <string>
 
 namespace stripekit::webhooks {
 
 namespace {
 
-Json::Value parse_json(std::string_view body) {
-    Json::CharReaderBuilder builder;
-    std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
-    Json::Value root;
-    std::string errors;
-    if (!reader->parse(body.data(), body.data() + body.size(), &root, &errors)) {
-        throw ConfigurationException("Stripe returned invalid JSON: " + errors);
-    }
-    return root;
-}
-
-std::string string_value(const Json::Value& object, const char* name) {
-    return object.isMember(name) && object[name].isString() ? object[name].asString() : std::string{};
-}
-
-std::int64_t integer_value(const Json::Value& object, const char* name) {
-    return object.isMember(name) && object[name].isInt64() ? object[name].asInt64() : 0;
-}
-
-bool boolean_value(const Json::Value& object, const char* name) {
-    return object.isMember(name) && object[name].isBool() && object[name].asBool();
-}
-
 Event parse_event(std::string_view payload) {
-    const auto object = parse_json(payload);
+    const auto object = json_value::parse(payload);
     const auto& request = object["request"];
     Event event{
-        .id = string_value(object, "id"),
-        .type = string_value(object, "type"),
-        .api_version = string_value(object, "api_version"),
-        .created_unix = integer_value(object, "created"),
-        .livemode = boolean_value(object, "livemode"),
-        .request_id = string_value(request, "id"),
-        .account = string_value(object, "account"),
+        .id = json_value::string(object, "id"),
+        .type = json_value::string(object, "type"),
+        .api_version = json_value::string(object, "api_version"),
+        .created_unix = json_value::integer(object, "created"),
+        .livemode = json_value::boolean(object, "livemode"),
+        .request_id = json_value::string(request, "id"),
+        .account = json_value::string(object, "account"),
         .payload_json = std::string(payload)
     };
 
