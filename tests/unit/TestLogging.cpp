@@ -3,9 +3,8 @@
  * Unit tests for StripeKit logging utilities and sensitive data redaction.
  */
 
+#include "TestFramework.h"
 #include "StripeKit/Logging.h"
-
-#include <gtest/gtest.h>
 
 #include <sstream>
 

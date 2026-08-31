@@ -3,12 +3,11 @@
  * Unit tests for webhook processor orchestration and event dispatching.
  */
 
+#include "TestFramework.h"
 #include "TestHelpers.h"
 
 #include "StripeKit/Errors.h"
 #include "StripeKit/WebhookProcessor.h"
-
-#include <gtest/gtest.h>
 
 #include <chrono>
 #include <string>

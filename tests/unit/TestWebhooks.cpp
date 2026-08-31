@@ -3,12 +3,11 @@
  * Unit tests for webhook construction and single-event processing pipeline.
  */
 
+#include "TestFramework.h"
 #include "TestHelpers.h"
 
 #include "StripeKit/Errors.h"
 #include "StripeKit/Webhooks.h"
-
-#include <gtest/gtest.h>
 
 #include <chrono>
 #include <string>

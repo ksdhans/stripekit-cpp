@@ -3,13 +3,12 @@
  * Unit tests for StripeApiClient operations and request formatting.
  */
 
+#include "TestFramework.h"
 #include "TestHelpers.h"
 
 #include "StripeKit/Client.h"
 #include "StripeKit/Errors.h"
 #include "StripeKit/StripeApiClient.h"
-
-#include <gtest/gtest.h>
 
 #include <string>
 

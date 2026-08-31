@@ -3,10 +3,9 @@
  * Unit tests for SQLite-backed webhook de-duplication store.
  */
 
+#include "TestFramework.h"
 #include "StripeKit/Errors.h"
 #include "StripeKit/SqliteWebhookDedupStore.h"
-
-#include <gtest/gtest.h>
 
 #include <chrono>
 #include <string>

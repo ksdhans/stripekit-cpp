@@ -3,9 +3,8 @@
  * Unit tests for in-memory webhook de-duplication store.
  */
 
+#include "TestFramework.h"
 #include "StripeKit/WebhookDedupStore.h"
-
-#include <gtest/gtest.h>
 
 #include <chrono>
 #include <string>

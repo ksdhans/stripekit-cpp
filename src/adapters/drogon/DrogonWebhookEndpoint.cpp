@@ -46,7 +46,8 @@ void WebhookEndpoint::register_handler(std::string path) const {
 }
 
 void register_webhook_handler(WebhookHandlerOptions options) {
-    ::drogon::app().registerHandler(options.path,
+    const std::string path = options.path;
+    ::drogon::app().registerHandler(path,
         [options = std::move(options)](const ::drogon::HttpRequestPtr& request,
                                        std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) mutable {
             auto response = ::drogon::HttpResponse::newHttpResponse();

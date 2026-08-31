@@ -3,12 +3,11 @@
  * Unit tests for Stripe data models and JSON response parsing.
  */
 
+#include "TestFramework.h"
 #include "StripeKit/Errors.h"
 #include "StripeKit/HTTPClient.h"
 #include "StripeKit/Models.h"
 #include "StripeKit/StripeApiClient.h"
-
-#include <gtest/gtest.h>
 
 using namespace stripekit;
 

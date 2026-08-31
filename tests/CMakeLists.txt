@@ -3,17 +3,8 @@
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include(FetchContent)
-
-FetchContent_Declare(
-    googletest
-    URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.tar.gz
-    FIND_PACKAGE_ARGS 1.14.0 CONFIG QUIET
-)
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest)
-
 add_executable(stripekit_unit_tests
+    unit/Main.cpp
     unit/TestLogging.cpp
     unit/TestModelsAndParser.cpp
     unit/TestSqliteWebhookDedupStore.cpp
@@ -32,6 +23,7 @@ set_target_properties(stripekit_unit_tests PROPERTIES
 
 target_include_directories(stripekit_unit_tests
     PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/unit
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
         ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/include
@@ -40,7 +32,6 @@ target_include_directories(stripekit_unit_tests
 target_link_libraries(stripekit_unit_tests
     PRIVATE
         StripeKit::stripekit
-        GTest::gtest_main
 )
 
 if(stripekit_libsodium_target)
@@ -53,9 +44,45 @@ if(TARGET SQLite::SQLite3)
     target_compile_definitions(stripekit_unit_tests PRIVATE STRIPEKIT_WITH_SQLITE3=1)
 endif()
 
-include(GoogleTest)
-gtest_discover_tests(stripekit_unit_tests)
+add_test(NAME stripekit.unit COMMAND stripekit_unit_tests)
 
 if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
-	add_test(NAME stripekit.drogon.smoke COMMAND ${CMAKE_COMMAND} -E true)
+    add_executable(stripekit_integration_tests
+        integration/Main.cpp
+        integration/TestDrogonHTTPClient.cpp
+        integration/TestDrogonWebhookEndpoint.cpp
+        integration/TestDrogonLogger.cpp
+    )
+
+    set_target_properties(stripekit_integration_tests PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+
+    target_include_directories(stripekit_integration_tests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/integration
+            ${CMAKE_CURRENT_SOURCE_DIR}/../include
+            ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/../src/adapters/drogon/include
+    )
+
+    target_link_libraries(stripekit_integration_tests
+        PRIVATE
+            StripeKit::stripekit
+            StripeKit::drogon
+    )
+
+    if(stripekit_libsodium_target)
+        target_link_libraries(stripekit_integration_tests PRIVATE ${stripekit_libsodium_target})
+        target_compile_definitions(stripekit_integration_tests PRIVATE STRIPEKIT_WITH_LIBSODIUM=1)
+    endif()
+
+    if(TARGET SQLite::SQLite3)
+        target_link_libraries(stripekit_integration_tests PRIVATE SQLite::SQLite3)
+        target_compile_definitions(stripekit_integration_tests PRIVATE STRIPEKIT_WITH_SQLITE3=1)
+    endif()
+
+    add_test(NAME stripekit.integration COMMAND stripekit_integration_tests)
 endif()

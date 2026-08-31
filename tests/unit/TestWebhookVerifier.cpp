@@ -3,12 +3,11 @@
  * Unit tests for Stripe webhook signature verification.
  */
 
+#include "TestFramework.h"
 #include "TestHelpers.h"
 
 #include "StripeKit/Errors.h"
 #include "StripeKit/WebhookVerifier.h"
-
-#include <gtest/gtest.h>
 
 #include <chrono>
 #include <string>

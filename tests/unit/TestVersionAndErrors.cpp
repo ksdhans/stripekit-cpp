@@ -3,12 +3,11 @@
  * Unit tests for version helpers, exception types, callbacks, and coroutine tasks.
  */
 
+#include "TestFramework.h"
 #include "StripeKit/Async.h"
 #include "StripeKit/Callback.h"
 #include "StripeKit/Errors.h"
 #include "StripeKit/StripeKit.h"
-
-#include <gtest/gtest.h>
 
 #include <string>
 
