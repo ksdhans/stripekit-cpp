@@ -40,6 +40,12 @@ public:
         });
     }
 
+    void list_tests() const {
+        for (const auto& test : tests) {
+            std::cout << test.suite_name << "." << test.test_name << std::endl;
+        }
+    }
+
     int run_all(const std::string& filter = "") {
         int passed = 0;
         int failed = 0;

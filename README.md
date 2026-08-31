@@ -49,16 +49,73 @@ cmake -S . -B build
 cmake --build build
 ```
 
-Run tests:
+Install locally:
+
+```bash
+cmake --install build --prefix "$PWD/build/install"
+```
+
+## Running Tests
+
+StripeKit organizes tests into unit, integration, and sandbox E2E test suites executed via CTest or directly through their test binaries.
+
+### Running Test Suites with CTest
+
+Run all configured tests:
 
 ```bash
 ctest --test-dir build --output-on-failure
 ```
 
-Install locally:
+List all available CTest test suites:
 
 ```bash
-cmake --install build --prefix "$PWD/build/install"
+ctest --test-dir build -N
+```
+
+Run only the unit test suite:
+
+```bash
+ctest --test-dir build -R stripekit.unit --output-on-failure
+```
+
+Run only the integration test suite:
+
+```bash
+ctest --test-dir build -R stripekit.integration --output-on-failure
+```
+
+Run only the sandbox E2E test suite (when enabled with `STRIPEKIT_BUILD_SANDBOX_TESTS=ON`):
+
+```bash
+ctest --test-dir build -R stripekit.sandbox --output-on-failure
+```
+
+### Running and Listing Individual Tests
+
+You can also run the test executables directly to list all test cases or run specific individual tests:
+
+List all available tests in a suite:
+
+```bash
+# List unit tests
+./build/tests/stripekit_unit_tests --list
+
+# List integration tests
+./build/tests/stripekit_integration_tests --list
+```
+
+Run an individual test or a filtered subset by passing a name substring:
+
+```bash
+# Run a specific unit test
+./build/tests/stripekit_unit_tests WebhookVerifierTest.ValidSignaturePasses
+
+# Run all tests in a test fixture/suite
+./build/tests/stripekit_unit_tests ModelsAndParserTest
+
+# Run a specific integration test
+./build/tests/stripekit_integration_tests DrogonWebhookEndpointIntegrationTest.ValidInvoicePaidReturns200AndInvokesHandler
 ```
 
 ## Integrating With Your Project(s)

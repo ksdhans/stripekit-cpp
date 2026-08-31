@@ -4,6 +4,8 @@
         "pkg-config": true,
         "true": true,
         "cmake": true,
-        "ctest": true
+        "ctest": true,
+        "./build/tests/stripekit_unit_tests": true,
+        "./build/tests/stripekit_integration_tests": true
     }
 }
