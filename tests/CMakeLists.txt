@@ -1,3 +1,5 @@
 # Build script for StripeKit tests.
 
-add_test(NAME stripekit.phase1.smoke COMMAND ${CMAKE_COMMAND} -E true)
+if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
+	add_test(NAME stripekit.drogon.smoke COMMAND ${CMAKE_COMMAND} -E true)
+endif()

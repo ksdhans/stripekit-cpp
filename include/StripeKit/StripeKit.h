@@ -14,6 +14,8 @@
 #include "StripeKit/Errors.h"
 #include "StripeKit/Models.h"
 #include "StripeKit/RequestOptions.h"
+#include "StripeKit/StripeApiClient.h"
+#include "StripeKit/WebhookProcessor.h"
 
 #include <string_view>
 

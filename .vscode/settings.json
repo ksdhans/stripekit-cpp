@@ -1,0 +1,9 @@
+{
+    "svn.ignoreMissingSvnWarning": true,
+    "chat.tools.terminal.autoApprove": {
+        "pkg-config": true,
+        "true": true,
+        "cmake": true,
+        "ctest": true
+    }
+}

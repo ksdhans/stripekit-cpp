@@ -1,10 +1,10 @@
-/** Transport.h
- * 
- * Backend API used to to communicate with Stripe's REST API.
- * 
+/** HTTPClient.h
+ *
+ * Backend API used to communicate with Stripe's REST API.
+ *
  * @author Hans de Ruiter
- * 
- * @license See LICENSE.md for details.
+ *
+ * @License See LICENSE for details.
  */
 
 #pragma once
@@ -12,6 +12,7 @@
 #include "StripeKit/Async.h"
 #include "StripeKit/RequestOptions.h"
 
+#include <exception>
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -65,15 +66,15 @@ struct HttpResponse {
 /**
  * Abstract base class for making HTTP calls to Stripe.
  */
-class HttpTransport {
+class HTTPClient {
 public:
     /** Callback type used by compatibility overloads. */
     using Completion = std::function<void(std::variant<HttpResponse, std::exception_ptr>)>;
 
     /**
-     * Destroys the transport instance.
+     * Destroys the HTTP client instance.
      */
-    virtual ~HttpTransport() = default;
+    virtual ~HTTPClient() = default;
 
     /**
      * Starts a coroutine that sends an HTTP request to Stripe.

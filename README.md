@@ -29,6 +29,18 @@ Requirements:
 
 - CMake 3.24+
 - C++20 compiler
+- C compiler and `make`, when CMake builds the bundled libsodium fallback
+- On Linux: UUID development headers and library (`uuid-dev` on Debian/Ubuntu,
+	`libuuid-devel` on Fedora/RHEL)
+- Zlib development headers and library (`zlib1g-dev` on Debian/Ubuntu,
+	`zlib-devel` on Fedora/RHEL)
+- TLS development headers and library. StripeKit uses Stripe's HTTPS API, so
+	install `libssl-dev` on Debian/Ubuntu or `openssl-devel` on Fedora/RHEL.
+
+Drogon requires Trantor, JsonCpp, UUID, and Zlib on Linux. CMake fetches Drogon,
+its Trantor dependency, and JsonCpp, so UUID, Zlib, and TLS development packages
+need to be installed by the host system. YAML, Brotli, and c-ares support are
+optional Drogon features and are not required by StripeKit.
 
 Configure and build:
 
@@ -58,7 +70,36 @@ find_package(StripeKit CONFIG REQUIRED)
 target_link_libraries(your_target PRIVATE StripeKit::stripekit)
 ```
 
-By default, StripeKit uses FetchContent for dependencies it needs when no existing dependency is provided. If your project already provides libsodium or Drogon, set the matching external switch and let CMake discover the dependency through the normal package search rules:
+The Drogon runtime adapter is enabled by default. Link `StripeKit::drogon` in
+addition to `StripeKit::stripekit`:
+
+```cmake
+target_link_libraries(your_target PRIVATE StripeKit::stripekit StripeKit::drogon)
+```
+
+Create the HTTP client from the Drogon adapter, then pass it to the Stripe API
+client. StripeKit uses JsonCpp for Stripe response parsing by default:
+
+```cpp
+#include <StripeKit/Drogon.h>
+#include <StripeKit/StripeKit.h>
+
+stripekit::DrogonHTTPClient http_client("sk_test_...");
+stripekit::StripeApiClient stripe(http_client);
+```
+
+Applications that need custom response decoding can still provide their own
+`StripeResponseParser`:
+
+```cpp
+stripekit::StripeApiClient stripe(http_client, custom_parser);
+```
+
+Projects that provide another adapter can disable Drogon with
+`-DSTRIPEKIT_BUILD_DROGON_ADAPTER=OFF`. Tests require at least one enabled
+adapter and run only the tests for enabled adapters.
+
+By default, StripeKit downloads and builds dependencies it needs when no existing dependency is provided. If your project already provides libsodium or Drogon, set the matching external switch and let CMake discover the dependency through the normal package search rules:
 
 ```bash
 cmake -S . -B build \

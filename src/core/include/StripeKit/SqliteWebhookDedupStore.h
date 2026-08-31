@@ -12,8 +12,10 @@
 
 #include "StripeKit/WebhookDedupStore.h"
 
-#include <memory>
+#include <mutex>
 #include <string>
+
+struct sqlite3;
 
 namespace stripekit {
 
@@ -50,8 +52,8 @@ public:
                        std::chrono::hours retention) override;
 
 private:
-    class Impl;
-    std::unique_ptr<Impl> impl;
+    sqlite3* db = nullptr;
+    std::mutex mutex;
 };
 
 /**

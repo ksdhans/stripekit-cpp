@@ -8,10 +8,12 @@ project(StripeKit
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include(ExternalProject)
 include(FetchContent)
 
 option(STRIPEKIT_BUILD_TESTS "Build StripeKit tests" ON)
 option(STRIPEKIT_ENABLE_SQLITE "Enable optional SQLite webhook de-dup store adapter" ON)
+option(STRIPEKIT_BUILD_DROGON_ADAPTER "Build the Drogon runtime adapter" ON)
 
 option(USE_EXTERNAL_LIBSODIUM "Reuse libsodium provided by the parent project or system installation" OFF)
 option(USE_EXTERNAL_DROGON "Reuse Drogon provided by the parent project or system installation" OFF)
@@ -21,8 +23,10 @@ add_library(stripekit
     src/core/Errors.cpp
     src/core/Logging.cpp
     src/core/WebhookDedupStore.cpp
+    src/core/WebhookProcessor.cpp
     src/core/WebhookVerifier.cpp
     src/core/SqliteWebhookDedupStore.cpp
+    src/core/StripeApiClient.cpp
 )
 add_library(StripeKit::stripekit ALIAS stripekit)
 
@@ -31,10 +35,9 @@ target_compile_features(stripekit PUBLIC cxx_std_20)
 target_include_directories(stripekit
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/core/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/core/include
 )
 
 if(TARGET sodium)
@@ -55,20 +58,26 @@ if(USE_EXTERNAL_LIBSODIUM)
         message(FATAL_ERROR "USE_EXTERNAL_LIBSODIUM is ON, but StripeKit could not find libsodium. Add libsodium before StripeKit, or point CMake at the install prefix with CMAKE_PREFIX_PATH, libsodium_ROOT, or libsodium_DIR.")
     endif()
 else()
-    FetchContent_Declare(
-        stripekit_libsodium
-        GIT_REPOSITORY https://github.com/jedisct1/libsodium.git
-        GIT_TAG 1.0.20-RELEASE
-    )
-    set(SODIUM_DISABLE_TESTS ON CACHE BOOL "" FORCE)
-    set(SODIUM_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(stripekit_libsodium)
+    set(STRIPEKIT_LIBSODIUM_VERSION 1.0.20)
+    set(stripekit_libsodium_install_dir ${CMAKE_CURRENT_BINARY_DIR}/_deps/libsodium-install)
+    file(MAKE_DIRECTORY ${stripekit_libsodium_install_dir}/include)
 
-    if(TARGET sodium)
-        set(stripekit_libsodium_target sodium)
-    elseif(TARGET libsodium)
-        set(stripekit_libsodium_target libsodium)
-    endif()
+    ExternalProject_Add(stripekit_libsodium_external
+        URL https://download.libsodium.org/libsodium/releases/libsodium-${STRIPEKIT_LIBSODIUM_VERSION}.tar.gz
+        CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --disable-shared --enable-static --disable-dependency-tracking
+        BUILD_COMMAND make
+        INSTALL_COMMAND make install
+        INSTALL_DIR ${stripekit_libsodium_install_dir}
+        BUILD_BYPRODUCTS ${stripekit_libsodium_install_dir}/lib/libsodium.a
+    )
+
+    add_library(stripekit_libsodium STATIC IMPORTED GLOBAL)
+    add_dependencies(stripekit_libsodium stripekit_libsodium_external)
+    set_target_properties(stripekit_libsodium PROPERTIES
+        IMPORTED_LOCATION ${stripekit_libsodium_install_dir}/lib/libsodium.a
+        INTERFACE_INCLUDE_DIRECTORIES ${stripekit_libsodium_install_dir}/include
+    )
+    set(stripekit_libsodium_target stripekit_libsodium)
 endif()
 
 if(stripekit_libsodium_target)
@@ -78,33 +87,108 @@ else()
     message(STATUS "StripeKit: libsodium not found; webhook signature verification support is disabled")
 endif()
 
-if(USE_EXTERNAL_DROGON)
+set(stripekit_jsoncpp_target "")
+if(TARGET JsonCpp::JsonCpp)
+    set(stripekit_jsoncpp_target JsonCpp::JsonCpp)
+elseif(TARGET jsoncpp_lib)
+    set(stripekit_jsoncpp_target jsoncpp_lib)
+elseif(TARGET jsoncpp_static)
+    set(stripekit_jsoncpp_target jsoncpp_static)
+endif()
+
+if(NOT stripekit_jsoncpp_target)
+    set(STRIPEKIT_JSONCPP_VERSION 1.9.5)
+    FetchContent_Declare(
+        jsoncpp
+        URL https://github.com/open-source-parsers/jsoncpp/archive/refs/tags/${STRIPEKIT_JSONCPP_VERSION}.tar.gz
+        FIND_PACKAGE_ARGS ${STRIPEKIT_JSONCPP_VERSION} CONFIG QUIET
+    )
+    set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
+    set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(jsoncpp)
+
+    if(TARGET JsonCpp::JsonCpp)
+        set(stripekit_jsoncpp_target JsonCpp::JsonCpp)
+    elseif(TARGET jsoncpp_lib)
+        set(stripekit_jsoncpp_target jsoncpp_lib)
+    elseif(TARGET jsoncpp_static)
+        set(stripekit_jsoncpp_target jsoncpp_static)
+    endif()
+endif()
+
+if(NOT stripekit_jsoncpp_target)
+    message(FATAL_ERROR "StripeKit could not find or fetch JsonCpp.")
+endif()
+
+target_link_libraries(stripekit PUBLIC ${stripekit_jsoncpp_target})
+get_target_property(stripekit_jsoncpp_include_dirs ${stripekit_jsoncpp_target} INTERFACE_INCLUDE_DIRECTORIES)
+if(stripekit_jsoncpp_include_dirs)
+    set(JSONCPP_INCLUDE_DIRS "${stripekit_jsoncpp_include_dirs}" CACHE PATH "" FORCE)
+endif()
+set(JSONCPP_LIBRARIES ${stripekit_jsoncpp_target} CACHE STRING "" FORCE)
+
+if(STRIPEKIT_BUILD_DROGON_ADAPTER)
+    set(STRIPEKIT_DROGON_VERSION 1.9.10)
     set(stripekit_drogon_target "")
 
-    if(TARGET Drogon::Drogon)
-        set(stripekit_drogon_target Drogon::Drogon)
-    elseif(TARGET drogon)
-        set(stripekit_drogon_target drogon)
-    endif()
+    if(USE_EXTERNAL_DROGON)
+        if(TARGET Drogon::Drogon)
+            set(stripekit_drogon_target Drogon::Drogon)
+        elseif(TARGET drogon)
+            set(stripekit_drogon_target drogon)
+        endif()
 
-    if(NOT stripekit_drogon_target)
-        find_package(Drogon CONFIG QUIET)
+        if(NOT stripekit_drogon_target)
+            FetchContent_Declare(
+                Drogon
+                URL https://github.com/drogonframework/drogon/archive/refs/tags/v${STRIPEKIT_DROGON_VERSION}.tar.gz
+                FIND_PACKAGE_ARGS ${STRIPEKIT_DROGON_VERSION} CONFIG REQUIRED
+            )
+            FetchContent_MakeAvailable(Drogon)
+
+            if(TARGET Drogon::Drogon)
+                set(stripekit_drogon_target Drogon::Drogon)
+            elseif(TARGET drogon)
+                set(stripekit_drogon_target drogon)
+            endif()
+        endif()
+    else()
+        FetchContent_Declare(
+            Drogon
+            URL https://github.com/drogonframework/drogon/archive/refs/tags/v${STRIPEKIT_DROGON_VERSION}.tar.gz
+            FIND_PACKAGE_ARGS ${STRIPEKIT_DROGON_VERSION} CONFIG QUIET
+        )
+        set(BUILD_CTL OFF CACHE BOOL "" FORCE)
+        set(BUILD_ORM OFF CACHE BOOL "" FORCE)
+        set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(Drogon)
 
         if(TARGET Drogon::Drogon)
             set(stripekit_drogon_target Drogon::Drogon)
         elseif(TARGET drogon)
             set(stripekit_drogon_target drogon)
-        else()
-            message(FATAL_ERROR "USE_EXTERNAL_DROGON is ON, but StripeKit could not find Drogon. Add Drogon before StripeKit, or point CMake at the install prefix with CMAKE_PREFIX_PATH, Drogon_ROOT, or Drogon_DIR.")
         endif()
     endif()
 
-    if(stripekit_drogon_target)
-        add_library(StripeKit::drogon_dependency INTERFACE IMPORTED)
-        set_property(TARGET StripeKit::drogon_dependency PROPERTY
-            INTERFACE_LINK_LIBRARIES ${stripekit_drogon_target}
-        )
+    if(NOT stripekit_drogon_target)
+        message(FATAL_ERROR "StripeKit could not find or fetch Drogon.")
     endif()
+
+    add_library(stripekit_drogon
+        src/adapters/drogon/DrogonHTTPClient.cpp
+        src/adapters/drogon/DrogonLogger.cpp
+        src/adapters/drogon/DrogonWebhookEndpoint.cpp
+    )
+    add_library(StripeKit::drogon ALIAS stripekit_drogon)
+    set_target_properties(stripekit_drogon PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+    target_link_libraries(stripekit_drogon PUBLIC StripeKit::stripekit PRIVATE ${stripekit_drogon_target})
+    target_include_directories(stripekit_drogon
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/adapters/drogon/include>
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/core/include>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    )
 endif()
 
 if(STRIPEKIT_ENABLE_SQLITE)
@@ -140,8 +224,26 @@ install(TARGETS stripekit
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
+if(TARGET stripekit_drogon)
+    install(TARGETS stripekit_drogon
+        EXPORT StripeKitTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+
+    install(DIRECTORY src/adapters/drogon/include/StripeKit/
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/StripeKit
+    )
+endif()
+
 install(DIRECTORY include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+install(DIRECTORY src/core/include/StripeKit/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/StripeKit
 )
 
 install(FILES
@@ -162,6 +264,15 @@ install(FILES
 )
 
 if(STRIPEKIT_BUILD_TESTS)
+    set(STRIPEKIT_ENABLED_ADAPTERS "")
+    if(TARGET stripekit_drogon)
+        list(APPEND STRIPEKIT_ENABLED_ADAPTERS drogon)
+    endif()
+
+    if(NOT STRIPEKIT_ENABLED_ADAPTERS)
+        message(FATAL_ERROR "STRIPEKIT_BUILD_TESTS is ON, but no StripeKit adapter is enabled. Enable at least one adapter, for example STRIPEKIT_BUILD_DROGON_ADAPTER.")
+    endif()
+
     enable_testing()
     add_subdirectory(tests)
 endif()
