@@ -183,6 +183,86 @@ TEST_F(StripeApiClientTest, SubscriptionsRetrieveAndCancel) {
     EXPECT_EQ(canceled_sub.status, "canceled");
 }
 
+TEST_F(StripeApiClientTest, SubscriptionsRetrieveAndCancelCallbacks) {
+    // Retrieve via callback
+    http_client.set_response(HttpResponse{
+        .status_code = 200,
+        .headers = {},
+        .body = R"({ "id": "sub_cb_1", "customer": "cus_123", "status": "active" })"
+    });
+
+    bool retrieve_cb_invoked = false;
+    client->subscriptions().retrieve("sub_cb_1", {}, [&](CallbackResult<Subscription> result) {
+        retrieve_cb_invoked = true;
+        ASSERT_TRUE(std::holds_alternative<Subscription>(result));
+        EXPECT_EQ(std::get<Subscription>(result).id, "sub_cb_1");
+        EXPECT_EQ(std::get<Subscription>(result).status, "active");
+    });
+    EXPECT_TRUE(retrieve_cb_invoked);
+
+    // Cancel via callback
+    http_client.set_response(HttpResponse{
+        .status_code = 200,
+        .headers = {},
+        .body = R"({ "id": "sub_cb_1", "customer": "cus_123", "status": "canceled" })"
+    });
+
+    bool cancel_cb_invoked = false;
+    client->subscriptions().cancel("sub_cb_1", {}, [&](CallbackResult<Subscription> result) {
+        cancel_cb_invoked = true;
+        ASSERT_TRUE(std::holds_alternative<Subscription>(result));
+        EXPECT_EQ(std::get<Subscription>(result).id, "sub_cb_1");
+        EXPECT_EQ(std::get<Subscription>(result).status, "canceled");
+    });
+    EXPECT_TRUE(cancel_cb_invoked);
+}
+
+TEST_F(StripeApiClientTest, CreateCheckoutSessionCallbackSuccess) {
+    http_client.set_response(HttpResponse{
+        .status_code = 200,
+        .headers = {},
+        .body = R"({ "id": "cs_cb_1", "customer": "cus_123", "status": "open" })"
+    });
+
+    bool checkout_cb_invoked = false;
+    client->checkout().sessions().create(
+        CreateCheckoutSessionRequest{
+            .customer_id = "cus_123",
+            .price_id = "price_test",
+            .success_url = "https://example.com/success",
+            .cancel_url = "https://example.com/cancel"
+        },
+        {},
+        [&](CallbackResult<CheckoutSession> result) {
+            checkout_cb_invoked = true;
+            ASSERT_TRUE(std::holds_alternative<CheckoutSession>(result));
+            EXPECT_EQ(std::get<CheckoutSession>(result).id, "cs_cb_1");
+        });
+    EXPECT_TRUE(checkout_cb_invoked);
+}
+
+TEST_F(StripeApiClientTest, CreateBillingPortalSessionCallbackSuccess) {
+    http_client.set_response(HttpResponse{
+        .status_code = 200,
+        .headers = {},
+        .body = R"({ "id": "bps_cb_1", "customer": "cus_123", "url": "https://billing.stripe.com/session/bps_cb_1" })"
+    });
+
+    bool portal_cb_invoked = false;
+    client->billing_portal().sessions().create(
+        CreateBillingPortalSessionRequest{
+            .customer_id = "cus_123",
+            .return_url = "https://example.com/return"
+        },
+        {},
+        [&](CallbackResult<BillingPortalSession> result) {
+            portal_cb_invoked = true;
+            ASSERT_TRUE(std::holds_alternative<BillingPortalSession>(result));
+            EXPECT_EQ(std::get<BillingPortalSession>(result).id, "bps_cb_1");
+        });
+    EXPECT_TRUE(portal_cb_invoked);
+}
+
 TEST_F(StripeApiClientTest, CreateBillingPortalSessionAsyncSuccess) {
     http_client.set_handler([](const HttpRequest& req) {
         EXPECT_EQ(req.method, HttpMethod::Post);

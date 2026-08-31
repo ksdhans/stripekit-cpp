@@ -248,3 +248,30 @@ TEST_F(DrogonWebhookEndpointIntegrationTest, GetMethodOnWebhookEndpointReturns40
     ASSERT_TRUE(resp != nullptr);
     EXPECT_EQ(resp->statusCode(), ::drogon::k405MethodNotAllowed);
 }
+
+TEST_F(DrogonWebhookEndpointIntegrationTest, WebhookEndpointClassWrapperDispatchesCorrectly) {
+    ASSERT_TRUE(DrogonIntegrationEnvironment::get().class_endpoint_dispatcher != nullptr);
+    DrogonIntegrationEnvironment::get().class_endpoint_dispatcher->clear();
+    DrogonIntegrationEnvironment::get().class_endpoint_dispatcher->set_result(EventDispatchResult::Handled);
+
+    const std::string payload = make_event_payload("evt_class_endpoint_1", "invoice.paid");
+    const std::string sig_header = make_stripe_signature_header(now_unix, payload, webhook_secret);
+
+    auto [result, resp] = DrogonIntegrationEnvironment::get().send_raw_post(
+        "/test/webhook/class-endpoint",
+        payload,
+        {
+            {"stripe-signature", sig_header},
+            {"stripe-webhook-id", "wh_deliv_789"}
+        });
+
+    EXPECT_EQ(result, ::drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp != nullptr);
+    EXPECT_EQ(resp->statusCode(), ::drogon::k200OK);
+
+    const auto signals = DrogonIntegrationEnvironment::get().class_endpoint_dispatcher->get_recorded_signals();
+    ASSERT_EQ(signals.size(), 1u);
+    EXPECT_EQ(signals[0].envelope.id, "evt_class_endpoint_1");
+    EXPECT_EQ(signals[0].envelope.type, "invoice.paid");
+    EXPECT_EQ(signals[0].delivery_id, "wh_deliv_789");
+}

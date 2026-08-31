@@ -203,9 +203,27 @@ TEST_F(WebhookVerifierTest, TimestampTolerancePassesWithinWindow) {
 }
 
 TEST_F(WebhookVerifierTest, TimestampToleranceFailsOutsideWindow) {
-    // 301 seconds difference
+    // 301 seconds difference (past)
     const std::int64_t past_timestamp = timestamp_unix - 301;
     const std::string header = make_stripe_signature_header(past_timestamp, payload, secret);
+
+    const WebhookVerificationInput input{
+        .payload = payload,
+        .stripe_signature_header = header,
+        .endpoint_secret = secret,
+        .now = now,
+        .tolerance = std::chrono::seconds(300)
+    };
+
+    EXPECT_THROW({
+        verifier.verify(input);
+    }, SignatureVerificationException);
+}
+
+TEST_F(WebhookVerifierTest, TimestampToleranceFailsInFutureOutsideWindow) {
+    // 301 seconds in future
+    const std::int64_t future_timestamp = timestamp_unix + 301;
+    const std::string header = make_stripe_signature_header(future_timestamp, payload, secret);
 
     const WebhookVerificationInput input{
         .payload = payload,

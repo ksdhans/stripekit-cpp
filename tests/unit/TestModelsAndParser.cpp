@@ -146,6 +146,52 @@ TEST_F(ModelsAndParserTest, ParseBillingPortalSessionSuccess) {
     EXPECT_FALSE(session.livemode);
 }
 
+TEST_F(ModelsAndParserTest, InvoiceStructModelInstantiation) {
+    Invoice invoice{
+        .id = "in_123456",
+        .customer_id = "cus_abc",
+        .subscription_id = "sub_xyz",
+        .status = "paid",
+        .currency = "usd",
+        .amount_due = 1500,
+        .amount_paid = 1500,
+        .paid = true,
+        .livemode = false
+    };
+
+    EXPECT_EQ(invoice.id, "in_123456");
+    EXPECT_EQ(invoice.customer_id, "cus_abc");
+    EXPECT_EQ(invoice.subscription_id, "sub_xyz");
+    EXPECT_EQ(invoice.status, "paid");
+    EXPECT_EQ(invoice.currency, "usd");
+    EXPECT_EQ(invoice.amount_due, 1500);
+    EXPECT_EQ(invoice.amount_paid, 1500);
+    EXPECT_TRUE(invoice.paid);
+    EXPECT_FALSE(invoice.livemode);
+}
+
+TEST_F(ModelsAndParserTest, EventEnvelopeModelInstantiation) {
+    EventEnvelope envelope{
+        .id = "evt_999",
+        .type = "invoice.payment_failed",
+        .api_version = "2024-06-20",
+        .created_unix = 1700000000,
+        .livemode = false,
+        .request_id = "req_test",
+        .account = "acct_test",
+        .payload_json = "{}"
+    };
+
+    EXPECT_EQ(envelope.id, "evt_999");
+    EXPECT_EQ(envelope.type, "invoice.payment_failed");
+    EXPECT_EQ(envelope.api_version, "2024-06-20");
+    EXPECT_EQ(envelope.created_unix, 1700000000);
+    EXPECT_FALSE(envelope.livemode);
+    EXPECT_EQ(envelope.request_id, "req_test");
+    EXPECT_EQ(envelope.account, "acct_test");
+    EXPECT_EQ(envelope.payload_json, "{}");
+}
+
 TEST_F(ModelsAndParserTest, ParseErrorDetails) {
     const HttpResponse response{
         .status_code = 400,

@@ -93,6 +93,49 @@ inline std::string make_stripe_signature_header(std::int64_t timestamp_unix,
 }
 
 /**
+ * Mock EventDispatcher for verifying webhook signal dispatching.
+ */
+class MockEventDispatcher final : public EventDispatcher {
+public:
+    using DispatchHandler = std::function<EventDispatchResult(const VerifiedEventSignal&)>;
+
+    void set_handler(DispatchHandler handler_fn) {
+        std::lock_guard<std::mutex> lock(mutex);
+        handler = std::move(handler_fn);
+    }
+
+    void set_result(EventDispatchResult result) {
+        std::lock_guard<std::mutex> lock(mutex);
+        default_result = result;
+    }
+
+    std::vector<VerifiedEventSignal> get_recorded_signals() const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return recorded_signals;
+    }
+
+    void clear() {
+        std::lock_guard<std::mutex> lock(mutex);
+        recorded_signals.clear();
+    }
+
+    EventDispatchResult dispatch(const VerifiedEventSignal& signal) override {
+        std::lock_guard<std::mutex> lock(mutex);
+        recorded_signals.push_back(signal);
+        if (handler) {
+            return handler(signal);
+        }
+        return default_result;
+    }
+
+private:
+    mutable std::mutex mutex;
+    std::vector<VerifiedEventSignal> recorded_signals;
+    EventDispatchResult default_result = EventDispatchResult::Handled;
+    DispatchHandler handler;
+};
+
+/**
  * Finds an available TCP port on localhost.
  */
 inline std::uint16_t find_free_port() {
@@ -162,6 +205,9 @@ public:
 
     InMemoryWebhookDedupStore dedup_store;
     WebhookTestTelemetry telemetry;
+    std::unique_ptr<MockEventDispatcher> class_endpoint_dispatcher;
+    std::unique_ptr<WebhookProcessor> class_endpoint_processor;
+    std::unique_ptr<stripekit::drogon::WebhookEndpoint> class_endpoint;
     std::uint16_t server_port = 0;
     std::string base_url;
 
@@ -568,6 +614,16 @@ private:
                 co_return stripekit::webhooks::ProcessResult::Handled;
             }
         });
+
+        // Webhook registered via WebhookEndpoint class wrapper
+        class_endpoint_dispatcher = std::make_unique<MockEventDispatcher>();
+        class_endpoint_processor = std::make_unique<WebhookProcessor>(
+            dedup_store,
+            *class_endpoint_dispatcher);
+        class_endpoint = std::make_unique<stripekit::drogon::WebhookEndpoint>(
+            *class_endpoint_processor,
+            webhook_secret);
+        class_endpoint->register_handler("/test/webhook/class-endpoint");
     }
 
     bool running = false;
