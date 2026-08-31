@@ -37,7 +37,7 @@ TEST_F(StripeApiClientTest, CreateCustomerAsyncSuccess) {
 
         // Verify body contains form-encoded parameters
         EXPECT_NE(req.body.find("email=test%40example.com"), std::string::npos);
-        EXPECT_NE(req.body.find("name=Test+User"), std::string::npos);
+        EXPECT_NE(req.body.find("name=Test%20User"), std::string::npos);
         EXPECT_NE(req.body.find("metadata%5Buser_id%5D=usr_999"), std::string::npos);
 
         return HttpResponse{
