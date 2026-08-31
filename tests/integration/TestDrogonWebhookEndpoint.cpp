@@ -198,6 +198,55 @@ TEST_F(DrogonWebhookEndpointIntegrationTest, HackerReplayAttackExpiredTimestampR
     EXPECT_EQ(DrogonIntegrationEnvironment::get().telemetry.handled_events_count.load(), 0);
 }
 
+TEST_F(DrogonWebhookEndpointIntegrationTest, HackerFutureTimestampReplayRejectedWith400) {
+    const std::string payload = make_event_payload("evt_future_attack_1", "invoice.paid");
+    // Timestamp 1 hour into the future
+    const std::int64_t future_timestamp = now_unix + 3600;
+    const std::string future_signature = make_stripe_signature_header(future_timestamp, payload, webhook_secret);
+
+    auto [result, resp] = DrogonIntegrationEnvironment::get().send_raw_post(
+        "/test/webhook/standard",
+        payload,
+        {{"stripe-signature", future_signature}});
+
+    EXPECT_EQ(result, ::drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp != nullptr);
+    EXPECT_EQ(resp->statusCode(), ::drogon::k400BadRequest);
+    EXPECT_EQ(DrogonIntegrationEnvironment::get().telemetry.handled_events_count.load(), 0);
+}
+
+TEST_F(DrogonWebhookEndpointIntegrationTest, HackerInjectionInHeaderRejectedWith400) {
+    const std::string payload = make_event_payload("evt_header_inject_1", "invoice.paid");
+    const std::string malformed_header = "t=999999999999999999999999999999999999,v1=' OR '1'='1";
+
+    auto [result, resp] = DrogonIntegrationEnvironment::get().send_raw_post(
+        "/test/webhook/standard",
+        payload,
+        {{"stripe-signature", malformed_header}});
+
+    EXPECT_EQ(result, ::drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp != nullptr);
+    EXPECT_EQ(resp->statusCode(), ::drogon::k400BadRequest);
+    EXPECT_EQ(DrogonIntegrationEnvironment::get().telemetry.handled_events_count.load(), 0);
+}
+
+TEST_F(DrogonWebhookEndpointIntegrationTest, HackerTruncatedSignatureRejectedWith400) {
+    const std::string payload = make_event_payload("evt_trunc_1", "invoice.paid");
+    const std::string valid_sig = make_stripe_signature_header(now_unix, payload, webhook_secret);
+    // Truncate signature to test constant-time comparison safety against partial prefix match
+    const std::string truncated_sig = valid_sig.substr(0, valid_sig.size() - 8);
+
+    auto [result, resp] = DrogonIntegrationEnvironment::get().send_raw_post(
+        "/test/webhook/standard",
+        payload,
+        {{"stripe-signature", truncated_sig}});
+
+    EXPECT_EQ(result, ::drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp != nullptr);
+    EXPECT_EQ(resp->statusCode(), ::drogon::k400BadRequest);
+    EXPECT_EQ(DrogonIntegrationEnvironment::get().telemetry.handled_events_count.load(), 0);
+}
+
 TEST_F(DrogonWebhookEndpointIntegrationTest, MissingSignatureHeaderRejectedWith400) {
     const std::string payload = make_event_payload("evt_no_sig_1", "invoice.paid");
 
