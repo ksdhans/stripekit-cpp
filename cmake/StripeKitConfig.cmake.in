@@ -2,5 +2,6 @@
 
 include(CMakeFindDependencyMacro)
 find_dependency(jsoncpp CONFIG)
+@STRIPEKIT_CONFIG_FIND_DROGON@
 
 include("${CMAKE_CURRENT_LIST_DIR}/StripeKitTargets.cmake")

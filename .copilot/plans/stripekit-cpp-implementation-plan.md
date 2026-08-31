@@ -142,7 +142,7 @@ Deliverables:
    - Customer, CheckoutSession, Subscription, Invoice, BillingPortalSession, Event envelope.
 2. Implement client API contracts for Stripe operations.
 3. Implement webhook signature verification core using libsodium.
-4. Define transport interfaces for outbound HTTP and inbound event dispatch so future backends can be added without API breakage.
+4. Define HTTP client interfaces for outbound HTTP and inbound event dispatch so future backends can be added without API breakage.
 5. Define request options shared by outbound methods:
    - Idempotency key, timeout, and per-request header overrides.
 6. Define exception taxonomy and payload for API failures:
@@ -150,7 +150,8 @@ Deliverables:
 7. Define async interface pattern:
    - Coroutine-first methods plus callback compatibility overloads.
 8. Define event-signal boundary:
-   - Core emits verified, parsed Stripe event signals and metadata.
+   - Core exposes a Stripe-style `webhooks::construct_event` helper for verified event construction.
+   - Core exposes `webhooks::process_event_once` for durable de-duplicated processing.
    - Core does not enforce app entitlement/business transitions.
 9. Define webhook de-duplication store contract:
    - Atomic first-seen claim/mark by Stripe event id.
@@ -192,6 +193,8 @@ Deliverables:
 
 Deliverables:
 - Working Drogon adapter package as the only first-party runtime backend in MVP.
+   - Public adapter API is exposed through `StripeKit/Adapters/Drogon.h`.
+   - The adapter provides `make_stripe_client` and `register_webhook_handler` convenience entry points.
 
 ## Phase 4: Dependency Strategy
 
@@ -271,9 +274,9 @@ Deliverables:
 
 ## Implementation Checklist
 - [x] Repository initialized with BSD-3-Clause and baseline docs.
-- [ ] Core public API and models implemented (customers, checkout sessions, subscriptions, billing portal sessions). (Public contracts/models are present; concrete outbound client implementation is still pending.)
+- [x] Core public API and models implemented (customers, checkout sessions, subscriptions, billing portal sessions). (The HTTP-client-backed `StripeApiClient` implements the MVP resource operations.)
 - [x] Webhook signature verification implemented.
-- [ ] Drogon outbound and inbound adapters implemented (including idempotency propagation and required webhook dispatch).
+- [x] Drogon outbound and inbound adapters implemented (including idempotency propagation and required webhook dispatch). (The adapter is an optional CMake target and requires Drogon with its system prerequisites.)
 - [x] Dependency injection and fallback fetching wired.
 - [ ] Unit/integration/sandbox E2E suites implemented (including invoice-based entitlement signals, dispute events, and refund signal coverage).
 - [ ] GitLab CI gating and protected secret policy implemented.

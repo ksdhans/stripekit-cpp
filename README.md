@@ -77,22 +77,77 @@ addition to `StripeKit::stripekit`:
 target_link_libraries(your_target PRIVATE StripeKit::stripekit StripeKit::drogon)
 ```
 
-Create the HTTP client from the Drogon adapter, then pass it to the Stripe API
-client. StripeKit uses JsonCpp for Stripe response parsing by default:
+Create a Stripe client through the Drogon adapter (or an adaptor for your chosen web framework). StripeKit uses JsonCpp for
+Stripe response parsing by default:
 
 ```cpp
-#include <StripeKit/Drogon.h>
+#include <StripeKit/Adapters/Drogon.h>
 #include <StripeKit/StripeKit.h>
 
-stripekit::DrogonHTTPClient http_client("sk_test_...");
-stripekit::StripeApiClient stripe(http_client);
+auto stripe = stripekit::drogon::make_stripe_client({
+	.api_key = "sk_test_..."
+});
 ```
 
 Applications that need custom response decoding can still provide their own
 `StripeResponseParser`:
 
 ```cpp
+stripekit::drogon::HTTPClient http_client("sk_test_...");
 stripekit::StripeApiClient stripe(http_client, custom_parser);
+```
+
+Register a Drogon webhook handler with StripeKit verification and durable
+de-duplication:
+
+```cpp
+stripekit::SqliteWebhookDedupStore dedup_store("stripe-webhooks.sqlite3");
+
+stripekit::drogon::register_webhook_handler({
+	.path = "/stripe/webhook",
+	.endpoint_secret = "whsec_...",
+	.dedup_store = dedup_store,
+	.handler = [&](const stripekit::webhooks::Event& event) {
+		if (event.type == "invoice.paid") {
+			// Update the application's own subscription records here.
+			return stripekit::webhooks::ProcessResult::Handled;
+		}
+
+		return stripekit::webhooks::ProcessResult::Ignored;
+	}
+});
+```
+
+Framework adapters are thin request/response glue. If you are integrating with a
+different framework, use the core webhook API directly with the raw request body
+and `Stripe-Signature` header:
+
+```cpp
+auto event = stripekit::webhooks::construct_event(
+	raw_body,
+	stripe_signature_header,
+	"whsec_..."
+);
+
+if (event.type == "invoice.paid") {
+	// Update the application's own subscription records here.
+}
+```
+
+For production webhook handling with durable de-duplication, use
+`process_event_once`:
+
+```cpp
+auto result = stripekit::webhooks::process_event_once(
+	raw_body,
+	stripe_signature_header,
+	"whsec_...",
+	dedup_store,
+	[&](const stripekit::webhooks::Event& event) {
+		// Update the application's own database here.
+		return stripekit::webhooks::ProcessResult::Handled;
+	}
+);
 ```
 
 Projects that provide another adapter can disable Drogon with

@@ -16,6 +16,7 @@
 #include "StripeKit/RequestOptions.h"
 #include "StripeKit/StripeApiClient.h"
 #include "StripeKit/WebhookProcessor.h"
+#include "StripeKit/Webhooks.h"
 
 #include <string_view>
 

@@ -3,14 +3,14 @@
  * See header file for details.
  */
 
-#include "StripeKit/Drogon.h"
+#include "StripeKit/Adapters/Drogon.h"
 
 #include <drogon/drogon.h>
 
-#include <sstream>
+#include <string>
 
 namespace stripekit {
-
+namespace drogon {
 namespace {
 
 int log_rank(LogLevel level) {
@@ -18,32 +18,35 @@ int log_rank(LogLevel level) {
 }
 
 std::string log_message(std::string_view message, const LogContext& context) {
-    std::ostringstream output;
-    output << message;
+    std::string output(message);
     if (!context.event_id.empty()) {
-        output << " event_id=" << context.event_id;
+        output += " event_id=";
+        output += context.event_id;
     }
     if (!context.webhook_type.empty()) {
-        output << " webhook_type=" << context.webhook_type;
+        output += " webhook_type=";
+        output += context.webhook_type;
     }
     if (context.retry_attempt.has_value()) {
-        output << " retry_attempt=" << *context.retry_attempt;
+        output += " retry_attempt=";
+        output += std::to_string(*context.retry_attempt);
     }
     if (!context.adapter_name.empty()) {
-        output << " adapter=" << context.adapter_name;
+        output += " adapter=";
+        output += context.adapter_name;
     }
-    return output.str();
+    return output;
 }
 
 } // namespace
 
-DrogonLogger::DrogonLogger(LogLevel threshold) : threshold(threshold) {}
+LogBridge::LogBridge(LogLevel threshold) : threshold(threshold) {}
 
-bool DrogonLogger::should_log(LogLevel level) const {
+bool LogBridge::should_log(LogLevel level) const {
     return threshold != LogLevel::Off && log_rank(level) >= log_rank(threshold);
 }
 
-void DrogonLogger::log(LogLevel level, std::string_view message, const LogContext& context) {
+void LogBridge::log(LogLevel level, std::string_view message, const LogContext& context) {
     if (!should_log(level)) {
         return;
     }
@@ -70,4 +73,5 @@ void DrogonLogger::log(LogLevel level, std::string_view message, const LogContex
     }
 }
 
+} // namespace drogon
 } // namespace stripekit

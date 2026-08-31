@@ -12,7 +12,7 @@
 #include "StripeKit/Events.h"
 #include "StripeKit/Logging.h"
 #include "StripeKit/WebhookDedupStore.h"
-#include "StripeKit/WebhookVerifier.h"
+#include "StripeKit/Webhooks.h"
 
 #include <chrono>
 #include <string>
@@ -58,7 +58,6 @@ private:
              std::string_view message,
              const EventEnvelope& envelope = {}) const;
 
-    DefaultWebhookSignatureVerifier verifier;
     WebhookDedupStore& dedup_store;
     EventDispatcher& dispatcher;
     Logger* logger;

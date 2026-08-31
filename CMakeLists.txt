@@ -25,6 +25,7 @@ add_library(stripekit
     src/core/WebhookDedupStore.cpp
     src/core/WebhookProcessor.cpp
     src/core/WebhookVerifier.cpp
+    src/core/Webhooks.cpp
     src/core/SqliteWebhookDedupStore.cpp
     src/core/StripeApiClient.cpp
 )
@@ -182,7 +183,7 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
     )
     add_library(StripeKit::drogon ALIAS stripekit_drogon)
     set_target_properties(stripekit_drogon PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
-    target_link_libraries(stripekit_drogon PUBLIC StripeKit::stripekit PRIVATE ${stripekit_drogon_target})
+    target_link_libraries(stripekit_drogon PUBLIC StripeKit::stripekit ${stripekit_drogon_target})
     target_include_directories(stripekit_drogon
         PUBLIC
             $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/adapters/drogon/include>
@@ -203,6 +204,11 @@ include(cmake/generate_version_header.cmake)
 add_dependencies(stripekit generate_${PROJECT_NAME}_version_header)
 
 set(STRIPEKIT_CMAKE_CONFIG_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/StripeKit")
+
+set(STRIPEKIT_CONFIG_FIND_DROGON "")
+if(TARGET stripekit_drogon)
+    set(STRIPEKIT_CONFIG_FIND_DROGON "find_dependency(Drogon CONFIG)")
+endif()
 
 configure_package_config_file(
     cmake/StripeKitConfig.cmake.in
