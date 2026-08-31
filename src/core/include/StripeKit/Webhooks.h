@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include "StripeKit/Async.h"
 #include "StripeKit/Events.h"
 #include "StripeKit/Logging.h"
 #include "StripeKit/WebhookDedupStore.h"
@@ -41,8 +42,8 @@ enum class ProcessResult {
     FatalFailure
 };
 
-/** Application callback used by process_event_once. */
-using EventHandler = std::function<ProcessResult(const Event&)>;
+/** Application coroutine callback used by process_event_once. */
+using EventHandler = std::function<Task<ProcessResult>(const Event&)>;
 
 /** Options used when processing a Stripe webhook event once. */
 struct ProcessEventOptions {
@@ -86,13 +87,21 @@ Event construct_event(std::string_view payload,
                       ConstructEventOptions options = {});
 
 /**
+ * De-duplicates and dispatches a previously constructed Stripe webhook event once.
+ */
+Task<ProcessEventOnceResult> process_event_once(const Event& event,
+                                                WebhookDedupStore& dedup_store,
+                                                EventHandler handler,
+                                                ProcessEventOptions options = {});
+
+/**
  * Verifies, de-duplicates, and dispatches a Stripe webhook event once.
  */
-ProcessEventOnceResult process_event_once(std::string_view payload,
-                                          std::string_view signature_header,
-                                          std::string_view endpoint_secret,
-                                          WebhookDedupStore& dedup_store,
-                                          EventHandler handler,
-                                          ProcessEventOptions options = {});
+Task<ProcessEventOnceResult> process_event_once(std::string_view payload,
+                                                std::string_view signature_header,
+                                                std::string_view endpoint_secret,
+                                                WebhookDedupStore& dedup_store,
+                                                EventHandler handler,
+                                                ProcessEventOptions options = {});
 
 } // namespace stripekit::webhooks

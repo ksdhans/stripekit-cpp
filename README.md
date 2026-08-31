@@ -107,13 +107,14 @@ stripekit::drogon::register_webhook_handler({
 	.path = "/stripe/webhook",
 	.endpoint_secret = "whsec_...",
 	.dedup_store = dedup_store,
-	.handler = [&](const stripekit::webhooks::Event& event) {
+	.handler = [&](const stripekit::webhooks::Event& event)
+		-> stripekit::Task<stripekit::webhooks::ProcessResult> {
 		if (event.type == "invoice.paid") {
 			// Update the application's own subscription records here.
-			return stripekit::webhooks::ProcessResult::Handled;
+			co_return stripekit::webhooks::ProcessResult::Handled;
 		}
 
-		return stripekit::webhooks::ProcessResult::Ignored;
+		co_return stripekit::webhooks::ProcessResult::Ignored;
 	}
 });
 ```
@@ -138,14 +139,15 @@ For production webhook handling with durable de-duplication, use
 `process_event_once`:
 
 ```cpp
-auto result = stripekit::webhooks::process_event_once(
+auto result = co_await stripekit::webhooks::process_event_once(
 	raw_body,
 	stripe_signature_header,
 	"whsec_...",
 	dedup_store,
-	[&](const stripekit::webhooks::Event& event) {
+	[&](const stripekit::webhooks::Event& event)
+		-> stripekit::Task<stripekit::webhooks::ProcessResult> {
 		// Update the application's own database here.
-		return stripekit::webhooks::ProcessResult::Handled;
+		co_return stripekit::webhooks::ProcessResult::Handled;
 	}
 );
 ```

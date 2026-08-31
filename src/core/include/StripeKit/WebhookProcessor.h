@@ -54,10 +54,6 @@ public:
                                   std::string delivery_id = {}) const;
 
 private:
-    void log(LogLevel level,
-             std::string_view message,
-             const EventEnvelope& envelope = {}) const;
-
     WebhookDedupStore& dedup_store;
     EventDispatcher& dispatcher;
     Logger* logger;

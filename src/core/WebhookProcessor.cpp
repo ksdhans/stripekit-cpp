@@ -21,12 +21,12 @@ WebhookProcessor::WebhookProcessor(WebhookDedupStore& dedup_store,
 
 WebhookResponseAction WebhookProcessor::process(const WebhookVerificationInput& input,
                                                 std::string delivery_id) const {
-    const auto result = webhooks::process_event_once(
+    auto task = webhooks::process_event_once(
         input.payload,
         input.stripe_signature_header,
         input.endpoint_secret,
         dedup_store,
-        [this, &delivery_id, &input](const webhooks::Event& event) {
+        [this, &delivery_id, &input](const webhooks::Event& event) -> Task<webhooks::ProcessResult> {
             const EventDispatchResult dispatch_result = dispatcher.dispatch(VerifiedEventSignal{
                 .envelope = event,
                 .delivery_id = std::move(delivery_id),
@@ -35,16 +35,16 @@ WebhookResponseAction WebhookProcessor::process(const WebhookVerificationInput& 
 
             switch (dispatch_result) {
             case EventDispatchResult::Handled:
-                return webhooks::ProcessResult::Handled;
+                co_return webhooks::ProcessResult::Handled;
             case EventDispatchResult::Ignored:
-                return webhooks::ProcessResult::Ignored;
+                co_return webhooks::ProcessResult::Ignored;
             case EventDispatchResult::RetryableFailure:
-                return webhooks::ProcessResult::RetryableFailure;
+                co_return webhooks::ProcessResult::RetryableFailure;
             case EventDispatchResult::FatalFailure:
-                return webhooks::ProcessResult::FatalFailure;
+                co_return webhooks::ProcessResult::FatalFailure;
             }
 
-            return webhooks::ProcessResult::FatalFailure;
+            co_return webhooks::ProcessResult::FatalFailure;
         },
         webhooks::ProcessEventOptions{
             .now = input.now,
@@ -53,24 +53,8 @@ WebhookResponseAction WebhookProcessor::process(const WebhookVerificationInput& 
             .logger = logger
         });
 
+    const auto result = task.result();
     return result.response_action;
-}
-
-void WebhookProcessor::log(LogLevel level,
-                           std::string_view message,
-                           const EventEnvelope& envelope) const {
-    if (logger == nullptr || !logger->should_log(level)) {
-        return;
-    }
-
-    logger->log(level,
-                message,
-                LogContext{
-                    .request_id = envelope.request_id,
-                    .event_id = envelope.id,
-                    .webhook_type = envelope.type,
-                    .adapter_name = "core"
-                });
 }
 
 } // namespace stripekit

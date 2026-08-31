@@ -51,7 +51,7 @@ void register_webhook_handler(WebhookHandlerOptions options) {
                                        std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) mutable {
             auto response = ::drogon::HttpResponse::newHttpResponse();
             try {
-                const auto result = webhooks::process_event_once(
+                auto process_task = webhooks::process_event_once(
                     request->body(),
                     request->getHeader("stripe-signature"),
                     options.endpoint_secret,
@@ -63,6 +63,7 @@ void register_webhook_handler(WebhookHandlerOptions options) {
                         .stale_inflight_timeout = options.stale_inflight_timeout,
                         .logger = options.logger
                     });
+                const auto result = process_task.result();
 
                 response->setStatusCode(result.response_action == WebhookResponseAction::AcknowledgeSuccess
                     ? ::drogon::k200OK : ::drogon::k500InternalServerError);

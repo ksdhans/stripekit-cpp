@@ -86,6 +86,10 @@ ProcessEventOnceResult result_for(const Event& event,
     };
 }
 
+Task<ProcessEventOnceResult> ready_result(ProcessEventOnceResult result) {
+    co_return result;
+}
+
 } // namespace
 
 Event construct_event(std::string_view payload,
@@ -110,20 +114,10 @@ Event construct_event(std::string_view payload,
     }
 }
 
-ProcessEventOnceResult process_event_once(std::string_view payload,
-                                          std::string_view signature_header,
-                                          std::string_view endpoint_secret,
-                                          WebhookDedupStore& dedup_store,
-                                          EventHandler handler,
-                                          ProcessEventOptions options) {
-    Event event = construct_event(payload,
-                                  signature_header,
-                                  endpoint_secret,
-                                  ConstructEventOptions{
-                                      .now = options.now,
-                                      .tolerance = options.tolerance
-                                  });
-
+Task<ProcessEventOnceResult> process_event_once(const Event& event,
+                                                WebhookDedupStore& dedup_store,
+                                                EventHandler handler,
+                                                ProcessEventOptions options) {
     ClaimResult claim_result;
     try {
         claim_result = dedup_store.claim(ClaimRequest{
@@ -134,7 +128,7 @@ ProcessEventOnceResult process_event_once(std::string_view payload,
     } catch (const std::exception& error) {
         log_message(options.logger, LogLevel::Error,
                     std::string("Webhook store claim failed: ") + error.what(), event);
-        return result_for(event, ClaimOutcome::RetryableStoreError, WebhookResponseAction::RetryLater);
+        return ready_result(result_for(event, ClaimOutcome::RetryableStoreError, WebhookResponseAction::RetryLater));
     }
 
     if (!claim_result.should_process()) {
@@ -143,16 +137,17 @@ ProcessEventOnceResult process_event_once(std::string_view payload,
         } else if (claim_result.outcome == ClaimOutcome::RetryableStoreError) {
             log_message(options.logger, LogLevel::Warn, "Webhook store returned a retryable claim error", event);
         }
-        return result_for(event, claim_result.outcome, map_claim_outcome_to_response(claim_result.outcome));
+        return ready_result(result_for(event, claim_result.outcome, map_claim_outcome_to_response(claim_result.outcome)));
     }
 
     ProcessResult process_result;
     try {
-        process_result = handler(event);
+        auto handler_task = handler(event);
+        process_result = handler_task.result();
     } catch (const std::exception& error) {
         log_message(options.logger, LogLevel::Error,
                     std::string("Webhook handler failed: ") + error.what(), event);
-        return result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater);
+        return ready_result(result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
     }
 
     if (process_result == ProcessResult::RetryableFailure || process_result == ProcessResult::FatalFailure) {
@@ -160,22 +155,39 @@ ProcessEventOnceResult process_event_once(std::string_view payload,
                     process_result == ProcessResult::FatalFailure ? LogLevel::Error : LogLevel::Warn,
                     "Webhook handler requested a retry",
                     event);
-        return result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater);
+        return ready_result(result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
     }
 
     try {
         if (!dedup_store.mark_processed(event.id, options.now)) {
             log_message(options.logger, LogLevel::Error,
                         "Webhook store could not mark the event as processed", event);
-            return result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater);
+            return ready_result(result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
         }
     } catch (const std::exception& error) {
         log_message(options.logger, LogLevel::Error,
                     std::string("Webhook store completion failed: ") + error.what(), event);
-        return result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater);
+        return ready_result(result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
     }
 
-    return result_for(event, claim_result.outcome, WebhookResponseAction::AcknowledgeSuccess);
+    return ready_result(result_for(event, claim_result.outcome, WebhookResponseAction::AcknowledgeSuccess));
+}
+
+Task<ProcessEventOnceResult> process_event_once(std::string_view payload,
+                                                std::string_view signature_header,
+                                                std::string_view endpoint_secret,
+                                                WebhookDedupStore& dedup_store,
+                                                EventHandler handler,
+                                                ProcessEventOptions options) {
+    Event event = construct_event(payload,
+                                  signature_header,
+                                  endpoint_secret,
+                                  ConstructEventOptions{
+                                      .now = options.now,
+                                      .tolerance = options.tolerance
+                                  });
+
+    return process_event_once(event, dedup_store, std::move(handler), options);
 }
 
 } // namespace stripekit::webhooks
