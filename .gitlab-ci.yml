@@ -24,6 +24,8 @@ before_script:
   - apt-get install -y --no-install-recommends make pkg-config
   # Drogon requires libuuid, OpenSSL and zlib; SQLite is used by the optional dedup store.
   - apt-get install -y --no-install-recommends uuid-dev libssl-dev zlib1g-dev libsqlite3-dev
+  # Drogon's bundled FindJsoncpp.cmake module only searches the system, not FetchContent output.
+  - apt-get install -y --no-install-recommends libjsoncpp-dev
 
 verify:format-and-lint-placeholder:
   stage: verify

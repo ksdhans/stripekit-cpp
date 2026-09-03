@@ -18,7 +18,16 @@ option(STRIPEKIT_BUILD_DROGON_ADAPTER "Build the Drogon runtime adapter" ON)
 option(USE_EXTERNAL_LIBSODIUM "Reuse libsodium provided by the parent project or system installation" OFF)
 option(USE_EXTERNAL_DROGON "Reuse Drogon provided by the parent project or system installation" OFF)
 
-add_library(stripekit
+# Drogon forces BUILD_SHARED_LIBS ON for the whole build, so StripeKit's own
+# libraries pin their type explicitly instead of inheriting that setting.
+option(STRIPEKIT_LIB_SHARED "Build StripeKit's libraries as shared libraries" OFF)
+if(STRIPEKIT_LIB_SHARED)
+    set(STRIPEKIT_LIB_TYPE SHARED)
+else()
+    set(STRIPEKIT_LIB_TYPE STATIC)
+endif()
+
+add_library(stripekit ${STRIPEKIT_LIB_TYPE}
     src/core/StripeKit.cpp
     src/core/Errors.cpp
     src/core/Logging.cpp
@@ -99,10 +108,12 @@ endif()
 
 if(NOT stripekit_jsoncpp_target)
     set(STRIPEKIT_JSONCPP_VERSION 1.9.5)
+    # No FIND_PACKAGE_ARGS here: CMake's FetchContent find_package redirect is
+    # global, and would hijack Drogon's own find_package(Jsoncpp) lookup,
+    # leaving it without the "Jsoncpp_lib" target it expects.
     FetchContent_Declare(
         jsoncpp
         URL https://github.com/open-source-parsers/jsoncpp/archive/refs/tags/${STRIPEKIT_JSONCPP_VERSION}.tar.gz
-        FIND_PACKAGE_ARGS ${STRIPEKIT_JSONCPP_VERSION} CONFIG QUIET
     )
     set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
     set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
@@ -122,11 +133,6 @@ if(NOT stripekit_jsoncpp_target)
 endif()
 
 target_link_libraries(stripekit PUBLIC ${stripekit_jsoncpp_target})
-get_target_property(stripekit_jsoncpp_include_dirs ${stripekit_jsoncpp_target} INTERFACE_INCLUDE_DIRECTORIES)
-if(stripekit_jsoncpp_include_dirs)
-    set(JSONCPP_INCLUDE_DIRS "${stripekit_jsoncpp_include_dirs}" CACHE PATH "" FORCE)
-endif()
-set(JSONCPP_LIBRARIES ${stripekit_jsoncpp_target} CACHE STRING "" FORCE)
 
 if(STRIPEKIT_BUILD_DROGON_ADAPTER)
     set(STRIPEKIT_DROGON_VERSION 1.9.10)
@@ -180,7 +186,7 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
         message(FATAL_ERROR "StripeKit could not find or fetch Drogon.")
     endif()
 
-    add_library(stripekit_drogon
+    add_library(stripekit_drogon ${STRIPEKIT_LIB_TYPE}
         src/adapters/drogon/DrogonHTTPClient.cpp
         src/adapters/drogon/DrogonLogger.cpp
         src/adapters/drogon/DrogonWebhookEndpoint.cpp
