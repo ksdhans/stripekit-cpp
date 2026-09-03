@@ -142,7 +142,9 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
         if(NOT stripekit_drogon_target)
             FetchContent_Declare(
                 Drogon
-                URL https://github.com/drogonframework/drogon/archive/refs/tags/v${STRIPEKIT_DROGON_VERSION}.tar.gz
+                GIT_REPOSITORY https://github.com/drogonframework/drogon.git
+                GIT_TAG v${STRIPEKIT_DROGON_VERSION}
+                GIT_SUBMODULES_RECURSE TRUE
                 FIND_PACKAGE_ARGS ${STRIPEKIT_DROGON_VERSION} CONFIG REQUIRED
             )
             FetchContent_MakeAvailable(Drogon)
@@ -156,7 +158,9 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
     else()
         FetchContent_Declare(
             Drogon
-            URL https://github.com/drogonframework/drogon/archive/refs/tags/v${STRIPEKIT_DROGON_VERSION}.tar.gz
+            GIT_REPOSITORY https://github.com/drogonframework/drogon.git
+            GIT_TAG v${STRIPEKIT_DROGON_VERSION}
+            GIT_SUBMODULES_RECURSE TRUE
             FIND_PACKAGE_ARGS ${STRIPEKIT_DROGON_VERSION} CONFIG QUIET
         )
         set(BUILD_CTL OFF CACHE BOOL "" FORCE)
