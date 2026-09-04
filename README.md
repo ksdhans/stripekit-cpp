@@ -129,23 +129,23 @@ List all available tests in a suite:
 
 ```bash
 # List unit tests
-./build/tests/stripekit_unit_tests --list
+./build/bin/stripekit_unit_tests --list
 
 # List integration tests
-./build/tests/stripekit_integration_tests --list
+./build/bin/stripekit_integration_tests --list
 ```
 
 Run an individual test or a filtered subset by passing a name substring:
 
 ```bash
 # Run a specific unit test
-./build/tests/stripekit_unit_tests WebhookVerifierTest.ValidSignaturePasses
+./build/bin/stripekit_unit_tests WebhookVerifierTest.ValidSignaturePasses
 
 # Run all tests in a test fixture/suite
-./build/tests/stripekit_unit_tests ModelsAndParserTest
+./build/bin/stripekit_unit_tests ModelsAndParserTest
 
 # Run a specific integration test
-./build/tests/stripekit_integration_tests DrogonWebhookEndpointIntegrationTest.ValidInvoicePaidReturns200AndInvokesHandler
+./build/bin/stripekit_integration_tests DrogonWebhookEndpointIntegrationTest.ValidInvoicePaidReturns200AndInvokesHandler
 ```
 
 ## Integrating With Your Project(s)
