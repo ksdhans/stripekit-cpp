@@ -91,6 +91,36 @@ Run only the sandbox E2E test suite (when enabled with `STRIPEKIT_BUILD_SANDBOX_
 ctest --test-dir build -R stripekit.sandbox --output-on-failure
 ```
 
+### Stripe Sandbox E2E Tests
+
+The sandbox suite runs against a real Stripe sandbox, so it is opt-in and is not
+built by default. Enable it at configure time:
+
+```bash
+cmake -S . -B build -DSTRIPEKIT_BUILD_SANDBOX_TESTS=ON
+cmake --build build
+```
+
+It needs a Stripe sandbox secret key and the Stripe CLI, both supplied through
+environment variables so local shells and CI runners share one contract:
+
+```bash
+export STRIPEKIT_SANDBOX_ENABLED=1
+export STRIPE_API_KEY=sk_test_your_sandbox_key
+ctest --test-dir build -R stripekit.sandbox --output-on-failure
+```
+
+Inbound webhooks arrive through `stripe listen`, which connects outbound to
+Stripe. No public hostname, tunnel, or inbound port is needed, so the suite works
+behind NAT and on ephemeral CI runners.
+
+Without `STRIPEKIT_SANDBOX_ENABLED` the suite skips and reports success, so
+contributors without Stripe access are unaffected.
+
+See [tests/sandbox/README.md](tests/sandbox/README.md) for full setup, including
+how to create a dedicated CI sandbox and how to store the key as a protected,
+masked GitLab CI/CD variable.
+
 ### Running and Listing Individual Tests
 
 You can also run the test executables directly to list all test cases or run specific individual tests:

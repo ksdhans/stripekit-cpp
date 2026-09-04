@@ -85,4 +85,44 @@ if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
     endif()
 
     add_test(NAME stripekit.integration COMMAND stripekit_integration_tests)
+
+    if(STRIPEKIT_BUILD_SANDBOX_TESTS)
+        add_executable(stripekit_sandbox_tests
+            sandbox/Main.cpp
+            sandbox/SandboxEnvironment.cpp
+            sandbox/TestDisputeAndRefund.cpp
+            sandbox/TestSubscriptionLifecycle.cpp
+            sandbox/TestWebhookDelivery.cpp
+        )
+
+        set_target_properties(stripekit_sandbox_tests PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON
+        )
+
+        target_include_directories(stripekit_sandbox_tests
+            PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}
+                ${CMAKE_CURRENT_SOURCE_DIR}/sandbox
+                ${CMAKE_CURRENT_SOURCE_DIR}/../include
+                ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/include
+                ${CMAKE_CURRENT_SOURCE_DIR}/../src/adapters/drogon/include
+        )
+
+        target_link_libraries(stripekit_sandbox_tests
+            PRIVATE
+                StripeKit::stripekit
+                StripeKit::drogon
+        )
+
+        add_test(NAME stripekit.sandbox COMMAND stripekit_sandbox_tests)
+
+        # Sandbox tests share one Stripe sandbox and wait on live event delivery,
+        # so they must not compete with other tests for it.
+        set_tests_properties(stripekit.sandbox PROPERTIES
+            LABELS sandbox
+            RUN_SERIAL TRUE
+            TIMEOUT 900
+        )
+    endif()
 endif()

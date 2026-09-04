@@ -12,6 +12,7 @@ include(ExternalProject)
 include(FetchContent)
 
 option(STRIPEKIT_BUILD_TESTS "Build StripeKit tests" ON)
+option(STRIPEKIT_BUILD_SANDBOX_TESTS "Build the Stripe sandbox end-to-end tests" OFF)
 option(STRIPEKIT_ENABLE_SQLITE "Enable optional SQLite webhook de-dup store adapter" ON)
 option(STRIPEKIT_BUILD_DROGON_ADAPTER "Build the Drogon runtime adapter" ON)
 

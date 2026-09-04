@@ -57,3 +57,31 @@ test:ctest:
     policy: pull
   script:
     - ctest --test-dir build --output-on-failure
+
+# Sandbox E2E talks to a real Stripe sandbox, so it needs the protected
+# STRIPE_API_KEY variable and must never run in a fork or untrusted context.
+test:sandbox:
+  stage: test
+  cache:
+    <<: *deps_cache
+    policy: pull
+  # Only one pipeline may drive the sandbox at a time.
+  resource_group: stripe-sandbox
+  variables:
+    STRIPEKIT_SANDBOX_ENABLED: "1"
+    STRIPEKIT_SANDBOX_REQUIRED: "1"
+    STRIPE_CLI_VERSION: "1.21.8"
+  script:
+    - apt-get install -y --no-install-recommends curl
+    - curl -sSL "https://github.com/stripe/stripe-cli/releases/download/v${STRIPE_CLI_VERSION}/stripe_${STRIPE_CLI_VERSION}_linux_x86_64.tar.gz" -o /tmp/stripe.tar.gz
+    - tar -xzf /tmp/stripe.tar.gz -C /usr/local/bin stripe
+    - cmake -S . -B build -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DSTRIPEKIT_BUILD_SANDBOX_TESTS=ON
+    - cmake --build build --config ${CMAKE_BUILD_TYPE}
+    - ctest --test-dir build -R stripekit.sandbox --output-on-failure
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # Forks never receive the protected key, so pre-merge runs are limited to
+    # branches in this project and must be started by a maintainer.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_PROJECT_ID
+      when: manual
+      allow_failure: true
