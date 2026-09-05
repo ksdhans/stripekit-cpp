@@ -59,6 +59,24 @@ TEST_F(DrogonHTTPClientIntegrationTest, CustomerCreateAsyncSuccess) {
     EXPECT_EQ(customer.metadata.at("source"), "integration_test");
 }
 
+TEST_F(DrogonHTTPClientIntegrationTest, CustomerCreateSendsStripeVersionHeaderWhenRequested) {
+    const CreateCustomerRequest request{
+        .email = "integration@example.com",
+        .name = "Integration User"
+    };
+
+    const RequestOptions options{
+        .headers = {{"Stripe-Version", "2024-06-20"}}
+    };
+
+    auto task = client->customers().create_async(request, options);
+    const Customer customer = task.result();
+
+    EXPECT_EQ(customer.id, "cus_drogon_123");
+    EXPECT_EQ(DrogonIntegrationEnvironment::get().telemetry.latest_api_request_header("stripe-version"),
+              "2024-06-20");
+}
+
 TEST_F(DrogonHTTPClientIntegrationTest, CustomerCreateCallbackSuccess) {
     const CreateCustomerRequest request{
         .email = "integration@example.com",

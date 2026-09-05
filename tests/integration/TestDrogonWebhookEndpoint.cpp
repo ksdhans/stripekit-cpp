@@ -22,6 +22,7 @@ protected:
     void SetUp() override {
         DrogonIntegrationEnvironment::get().start();
         DrogonIntegrationEnvironment::get().telemetry.reset();
+        DrogonIntegrationEnvironment::get().webhook_logger.clear();
         webhook_secret = DrogonIntegrationEnvironment::get().webhook_secret;
         now_unix = std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
@@ -41,6 +42,20 @@ protected:
             "request": {
                 "id": "req_hook_123"
             }
+        })";
+    }
+
+    std::string make_legacy_event_payload(const std::string& event_id,
+                                          const std::string& type,
+                                          const std::string& request_id) {
+        return R"({
+            "id": ")" + event_id + R"(",
+            "object": "event",
+            "type": ")" + type + R"(",
+            "api_version": "2017-02-14",
+            "created": )" + std::to_string(now_unix) + R"(,
+            "livemode": false,
+            "request": ")" + request_id + R"("
         })";
     }
 };
@@ -79,6 +94,33 @@ TEST_F(DrogonWebhookEndpointIntegrationTest, ValidIgnoredEventReturns200AndInvok
     ASSERT_TRUE(resp != nullptr);
     EXPECT_EQ(resp->statusCode(), ::drogon::k200OK);
     EXPECT_EQ(DrogonIntegrationEnvironment::get().telemetry.ignored_events_count.load(), 1);
+}
+
+TEST_F(DrogonWebhookEndpointIntegrationTest, LegacyStringRequestIdReturns200AndRecordsRequestId) {
+    ASSERT_TRUE(DrogonIntegrationEnvironment::get().class_endpoint_dispatcher != nullptr);
+    DrogonIntegrationEnvironment::get().class_endpoint_dispatcher->clear();
+    DrogonIntegrationEnvironment::get().class_endpoint_dispatcher->set_result(EventDispatchResult::Handled);
+
+    const std::string payload = make_legacy_event_payload(
+        "evt_legacy_string_request_1",
+        "charge.refunded",
+        "req_legacy_string_123");
+    const std::string sig_header = make_stripe_signature_header(now_unix, payload, webhook_secret);
+
+    auto [result, resp] = DrogonIntegrationEnvironment::get().send_raw_post(
+        "/test/webhook/class-endpoint",
+        payload,
+        {{"stripe-signature", sig_header}});
+
+    EXPECT_EQ(result, ::drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp != nullptr);
+    EXPECT_EQ(resp->statusCode(), ::drogon::k200OK);
+
+    const auto signals = DrogonIntegrationEnvironment::get().class_endpoint_dispatcher->get_recorded_signals();
+    ASSERT_EQ(signals.size(), 1u);
+    EXPECT_EQ(signals[0].envelope.id, "evt_legacy_string_request_1");
+    EXPECT_EQ(signals[0].envelope.type, "charge.refunded");
+    EXPECT_EQ(signals[0].envelope.request_id, "req_legacy_string_123");
 }
 
 TEST_F(DrogonWebhookEndpointIntegrationTest, ReplayedProcessedWebhookReturns200WithoutReexecutingHandler) {
@@ -145,6 +187,30 @@ TEST_F(DrogonWebhookEndpointIntegrationTest, HandlerExceptionReturns500) {
     EXPECT_EQ(result, ::drogon::ReqResult::Ok);
     ASSERT_TRUE(resp != nullptr);
     EXPECT_EQ(resp->statusCode(), ::drogon::k500InternalServerError);
+}
+
+TEST_F(DrogonWebhookEndpointIntegrationTest, HandlerExceptionLogRedactsSecretTokens) {
+    const std::string payload = make_event_payload("evt_int_secret_throwing_1", "invoice.paid");
+    const std::string sig_header = make_stripe_signature_header(now_unix, payload, webhook_secret);
+
+    auto [result, resp] = DrogonIntegrationEnvironment::get().send_raw_post(
+        "/test/webhook/throwing-secret",
+        payload,
+        {{"stripe-signature", sig_header}});
+
+    EXPECT_EQ(result, ::drogon::ReqResult::Ok);
+    ASSERT_TRUE(resp != nullptr);
+    EXPECT_EQ(resp->statusCode(), ::drogon::k500InternalServerError);
+
+    const auto entries = DrogonIntegrationEnvironment::get().webhook_logger.get_entries();
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].level, LogLevel::Error);
+    EXPECT_TRUE(entries[0].message.find("whsec_...") != std::string::npos);
+    EXPECT_TRUE(entries[0].message.find("sk_test_...") != std::string::npos);
+    EXPECT_TRUE(entries[0].message.find("Bearer <redacted>") != std::string::npos);
+    EXPECT_TRUE(entries[0].message.find("whsec_handler_secret") == std::string::npos);
+    EXPECT_TRUE(entries[0].message.find("sk_test_handler_key") == std::string::npos);
+    EXPECT_TRUE(entries[0].message.find("handler-token") == std::string::npos);
 }
 
 TEST_F(DrogonWebhookEndpointIntegrationTest, HackerForgedSignatureWithFakeSecretRejectedWith400) {

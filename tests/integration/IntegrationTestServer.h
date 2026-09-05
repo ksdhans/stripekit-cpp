@@ -181,7 +181,8 @@ struct WebhookTestTelemetry {
     std::atomic<int> handled_events_count{0};
     std::atomic<int> ignored_events_count{0};
     std::vector<std::string> received_event_ids;
-    std::mutex mutex;
+    std::vector<std::unordered_map<std::string, std::string>> api_request_headers;
+    mutable std::mutex mutex;
 
     void record_event(const std::string& id) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -193,7 +194,69 @@ struct WebhookTestTelemetry {
         ignored_events_count = 0;
         std::lock_guard<std::mutex> lock(mutex);
         received_event_ids.clear();
+        api_request_headers.clear();
     }
+
+    void record_api_request(const ::drogon::HttpRequestPtr& request) {
+        std::lock_guard<std::mutex> lock(mutex);
+        api_request_headers.push_back({
+            {"authorization", request->getHeader("authorization")},
+            {"stripe-version", request->getHeader("stripe-version")},
+            {"x-custom-client-header", request->getHeader("x-custom-client-header")}
+        });
+    }
+
+    std::string latest_api_request_header(const std::string& name) const {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (api_request_headers.empty()) {
+            return {};
+        }
+
+        const auto& headers = api_request_headers.back();
+        const auto it = headers.find(name);
+        return it == headers.end() ? std::string() : it->second;
+    }
+};
+
+/** Captures integration log messages for adapter and core webhook checks. */
+class IntegrationLogger final : public Logger {
+public:
+    struct Entry {
+        LogLevel level;
+        std::string message;
+        LogContext context;
+    };
+
+    bool should_log(LogLevel level) const override {
+        return level >= LogLevel::Warn && level < LogLevel::Off;
+    }
+
+    void log(LogLevel level, std::string_view message, const LogContext& context) override {
+        if (!should_log(level)) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex);
+        entries.push_back(Entry{
+            .level = level,
+            .message = std::string(message),
+            .context = context
+        });
+    }
+
+    std::vector<Entry> get_entries() const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return entries;
+    }
+
+    void clear() {
+        std::lock_guard<std::mutex> lock(mutex);
+        entries.clear();
+    }
+
+private:
+    mutable std::mutex mutex;
+    std::vector<Entry> entries;
 };
 
 /**
@@ -210,7 +273,9 @@ public:
     static constexpr const char* api_key = "sk_test_integration_valid_key_456";
 
     InMemoryWebhookDedupStore dedup_store;
+    InMemoryWebhookDedupStore logged_dedup_store;
     WebhookTestTelemetry telemetry;
+    IntegrationLogger webhook_logger;
     std::unique_ptr<MockEventDispatcher> class_endpoint_dispatcher;
     std::unique_ptr<WebhookProcessor> class_endpoint_processor;
     std::unique_ptr<stripekit::drogon::WebhookEndpoint> class_endpoint;
@@ -305,6 +370,7 @@ private:
                     callback(resp);
                     return;
                 }
+                telemetry.record_api_request(req);
 
                 auto resp = ::drogon::HttpResponse::newHttpResponse();
                 resp->setStatusCode(::drogon::k200OK);
@@ -336,6 +402,7 @@ private:
                     callback(resp);
                     return;
                 }
+                telemetry.record_api_request(req);
 
                 auto resp = ::drogon::HttpResponse::newHttpResponse();
                 resp->setStatusCode(::drogon::k200OK);
@@ -364,6 +431,7 @@ private:
                     callback(resp);
                     return;
                 }
+                telemetry.record_api_request(req);
 
                 auto resp = ::drogon::HttpResponse::newHttpResponse();
                 resp->setStatusCode(::drogon::k200OK);
@@ -397,6 +465,7 @@ private:
                     callback(resp);
                     return;
                 }
+                telemetry.record_api_request(req);
 
                 auto resp = ::drogon::HttpResponse::newHttpResponse();
                 resp->setStatusCode(::drogon::k200OK);
@@ -429,6 +498,7 @@ private:
                     callback(resp);
                     return;
                 }
+                telemetry.record_api_request(req);
 
                 auto resp = ::drogon::HttpResponse::newHttpResponse();
                 resp->setStatusCode(::drogon::k200OK);
@@ -460,6 +530,7 @@ private:
                     callback(resp);
                     return;
                 }
+                telemetry.record_api_request(req);
 
                 auto resp = ::drogon::HttpResponse::newHttpResponse();
                 resp->setStatusCode(::drogon::k200OK);
@@ -619,6 +690,21 @@ private:
                 throw std::runtime_error("Unexpected database deadlock during webhook handling");
                 co_return stripekit::webhooks::ProcessResult::Handled;
             }
+        });
+
+        // Webhook with a secret-bearing handler error, used to verify that core
+        // webhook logging redacts exception text before it reaches custom loggers.
+        stripekit::drogon::register_webhook_handler({
+            .path = "/test/webhook/throwing-secret",
+            .endpoint_secret = webhook_secret,
+            .dedup_store = logged_dedup_store,
+            .handler = [](const stripekit::webhooks::Event&)
+                -> stripekit::Task<stripekit::webhooks::ProcessResult> {
+                throw std::runtime_error(
+                    "backend error with whsec_handler_secret sk_test_handler_key Authorization: Bearer handler-token");
+                co_return stripekit::webhooks::ProcessResult::Handled;
+            },
+            .logger = &webhook_logger
         });
 
         // Webhook registered via WebhookEndpoint class wrapper
