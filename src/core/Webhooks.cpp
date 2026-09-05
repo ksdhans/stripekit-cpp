@@ -44,7 +44,7 @@ void log_message(Logger* logger, LogLevel level, std::string_view message, const
     }
 
     logger->log(level,
-                message,
+                redact_sensitive_text(message),
                 LogContext{
                     .request_id = event.request_id,
                     .event_id = event.id,

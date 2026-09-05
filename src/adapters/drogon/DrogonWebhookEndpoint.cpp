@@ -21,7 +21,7 @@ namespace {
 
 void log_webhook_failure(Logger* logger, std::string_view message) {
     if (logger != nullptr && logger->should_log(LogLevel::Error)) {
-        logger->log(LogLevel::Error, message, LogContext{.adapter_name = "drogon"});
+        logger->log(LogLevel::Error, redact_sensitive_text(message), LogContext{.adapter_name = "drogon"});
     }
 }
 

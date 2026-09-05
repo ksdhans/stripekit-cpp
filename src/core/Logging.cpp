@@ -64,6 +64,41 @@ static std::string lowercase_ascii(std::string_view text) {
     return output;
 }
 
+/** Returns true when a character may be part of a secret token. */
+static bool is_token_character(char ch) {
+    return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '_' || ch == '-';
+}
+
+/** Redacts every token beginning with a known sensitive prefix. */
+static void redact_prefixed_tokens(std::string& text, std::string_view prefix) {
+    std::size_t position = 0;
+    while ((position = text.find(prefix, position)) != std::string::npos) {
+        std::size_t end = position + prefix.size();
+        while (end < text.size() && is_token_character(text[end])) {
+            ++end;
+        }
+
+        text.replace(position, end - position, std::string(prefix) + "...");
+        position += prefix.size() + 3;
+    }
+}
+
+/** Redacts bearer token values from free-form text. */
+static void redact_bearer_tokens(std::string& text) {
+    constexpr std::string_view prefix = "Bearer ";
+    std::size_t position = 0;
+    while ((position = text.find(prefix, position)) != std::string::npos) {
+        const std::size_t value_start = position + prefix.size();
+        std::size_t end = value_start;
+        while (end < text.size() && !std::isspace(static_cast<unsigned char>(text[end]))) {
+            ++end;
+        }
+
+        text.replace(value_start, end - value_start, "<redacted>");
+        position = value_start + 10;
+    }
+}
+
 bool NullLogger::should_log(LogLevel level) const {
     (void)level;
     return false;
@@ -92,7 +127,7 @@ void ConsoleLogger::log(LogLevel level, std::string_view message, const LogConte
     std::ostringstream out;
     out << "[StripeKit]";
     out << " [" << log_level_label(level) << "] ";
-    out << message;
+    out << redact_sensitive_text(message);
 
     if (!context.request_id.empty()) {
         out << " request_id=" << redact_sensitive_value(context.request_id);
@@ -134,6 +169,19 @@ std::string redact_sensitive_value(std::string_view value) {
     }
 
     return "<redacted>";
+}
+
+std::string redact_sensitive_text(std::string_view text) {
+    std::string redacted(text);
+    redact_prefixed_tokens(redacted, "whsec_");
+    redact_prefixed_tokens(redacted, "sk_test_");
+    redact_prefixed_tokens(redacted, "sk_live_");
+    redact_prefixed_tokens(redacted, "rk_test_");
+    redact_prefixed_tokens(redacted, "rk_live_");
+    redact_prefixed_tokens(redacted, "pk_test_");
+    redact_prefixed_tokens(redacted, "pk_live_");
+    redact_bearer_tokens(redacted);
+    return redacted;
 }
 
 } // namespace stripekit

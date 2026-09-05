@@ -129,7 +129,7 @@ std::string progress_tail(std::string text) {
 
 /** Prints a sandbox progress line immediately. */
 void sandbox_progress(std::string_view message) {
-    const std::string line = "[SANDBOX] " + std::string(message);
+    const std::string line = "[SANDBOX] " + redact_stripe_secrets(std::string(message));
     std::cout << line << std::endl;
 
     const char* path = std::getenv("STRIPEKIT_TEST_PROGRESS_LOG");
@@ -164,7 +164,7 @@ public:
         std::string line = "Webhook ";
         line += level == LogLevel::Error ? "error" : "warning";
         line += ": ";
-        line += message;
+        line += redact_stripe_secrets(std::string(message));
         if (!context.event_id.empty()) {
             line += " event=" + context.event_id;
         }

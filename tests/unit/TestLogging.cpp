@@ -59,3 +59,13 @@ TEST(LoggingTest, SensitiveValueRedaction) {
     EXPECT_EQ(redact_sensitive_value("sk_test_1234567890"), "<redacted>");
     EXPECT_EQ(redact_sensitive_value("whsec_secret"), "<redacted>");
 }
+
+TEST(LoggingTest, SensitiveTextRedaction) {
+    const std::string text =
+        "failed with sk_test_abc123, whsec_secret456, rk_live_restricted, "
+        "pk_test_publishable, and Authorization: Bearer secret-token";
+
+    EXPECT_EQ(redact_sensitive_text(text),
+              "failed with sk_test_..., whsec_..., rk_live_..., "
+              "pk_test_..., and Authorization: Bearer <redacted>");
+}

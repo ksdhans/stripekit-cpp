@@ -125,4 +125,9 @@ bool is_sensitive_field_name(std::string_view field_name);
  */
 std::string redact_sensitive_value(std::string_view value);
 
+/**
+ * Redacts secret-looking tokens from free-form log text.
+ */
+std::string redact_sensitive_text(std::string_view text);
+
 } // namespace stripekit
