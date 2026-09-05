@@ -5,6 +5,8 @@
 
 #include "SandboxEnvironment.h"
 
+#include "JsonValue.h"
+
 #include "StripeKit/WebhookDedupStore.h"
 #include "StripeKit/Webhooks.h"
 
@@ -158,6 +160,24 @@ std::string find_webhook_secret(const std::string& text) {
         ++end;
     }
     return text.substr(start, end - start);
+}
+
+/**
+ * Parses JSON the same way StripeKit's core does, but returns an empty value
+ * instead of throwing.
+ *
+ * Used only where the text may be a deliberately malformed test payload, so a
+ * parse failure must not be treated as a harness bug.
+ */
+Json::Value try_parse_json(std::string_view text) {
+    if (text.empty()) {
+        return Json::Value();
+    }
+    try {
+        return json_value::parse(text);
+    } catch (const ConfigurationException&) {
+        return Json::Value();
+    }
 }
 
 /**
@@ -319,7 +339,10 @@ std::string SandboxConfig::unavailable_reason() const {
         return "STRIPEKIT_SANDBOX_ENABLED is not set";
     }
     if (api_key.empty()) {
-        return "STRIPE_API_KEY is not set";
+        return "STRIPE_API_KEY is not set; provide the sandbox secret API key (sk_test_...)";
+    }
+    if (api_key.rfind("pk_test", 0) == 0 || api_key.rfind("pk_live", 0) == 0) {
+        return "STRIPE_API_KEY is a publishable key; provide the sandbox secret API key (sk_test_...) instead";
     }
     if (is_unsafe()) {
         return "STRIPE_API_KEY is a live-mode key; the sandbox suite refuses to run against live mode";
@@ -396,12 +419,12 @@ StripeApiResult SandboxStripeApi::send(HttpMethod method,
     StripeApiResult result;
     result.status_code = response.status_code;
     result.raw_body = std::move(response.body);
-    result.body = parse_json(result.raw_body);
+    result.body = try_parse_json(result.raw_body);
     return result;
 }
 
 Json::Value ReceivedEvent::json() const {
-    return parse_json(payload_json);
+    return json_value::parse(payload_json);
 }
 
 /** Everything the environment owns between start and stop. */
@@ -441,7 +464,7 @@ struct SandboxEnvironment::State {
     }
 
     void capture_delivery(std::string payload, std::string signature_header) {
-        const Json::Value parsed = parse_json(payload);
+        const Json::Value parsed = try_parse_json(payload);
         CapturedDelivery delivery{
             .event_id = parsed.isObject() ? parsed.get("id", "").asString() : std::string(),
             .payload = std::move(payload),
@@ -660,21 +683,6 @@ int SandboxEnvironment::post_webhook(std::string_view path,
         throw std::runtime_error("Could not deliver a replayed webhook to the local endpoint");
     }
     return static_cast<int>(response->statusCode());
-}
-
-Json::Value parse_json(std::string_view text) {
-    Json::Value root;
-    if (text.empty()) {
-        return root;
-    }
-
-    Json::CharReaderBuilder builder;
-    const std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
-    std::string errors;
-    if (!reader->parse(text.data(), text.data() + text.size(), &root, &errors)) {
-        return Json::Value();
-    }
-    return root;
 }
 
 Json::Value json_path(const Json::Value& root, std::string_view dotted_path) {

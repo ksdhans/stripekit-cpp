@@ -101,12 +101,15 @@ cmake -S . -B build -DSTRIPEKIT_BUILD_SANDBOX_TESTS=ON
 cmake --build build
 ```
 
-It needs a Stripe sandbox secret key and the Stripe CLI, both supplied through
-environment variables so local shells and CI runners share one contract:
+It needs the Stripe sandbox **secret API key**, not the publishable key. Copy the
+`sk_test_...` value labelled **Secret key** under Dashboard > Developers > API
+keys while the sandbox is selected. The `pk_test_...` Publishable key cannot be
+used. Supply the secret key and the Stripe CLI through environment variables so
+local shells and CI runners share one contract:
 
 ```bash
 export STRIPEKIT_SANDBOX_ENABLED=1
-export STRIPE_API_KEY=sk_test_your_sandbox_key
+export STRIPE_API_KEY=sk_test_your_sandbox_secret_key
 ctest --test-dir build -R stripekit.sandbox --output-on-failure
 ```
 

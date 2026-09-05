@@ -105,6 +105,7 @@ if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
                 ${CMAKE_CURRENT_SOURCE_DIR}
                 ${CMAKE_CURRENT_SOURCE_DIR}/sandbox
                 ${CMAKE_CURRENT_SOURCE_DIR}/../include
+                ${CMAKE_CURRENT_SOURCE_DIR}/../src/core
                 ${CMAKE_CURRENT_SOURCE_DIR}/../src/core/include
                 ${CMAKE_CURRENT_SOURCE_DIR}/../src/adapters/drogon/include
         )

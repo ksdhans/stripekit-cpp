@@ -222,9 +222,6 @@ private:
     std::unique_ptr<State> state;
 };
 
-/** Parses a JSON document, returning a null value when the text is not JSON. */
-Json::Value parse_json(std::string_view text);
-
 /** Returns a nested value addressed by a dotted path, or null when absent. */
 Json::Value json_path(const Json::Value& root, std::string_view dotted_path);
 

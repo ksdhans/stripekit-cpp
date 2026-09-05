@@ -2,6 +2,15 @@
  *
  * Sandbox end-to-end tests for webhook delivery, replay, and recovery using
  * genuinely Stripe-signed payloads.
+ *
+ * Every payload and signature used here was produced by Stripe: each test
+ * first makes a real API call and waits for the Stripe CLI to forward the
+ * resulting live event (see deliver_customer_created below). Only the
+ * duplicate/retry/tamper scenarios then re-post that captured delivery
+ * directly, because Stripe's own redelivery (`stripe events resend`) happens
+ * on Stripe's schedule and cannot be triggered deterministically inside a
+ * test's timeout. Re-posting the exact bytes Stripe already sent exercises
+ * the same signature and de-duplication code paths without that flakiness.
  */
 
 #include "SandboxEnvironment.h"

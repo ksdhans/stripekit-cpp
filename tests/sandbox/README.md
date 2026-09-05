@@ -48,24 +48,28 @@ one contract.
 | Variable | Required | Description |
 | --- | --- | --- |
 | `STRIPEKIT_SANDBOX_ENABLED` | Yes | Set to `1` to opt in. Without it the suite skips, so a key left in your shell cannot silently start calling Stripe. |
-| `STRIPE_API_KEY` | Yes | The sandbox secret key (`sk_test_...`). The Stripe CLI reads this name automatically, so the suite never passes the key on a command line where it would appear in the process list. |
+| `STRIPE_API_KEY` | Yes | The **sandbox secret API key** (`sk_test_...`) from Dashboard > Developers > API keys while the sandbox is selected. Do not use the publishable key (`pk_test_...`). The Stripe CLI reads this name automatically, so the suite never passes the key on a command line where it would appear in the process list. |
 | `STRIPEKIT_SANDBOX_REQUIRED` | No | Set to `1` to fail instead of skip when configuration is missing. Use this in the CI job so a broken secret cannot pass silently. |
 | `STRIPEKIT_SANDBOX_STRIPE_CLI` | No | Path to the Stripe CLI binary. Defaults to `stripe`. |
 | `STRIPEKIT_SANDBOX_EVENT_TIMEOUT_SECONDS` | No | How long to wait for an expected event. Defaults to `90`. |
 | `STRIPEKIT_SANDBOX_MAX_API_CALLS` | No | Stripe API call budget per run, guarding against runaway loops. Defaults to `400`. |
 
-The suite refuses to start when `STRIPE_API_KEY` is a live-mode key, and that
-refusal always fails the run.
+The suite refuses to start when `STRIPE_API_KEY` is a publishable key or a
+live-mode key, and that refusal always fails the run. The required value is the
+secret key beginning with `sk_test_`.
 
 ## Running Locally
 
-Put your sandbox key in a `.env.local` file at the repository root. That path is
-git-ignored, so the key cannot be committed:
+Put your **sandbox secret API key** in a `.env.local` file at the repository
+root. In the Dashboard, select the CI or local sandbox, open **Developers > API
+keys**, and copy its **Secret key** beginning with `sk_test_`. Do not copy the
+Publishable key beginning with `pk_test_`. The path is git-ignored, so the key
+cannot be committed:
 
 ```bash
 # .env.local
 STRIPEKIT_SANDBOX_ENABLED=1
-STRIPE_API_KEY=sk_test_your_local_sandbox_key
+STRIPE_API_KEY=sk_test_your_local_sandbox_secret_key
 ```
 
 Then run the suite:
@@ -87,9 +91,11 @@ successfully, so contributors without Stripe access are unaffected.
 
 ## Running in GitLab CI
 
-Store the CI sandbox key as a GitLab CI/CD variable named `STRIPE_API_KEY`. It
-is injected into the job as an ordinary environment variable, which is why the
-local and CI setups are identical.
+Store the CI sandbox **secret API key** as a GitLab CI/CD variable named
+`STRIPE_API_KEY`. Use the `sk_test_...` value from the CI sandbox's **Secret key**
+field, never its `pk_test_...` Publishable key. GitLab injects it into the job
+as an ordinary environment variable, which is why the local and CI setups are
+identical.
 
 Configure the variable as:
 
@@ -139,7 +145,8 @@ event stream quiet and lets you clear test data independently.
 - **Hosted Checkout cannot be completed headlessly.** Stripe's hosted checkout
   page needs a browser, so the suite asserts that a session is created correctly
   and drives the subscription itself through the API to produce the invoice
-  events.
+  events. See "Manually Verifying Hosted Checkout" below for how to cover the
+  part the automated suite cannot reach.
 - **Stripe's server-side retry schedule is not exercised.** The Stripe CLI
   forwards events but does not reproduce Stripe's backoff behaviour for a failing
   endpoint. Testing that would require a publicly reachable endpoint registered
@@ -147,3 +154,29 @@ event stream quiet and lets you clear test data independently.
 - **Sandbox settings are not seeded.** A from-scratch sandbox may have payment
   methods or capabilities disabled that your main test-mode environment has
   enabled. Check the sandbox's settings first if a flow fails only in CI.
+
+## Manually Verifying Hosted Checkout
+
+`SandboxSubscriptionTest.CheckoutSessionIsCreatedForSubscriptionMode` only
+checks that StripeKit can create a Checkout Session correctly. It cannot drive
+the hosted page itself, complete a real card entry, or follow the redirect back
+to `success_url`, since that page is rendered and operated by Stripe in a
+browser. Cover that part by hand before releases that touch checkout, or when
+changing `CreateCheckoutSessionRequest` handling:
+
+1. Run `stripe listen --forward-to http://127.0.0.1:<port>/stripe/webhook` with
+   your sandbox **secret API key** (`sk_test_...`), pointed at a local build of a small app that calls
+   `checkout().sessions().create_async(...)` and prints the returned `url`.
+2. Open that URL in a browser and pay with a
+   [Stripe test card](https://docs.stripe.com/testing#cards), for example
+   `4242 4242 4242 4242` with any future expiry and any CVC.
+3. Confirm the browser redirects to `success_url`.
+4. Confirm the terminal running `stripe listen` shows `invoice.paid`, and that
+   your app's webhook handler received and processed it.
+5. Repeat with a declining test card (for example `4000 0000 0000 0002`) and
+   confirm the checkout page shows a decline and no `invoice.paid` event
+   arrives.
+
+If this project grows a runnable example under `examples/`, that example is the
+better home for this flow; a human still has to drive the browser step, but a
+working example removes the need to write throwaway glue code each time.
