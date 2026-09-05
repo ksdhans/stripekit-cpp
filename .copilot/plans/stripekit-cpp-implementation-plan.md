@@ -278,7 +278,7 @@ Deliverables:
 - [x] Webhook signature verification implemented.
 - [x] Drogon outbound and inbound adapters implemented (including idempotency propagation and required webhook dispatch). (The adapter is an optional CMake target and requires Drogon with its system prerequisites.)
 - [x] Dependency injection and fallback fetching wired.
-- [ ] Unit/integration/sandbox E2E suites implemented (including invoice-based entitlement signals, dispute events, and refund signal coverage).
-- [ ] GitLab CI gating and protected secret policy implemented.
+- [x] Unit/integration/sandbox E2E suites implemented (including invoice-based entitlement signals, dispute events, and refund signal coverage). (Sandbox coverage is opt-in locally and runs serially against a real Stripe sandbox.)
+- [x] GitLab CI gating and protected secret policy implemented. (Normal pipelines run CTest without sandbox secrets; protected default-branch pipelines run sandbox E2E, and same-project merge requests can run it manually with serialized sandbox access.)
 - [ ] Packaging and consumer integration docs completed. (Install/export and basic integration docs exist; full migration guidance is still pending.)
 - [ ] README refreshed for MVP release messaging and public-facing scope summary.
