@@ -37,6 +37,7 @@ struct CheckoutDemoViewData {
     bool cli_started = false;
     bool can_start_checkout = false;
     std::string configured_summary;
+    std::string listener_log_path;
     std::vector<EventRecord> events;
 };
 

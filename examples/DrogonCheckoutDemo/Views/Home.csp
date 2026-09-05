@@ -41,6 +41,7 @@ auto data = @@.get<stripekit::examples::CheckoutDemoViewData>("data");
         button.secondary, .button.secondary { background: #334657; }
         code { overflow-wrap: anywhere; background: #eee5d8; border-radius: 5px; padding: 2px 5px; }
         .muted { color: #61707c; }
+        .listener-status { margin: 14px 0 0; }
         .status { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
         .pill { border: 1px solid #cfc4b4; border-radius: 999px; padding: 6px 10px; background: #fffefa; font-size: 0.86rem; }
         .product { min-height: 260px; display: grid; align-content: space-between; background: linear-gradient(145deg, rgba(255,255,255,0.9), rgba(238,247,242,0.86)); }
@@ -97,11 +98,16 @@ auto data = @@.get<stripekit::examples::CheckoutDemoViewData>("data");
                 <span class="pill">Webhook endpoint: /webhook</span>
             </div>
             <p><code>stripe listen --latest --forward-to http://127.0.0.1:<%c++ $$ << data.port; %>/webhook</code></p>
+            <p class="muted">Listener log: <code>{% data.listener_log_path %}</code></p>
             <form method="post" action="/stripe-cli/start">
                 <button class="secondary" type="submit">Start Stripe CLI listener</button>
             </form>
             <%c++ if(data.cli_started) { %>
-            <p class="muted">Listener start was requested. Check stripe-listener.log and paste the whsec value above.</p>
+            <%c++ if(data.has_webhook_secret) { %>
+            <p class="muted listener-status">Listener is started and the webhook signing secret was captured automatically.</p>
+            <%c++ } else { %>
+            <p class="muted listener-status">Listener start was requested. If setup is still incomplete, check the listener log and paste the whsec value above.</p>
+            <%c++ } %>
             <%c++ } %>
         </section>
 

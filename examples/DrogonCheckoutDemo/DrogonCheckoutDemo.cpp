@@ -13,8 +13,12 @@
 #include <drogon/drogon.h>
 
 #include <chrono>
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -22,6 +26,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -29,6 +34,7 @@
 namespace {
 
 constexpr std::string_view stripe_api_version = "2024-06-20";
+constexpr std::string_view listener_log_filename = "stripe-listener.log";
 
 using stripekit::examples::CheckoutDemoViewData;
 using stripekit::examples::EventRecord;
@@ -69,6 +75,50 @@ bool stripe_cli_installed() {
     return std::system("command -v stripe >/dev/null 2>&1") == 0;
 }
 
+std::string extract_webhook_secret(std::string_view text) {
+    constexpr std::string_view prefix = "whsec_";
+    const auto start = text.find(prefix);
+    if (start == std::string_view::npos) {
+        return {};
+    }
+
+    auto end = start;
+    while (end < text.size()) {
+        const unsigned char character = static_cast<unsigned char>(text[end]);
+        if (std::isalnum(character) || text[end] == '_') {
+            ++end;
+        } else {
+            break;
+        }
+    }
+    return std::string(text.substr(start, end - start));
+}
+
+std::string read_file(std::string_view path) {
+    std::ifstream input{std::string(path)};
+    if (!input) {
+        return {};
+    }
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    return contents.str();
+}
+
+std::string wait_for_webhook_secret(std::string_view path) {
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        const auto secret = extract_webhook_secret(read_file(path));
+        if (!secret.empty()) {
+            return secret;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    return {};
+}
+
+std::string listener_log_path() {
+    return std::filesystem::absolute(std::string(listener_log_filename)).string();
+}
+
 std::string configured_summary(std::string_view api_key, std::string_view webhook_secret) {
     if (api_key.empty()) {
         return "Secret key is not configured.";
@@ -86,6 +136,7 @@ CheckoutDemoViewData make_home_view_data(const std::shared_ptr<AppState>& state,
     data.port = port;
     data.notice = std::move(notice);
     data.stripe_cli_installed = stripe_cli_installed();
+    data.listener_log_path = listener_log_path();
     {
         std::lock_guard<std::mutex> lock(state->mutex);
         data.has_api_key = !state->api_key.empty();
@@ -209,15 +260,23 @@ int main(int argc, char** argv) {
                 return;
             }
             std::ostringstream command;
+            std::remove(std::string(listener_log_filename).c_str());
             command << "nohup stripe listen --latest --forward-to http://127.0.0.1:" << port
-                    << "/webhook > stripe-listener.log 2>&1 &";
+                    << "/webhook > " << listener_log_filename << " 2>&1 &";
             const int result = std::system(command.str().c_str());
+            const auto captured_secret = result == 0 ? wait_for_webhook_secret(listener_log_filename) : std::string();
             {
                 std::lock_guard<std::mutex> lock(state->mutex);
                 state->cli_started = result == 0;
+                if (!captured_secret.empty()) {
+                    state->webhook_secret = captured_secret;
+                }
             }
             callback(home_response(state, port,
-                result == 0 ? "Stripe CLI listener start requested." : "Could not start Stripe CLI listener."));
+                result != 0 ? "Could not start Stripe CLI listener."
+                            : captured_secret.empty()
+                                ? "Stripe CLI listener start requested. Could not capture the webhook secret yet; check stripe-listener.log."
+                                : "Stripe CLI listener started and webhook secret captured."));
         }, {::drogon::Post});
 
     ::drogon::app().registerHandler("/checkout",
@@ -272,7 +331,7 @@ int main(int argc, char** argv) {
                             .metadata = {{"example", "drogon-checkout-demo"}}
                         },
                         api_options(idempotency_key("checkout")),
-                        [callback = std::move(callback)](stripekit::CallbackResult<stripekit::CheckoutSession> checkout_result) mutable {
+                        [client, callback = std::move(callback)](stripekit::CallbackResult<stripekit::CheckoutSession> checkout_result) mutable {
                             if (const auto* error = std::get_if<std::exception_ptr>(&checkout_result)) {
                                 try {
                                     std::rethrow_exception(*error);
