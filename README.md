@@ -37,6 +37,12 @@ Requirements:
 - TLS development headers and library. StripeKit uses Stripe's HTTPS API, so
 	install `libssl-dev` on Debian/Ubuntu or `openssl-devel` on Fedora/RHEL.
 
+On Debian/Ubuntu, install the minimal build dependencies with:
+
+```bash
+sudo apt install build-essential cmake git uuid-dev zlib1g-dev libssl-dev
+```
+
 Drogon requires Trantor, JsonCpp, UUID, and Zlib on Linux. CMake fetches Drogon,
 its Trantor dependency, and JsonCpp, so UUID, Zlib, and TLS development packages
 need to be installed by the host system. YAML, Brotli, and c-ares support are

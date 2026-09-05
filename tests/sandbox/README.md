@@ -33,7 +33,10 @@ genuinely exercised end to end.
    <https://docs.stripe.com/stripe-cli>. Pin the version in CI so a CLI release
    cannot change the suite's behaviour without a commit.
 
-3. **A build with the suite enabled:**
+3. **Drogon with TLS support.** Stripe's API only accepts HTTPS. When StripeKit
+   fetches Drogon itself, the build requires Trantor's OpenSSL backend.
+
+4. **A build with the suite enabled:**
 
    ```bash
    cmake -S . -B build -DSTRIPEKIT_BUILD_SANDBOX_TESTS=ON
