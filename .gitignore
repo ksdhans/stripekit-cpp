@@ -3,3 +3,4 @@ build*/
 
 # Local Stripe sandbox credentials
 .env.local
+.env.live

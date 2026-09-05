@@ -3,6 +3,11 @@
 This example creates one Billing Portal session and prints the hosted portal
 URL.
 
+This is a CLI example only. It does not bind an HTTP port or serve the return
+page. `STRIPE_RETURN_URL` is the URL that Stripe redirects to after the hosted
+Billing Portal flow; use an app you already have running if you want that page
+to resolve locally.
+
 ## Build
 
 ```bash
@@ -12,11 +17,35 @@ cmake --build build --target stripekit_billing_portal_cli
 
 ## Run
 
+Put the required values in `.env.live`:
+
 ```bash
-export STRIPE_SECRET_KEY=sk_test_your_secret_key
-export STRIPE_CUSTOMER_ID=cus_your_customer_id
-export STRIPE_RETURN_URL=http://127.0.0.1:4242/account
-./build/bin/stripekit_billing_portal_cli
+# .env.live
+STRIPE_SECRET_KEY=sk_test_your_secret_key
+STRIPE_CUSTOMER_ID=cus_your_customer_id
+STRIPE_RETURN_URL=http://127.0.0.1:4242/account
+```
+
+Restrict the file so only your user can read it:
+
+```bash
+umask 077
+chmod 600 .env.live
+chown "$(id -un):$(id -gn)" .env.live
+stat -c '%A %U:%G %n' .env.live
+```
+
+The expected permissions are `-rw-------`.
+
+Run the example in a subshell so those values are exported only to this process:
+
+```bash
+(
+	set -a
+	. ./.env.live
+	set +a
+	./build/bin/stripekit_billing_portal_cli
+)
 ```
 
 The example rejects live keys and pins `Stripe-Version: 2024-06-20`.

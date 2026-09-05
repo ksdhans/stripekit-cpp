@@ -22,6 +22,36 @@ Run the demo:
 ./build/bin/stripekit_drogon_checkout_demo
 ```
 
+Or load local values from `.env.live` without leaving them in your shell:
+
+```bash
+# .env.live
+STRIPE_SECRET_KEY=sk_test_your_secret_key
+STRIPE_WEBHOOK_SECRET=whsec_your_cli_secret
+# Optional: use a dashboard-managed recurring Price instead of inline demo data.
+# STRIPE_PRICE_ID=price_your_recurring_price_id
+```
+
+```bash
+(
+	set -a
+	. ./.env.live
+	set +a
+	./build/bin/stripekit_drogon_checkout_demo
+)
+```
+
+Restrict the file so only your user can read it:
+
+```bash
+umask 077
+chmod 600 .env.live
+chown "$(id -un):$(id -gn)" .env.live
+stat -c '%A %U:%G %n' .env.live
+```
+
+The expected permissions are `-rw-------`.
+
 Open `http://127.0.0.1:4242`, enter your `sk_test_...` secret key, then set up
 webhook forwarding. The app rejects `sk_live_...` keys. By default, Checkout
 uses inline demo product data, so you do not need to create a Product or Price

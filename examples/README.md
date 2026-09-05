@@ -17,6 +17,40 @@ cmake --build build --target stripekit_drogon_checkout_demo
 
 All examples use Stripe test mode. Do not use live keys with these programs.
 
+## Running With Local Secrets
+
+Keep local example values in `.env.live` at the repository root and load them in
+a subshell. The variables are exported only to the example process and disappear
+when the subshell exits:
+
+```bash
+(
+	set -a
+	. ./.env.live
+	set +a
+	./build/bin/stripekit_drogon_checkout_demo
+)
+```
+
+The `.env.live` file is git-ignored. Despite the file name, use test-mode
+Stripe values with these examples; `sk_live_...` secret keys are rejected.
+Protect the file at the filesystem level too:
+
+```bash
+umask 077
+chmod 600 .env.live
+chown "$(id -un):$(id -gn)" .env.live
+stat -c '%A %U:%G %n' .env.live
+```
+
+The expected permissions are `-rw-------`. `chmod 600` is the important step;
+`umask 077` also keeps later files created in the same shell user-only by
+default.
+
+The Drogon server examples choose return and webhook URLs from the port they bind
+to. The CLI examples do not bind ports; their return URL environment variables
+are just the URLs Stripe redirects to after the hosted flow.
+
 ## Available Examples
 
 - [DrogonCheckoutDemo](DrogonCheckoutDemo/README.md) is the main end-to-end
