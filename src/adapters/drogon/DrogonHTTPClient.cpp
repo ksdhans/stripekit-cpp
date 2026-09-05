@@ -11,6 +11,7 @@
 #include <drogon/HttpClient.h>
 #include <drogon/HttpRequest.h>
 #include <drogon/HttpResponse.h>
+#include <trantor/utils/Utilities.h>
 
 #include <future>
 #include <utility>
@@ -18,6 +19,17 @@
 namespace stripekit::drogon {
 
 namespace {
+
+void require_tls_for_https(std::string_view api_base_url) {
+    if (!api_base_url.starts_with("https://")) {
+        return;
+    }
+
+    if (trantor::utils::tlsBackend() == "None") {
+        throw ConfigurationException(
+            "The Drogon HTTP client requires a Trantor TLS backend for HTTPS Stripe API requests");
+    }
+}
 
 class OwnedStripeClient final : public StripeClient {
 public:
@@ -54,6 +66,7 @@ HTTPClient::HTTPClient(std::string api_key, std::string api_base_url)
     if (this->api_key.empty()) {
         throw ConfigurationException("A Stripe API key is required for the Drogon HTTP client");
     }
+    require_tls_for_https(api_base_url);
 }
 
 HTTPClient::~HTTPClient() = default;
