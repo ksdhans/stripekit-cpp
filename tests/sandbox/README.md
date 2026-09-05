@@ -101,10 +101,15 @@ Configure the variable as:
 
 - **Protected**, so it is only exposed to protected branches and tags. This is
   what keeps the key away from fork and untrusted merge request pipelines.
-- **Masked**, so it cannot be printed in job logs. GitLab restricts masked
-  values to the Base64 alphabet plus `@ : . ~`. If GitLab refuses to mask the
-  key, store it Base64-encoded and decode it in `before_script` rather than
-  leaving it unmasked.
+- **Masked and hidden**, so it is both redacted from job logs and not revealable
+   later in the GitLab settings UI. Choose this when creating the variable; GitLab
+   does not allow an existing variable to be changed to hidden. The value must
+   satisfy GitLab's masked-variable rules.
+
+Use **Masked** instead only when you need to view or edit the value later. Both
+settings mask the value in job logs; hiding controls whether the value can be
+revealed in the GitLab UI. If GitLab refuses to mask the key, check the value
+has no whitespace or line breaks and that variable expansion is disabled.
 
 Keep `CI_DEBUG_TRACE` disabled for the job; it defeats masking.
 
