@@ -105,13 +105,20 @@ It needs the Stripe sandbox **secret API key**, not the publishable key. Copy th
 `sk_test_...` value labelled **Secret key** under Dashboard > Developers > API
 keys while the sandbox is selected. The `pk_test_...` Publishable key cannot be
 used. Supply the secret key and the Stripe CLI through environment variables so
-local shells and CI runners share one contract:
+local shells and CI runners share one contract. To keep the variables scoped to
+the test command, load the git-ignored `.env.local` file in a subshell:
 
 ```bash
-export STRIPEKIT_SANDBOX_ENABLED=1
-export STRIPE_API_KEY=sk_test_your_sandbox_secret_key
-ctest --test-dir build -R stripekit.sandbox --output-on-failure
+(
+	set -a
+	. ./.env.local
+	set +a
+	ctest --test-dir build -R stripekit.sandbox --output-on-failure
+)
 ```
+
+The variables are inherited by `ctest` and the sandbox test process, then leave
+the environment when the subshell exits.
 
 Inbound webhooks arrive through `stripe listen`, which connects outbound to
 Stripe. No public hostname, tunnel, or inbound port is needed, so the suite works

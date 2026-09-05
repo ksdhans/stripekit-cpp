@@ -72,18 +72,50 @@ STRIPEKIT_SANDBOX_ENABLED=1
 STRIPE_API_KEY=sk_test_your_local_sandbox_secret_key
 ```
 
+Protect the file at the filesystem level as well. It should be owned by your
+user and readable/writable only by that user:
+
+```bash
+umask 077
+chmod 600 .env.local
+chown "$(id -un):$(id -gn)" .env.local
+stat -c '%A %U:%G %n' .env.local
+```
+
+The expected permissions are `-rw-------`. `chmod 600` is the important step;
+`umask 077` also ensures files you create later in the same shell default to
+user-only access. The file is listed in `.gitignore`, but verify that Git is
+ignoring it before running tests:
+
+```bash
+git check-ignore -v .env.local
+```
+
 Then run the suite:
 
 ```bash
-set -a; . ./.env.local; set +a
-ctest --test-dir build -R stripekit.sandbox --output-on-failure
+(
+   set -a
+   . ./.env.local
+   set +a
+   ctest --test-dir build -R stripekit.sandbox --output-on-failure
+)
 ```
+
+Loading the file inside the subshell keeps `STRIPE_API_KEY` and the other
+sandbox variables available to `ctest` and its child processes only. They are
+removed from the shell environment when the subshell exits.
 
 Or run the binary directly, optionally filtering by name:
 
 ```bash
-./build/bin/stripekit_sandbox_tests --list
-./build/bin/stripekit_sandbox_tests SandboxWebhookDeliveryTest
+(
+   set -a
+   . ./.env.local
+   set +a
+   ./build/bin/stripekit_sandbox_tests --list
+   ./build/bin/stripekit_sandbox_tests SandboxWebhookDeliveryTest
+)
 ```
 
 Without `STRIPEKIT_SANDBOX_ENABLED`, the suite prints a skip message and exits
