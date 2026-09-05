@@ -139,6 +139,11 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
     set(STRIPEKIT_DROGON_VERSION 1.9.10)
     set(stripekit_drogon_target "")
 
+    if(jsoncpp_SOURCE_DIR)
+        set(JSONCPP_INCLUDE_DIRS "${jsoncpp_SOURCE_DIR}/include" CACHE PATH "jsoncpp include dir" FORCE)
+        set(JSONCPP_LIBRARIES "${stripekit_jsoncpp_target}" CACHE STRING "jsoncpp library" FORCE)
+    endif()
+
     if(USE_EXTERNAL_DROGON)
         if(TARGET Drogon::Drogon)
             set(stripekit_drogon_target Drogon::Drogon)
@@ -168,13 +173,20 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
             GIT_REPOSITORY https://github.com/drogonframework/drogon.git
             GIT_TAG v${STRIPEKIT_DROGON_VERSION}
             GIT_SUBMODULES_RECURSE TRUE
-            FIND_PACKAGE_ARGS ${STRIPEKIT_DROGON_VERSION} CONFIG QUIET
         )
         set(BUILD_CTL OFF CACHE BOOL "" FORCE)
         set(BUILD_ORM OFF CACHE BOOL "" FORCE)
         set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
         set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+        set(BUILD_BROTLI OFF CACHE BOOL "" FORCE)
+        set(BUILD_C-ARES OFF CACHE BOOL "" FORCE)
+        set(BUILD_YAML_CONFIG OFF CACHE BOOL "" FORCE)
+        set(TRANTOR_USE_TLS "openssl" CACHE STRING "TLS provider for Trantor" FORCE)
         FetchContent_MakeAvailable(Drogon)
+
+        if(TARGET drogon AND UUID_INCLUDE_DIR)
+            target_include_directories(drogon PRIVATE ${UUID_INCLUDE_DIR})
+        endif()
 
         if(TARGET Drogon::Drogon)
             set(stripekit_drogon_target Drogon::Drogon)
