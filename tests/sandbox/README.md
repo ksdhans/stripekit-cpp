@@ -40,7 +40,7 @@ genuinely exercised end to end.
 
    ```bash
    cmake -S . -B build -DSTRIPEKIT_BUILD_SANDBOX_TESTS=ON
-   cmake --build build
+   cmake --build build --parallel
    ```
 
 ## Configuration
