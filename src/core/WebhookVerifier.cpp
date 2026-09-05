@@ -160,12 +160,18 @@ VerificationMetadata DefaultWebhookSignatureVerifier::verify(const WebhookVerifi
     signed_payload_stream << timestamp << '.' << input.payload;
     const std::string signed_payload = signed_payload_stream.str();
 
-    unsigned char digest[crypto_auth_hmacsha256_BYTES] = {0};
-    crypto_auth_hmacsha256(
-        digest,
+    crypto_auth_hmacsha256_state state;
+    crypto_auth_hmacsha256_init(
+        &state,
+        reinterpret_cast<const unsigned char*>(input.endpoint_secret.data()),
+        input.endpoint_secret.size());
+    crypto_auth_hmacsha256_update(
+        &state,
         reinterpret_cast<const unsigned char*>(signed_payload.data()),
-        signed_payload.size(),
-        reinterpret_cast<const unsigned char*>(input.endpoint_secret.data()));
+        signed_payload.size());
+
+    unsigned char digest[crypto_auth_hmacsha256_BYTES] = {0};
+    crypto_auth_hmacsha256_final(&state, digest);
 
     const std::string expected_signature = hex_encode(digest, crypto_auth_hmacsha256_BYTES);
 

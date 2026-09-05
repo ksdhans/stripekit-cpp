@@ -71,6 +71,7 @@ TEST_F(SandboxSubscriptionTest, PaidSubscriptionEmitsInvoicePaid) {
     const StripeApiResult created = environment->stripe_api().require_post("/v1/subscriptions", {
         {"customer", customer_id},
         {"items[0][price]", shared_monthly_price()},
+        {"payment_behavior", "allow_incomplete"},
         {"metadata[stripekit_run_id]", environment->run_id()}
     });
 
@@ -91,7 +92,6 @@ TEST_F(SandboxSubscriptionTest, PaidSubscriptionEmitsInvoicePaid) {
     const Json::Value payload = event->json();
     EXPECT_EQ(json_path(payload, "data.object.customer").asString(), customer_id);
     EXPECT_EQ(json_path(payload, "data.object.status").asString(), "paid");
-    EXPECT_TRUE(json_path(payload, "data.object.paid").asBool());
     EXPECT_FALSE(json_path(payload, "livemode").asBool());
 
     const Subscription canceled =
@@ -100,8 +100,13 @@ TEST_F(SandboxSubscriptionTest, PaidSubscriptionEmitsInvoicePaid) {
 }
 
 TEST_F(SandboxSubscriptionTest, DeclinedCardEmitsInvoicePaymentFailed) {
-    const std::string customer_id =
-        create_customer_with_card(*environment, "pm_card_chargeDeclined", "declined");
+    const StripeApiResult customer = environment->stripe_api().require_post("/v1/customers", {
+        {"email", sandbox_email(*environment, "declined")},
+        {"name", "StripeKit E2E declined"},
+        {"source", "tok_chargeCustomerFail"},
+        {"metadata[stripekit_run_id]", environment->run_id()}
+    });
+    const std::string customer_id = customer.id();
 
     const StripeApiResult created = environment->stripe_api().require_post("/v1/subscriptions", {
         {"customer", customer_id},

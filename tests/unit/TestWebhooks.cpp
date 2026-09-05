@@ -62,6 +62,29 @@ TEST_F(WebhooksTest, ConstructEventValid) {
     EXPECT_EQ(event.payload_json, valid_payload);
 }
 
+TEST_F(WebhooksTest, ConstructEventWithLegacyStringRequestId) {
+    const std::string legacy_payload = R"({
+        "id": "evt_legacy_request",
+        "object": "event",
+        "type": "charge.refunded",
+        "api_version": "2017-02-14",
+        "created": 1700000000,
+        "livemode": false,
+        "request": "req_legacy_123"
+    })";
+    const std::string signature_header = make_stripe_signature_header(timestamp_unix, legacy_payload, secret);
+
+    const webhooks::Event event = webhooks::construct_event(
+        legacy_payload,
+        signature_header,
+        secret,
+        webhooks::ConstructEventOptions{.now = now, .tolerance = std::chrono::minutes(5)});
+
+    EXPECT_EQ(event.id, "evt_legacy_request");
+    EXPECT_EQ(event.type, "charge.refunded");
+    EXPECT_EQ(event.request_id, "req_legacy_123");
+}
+
 TEST_F(WebhooksTest, ConstructEventInvalidSignatureThrows) {
     EXPECT_THROW({
         webhooks::construct_event(

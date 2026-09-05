@@ -17,6 +17,16 @@
 
 namespace stripekit::drogon {
 
+namespace {
+
+void log_webhook_failure(Logger* logger, std::string_view message) {
+    if (logger != nullptr && logger->should_log(LogLevel::Error)) {
+        logger->log(LogLevel::Error, message, LogContext{.adapter_name = "drogon"});
+    }
+}
+
+} // namespace
+
 WebhookEndpoint::WebhookEndpoint(WebhookProcessor& processor, std::string endpoint_secret)
     : processor(processor), endpoint_secret(std::move(endpoint_secret)) {}
 
@@ -68,11 +78,20 @@ void register_webhook_handler(WebhookHandlerOptions options) {
 
                 response->setStatusCode(result.response_action == WebhookResponseAction::AcknowledgeSuccess
                     ? ::drogon::k200OK : ::drogon::k500InternalServerError);
-            } catch (const SignatureVerificationException&) {
+            } catch (const SignatureVerificationException& error) {
+                log_webhook_failure(options.logger,
+                                    std::string("Webhook signature verification failed: ") + error.what());
                 response->setStatusCode(::drogon::k400BadRequest);
-            } catch (const StripeKitException&) {
+            } catch (const StripeKitException& error) {
+                log_webhook_failure(options.logger,
+                                    std::string("Webhook processing failed: ") + error.what());
                 response->setStatusCode(::drogon::k400BadRequest);
+            } catch (const std::exception& error) {
+                log_webhook_failure(options.logger,
+                                    std::string("Webhook processing threw: ") + error.what());
+                response->setStatusCode(::drogon::k500InternalServerError);
             } catch (...) {
+                log_webhook_failure(options.logger, "Webhook processing threw an unknown exception");
                 response->setStatusCode(::drogon::k500InternalServerError);
             }
             callback(response);

@@ -17,13 +17,16 @@ namespace {
 Event parse_event(std::string_view payload) {
     const auto object = json_value::parse(payload);
     const auto& request = object["request"];
+    const std::string request_id = request.isString()
+        ? request.asString()
+        : json_value::string(request, "id");
     Event event{
         .id = json_value::string(object, "id"),
         .type = json_value::string(object, "type"),
         .api_version = json_value::string(object, "api_version"),
         .created_unix = json_value::integer(object, "created"),
         .livemode = json_value::boolean(object, "livemode"),
-        .request_id = json_value::string(request, "id"),
+        .request_id = request_id,
         .account = json_value::string(object, "account"),
         .payload_json = std::string(payload)
     };

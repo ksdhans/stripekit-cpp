@@ -232,7 +232,8 @@ std::string sandbox_email(const SandboxEnvironment& environment, std::string_vie
  * Creates a sandbox customer with a test card attached as the default payment method.
  *
  * Pass a Stripe test payment method such as `pm_card_visa` for a card that
- * succeeds, or `pm_card_chargeDeclined` for one that fails.
+ * succeeds, or `pm_card_chargeCustomerFail` for one that attaches successfully
+ * but fails when charged.
  */
 std::string create_customer_with_card(SandboxEnvironment& environment,
                                       std::string_view test_payment_method,

@@ -54,6 +54,9 @@ constexpr const char* forwarded_event_types =
     "charge.dispute.created,"
     "charge.dispute.closed";
 
+/** Stripe API version used by sandbox REST calls for stable E2E semantics. */
+constexpr const char* sandbox_stripe_api_version = "2024-06-20";
+
 /** Reads an environment variable, falling back to a default when unset or empty. */
 std::string env_or(const char* name, std::string fallback) {
     const char* value = std::getenv(name);
@@ -149,6 +152,28 @@ void reset_sandbox_progress_log() {
 
     std::ofstream log(path, std::ios::trunc);
 }
+
+/** Logger that mirrors webhook processing failures into sandbox progress output. */
+class SandboxProgressLogger final : public Logger {
+public:
+    bool should_log(LogLevel level) const override {
+        return level >= LogLevel::Warn && level < LogLevel::Off;
+    }
+
+    void log(LogLevel level, std::string_view message, const LogContext& context) override {
+        std::string line = "Webhook ";
+        line += level == LogLevel::Error ? "error" : "warning";
+        line += ": ";
+        line += message;
+        if (!context.event_id.empty()) {
+            line += " event=" + context.event_id;
+        }
+        if (!context.webhook_type.empty()) {
+            line += " type=" + context.webhook_type;
+        }
+        sandbox_progress(line);
+    }
+};
 
 /** Reads an environment variable as a positive integer, falling back on any parse failure. */
 int env_int(const char* name, int fallback) {
@@ -311,6 +336,7 @@ public:
                 const_cast<char*>(forward_url.c_str()),
                 const_cast<char*>("--events"),
                 const_cast<char*>(events.c_str()),
+                const_cast<char*>("--latest"),
                 nullptr
             };
 
@@ -497,6 +523,7 @@ StripeApiResult SandboxStripeApi::send(HttpMethod method,
     request.path = std::string(path);
     request.body = encode_form(params);
     request.headers.emplace("Content-Type", "application/x-www-form-urlencoded");
+    request.headers.emplace("Stripe-Version", sandbox_stripe_api_version);
 
     HttpResponse response = http_client.send_async(request).result();
 
@@ -530,6 +557,7 @@ struct SandboxEnvironment::State {
 
     InMemoryWebhookDedupStore main_dedup_store;
     InMemoryWebhookDedupStore retry_dedup_store;
+    SandboxProgressLogger progress_logger;
 
     mutable std::mutex mutex;
     std::condition_variable arrived;
@@ -626,7 +654,8 @@ bool SandboxEnvironment::start() {
             -> Task<webhooks::ProcessResult> {
             shared->record_event(event);
             co_return webhooks::ProcessResult::Handled;
-        }
+        },
+        .logger = &state->progress_logger
     });
 
     // Zero timeout so a replayed delivery can reclaim the in-flight record
@@ -642,6 +671,7 @@ bool SandboxEnvironment::start() {
             }
             co_return webhooks::ProcessResult::Handled;
         },
+        .logger = &state->progress_logger,
         .stale_inflight_timeout = std::chrono::minutes(0)
     });
 

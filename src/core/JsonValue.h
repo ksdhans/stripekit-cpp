@@ -30,15 +30,15 @@ inline Json::Value parse(std::string_view body) {
 }
 
 inline std::string string(const Json::Value& object, const char* name) {
-    return object.isMember(name) && object[name].isString() ? object[name].asString() : std::string{};
+    return object.isObject() && object.isMember(name) && object[name].isString() ? object[name].asString() : std::string{};
 }
 
 inline std::int64_t integer(const Json::Value& object, const char* name) {
-    return object.isMember(name) && object[name].isInt64() ? object[name].asInt64() : 0;
+    return object.isObject() && object.isMember(name) && object[name].isInt64() ? object[name].asInt64() : 0;
 }
 
 inline bool boolean(const Json::Value& object, const char* name) {
-    return object.isMember(name) && object[name].isBool() && object[name].asBool();
+    return object.isObject() && object.isMember(name) && object[name].isBool() && object[name].asBool();
 }
 
 } // namespace stripekit::json_value

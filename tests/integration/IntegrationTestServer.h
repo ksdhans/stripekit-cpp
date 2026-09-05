@@ -71,12 +71,18 @@ inline std::string compute_hmac_sha256(std::string_view payload, std::string_vie
     if (sodium_init() < 0) {
         throw std::runtime_error("sodium_init failed in compute_hmac_sha256");
     }
-    unsigned char digest[crypto_auth_hmacsha256_BYTES] = {0};
-    crypto_auth_hmacsha256(
-        digest,
+    crypto_auth_hmacsha256_state state;
+    crypto_auth_hmacsha256_init(
+        &state,
+        reinterpret_cast<const unsigned char*>(secret.data()),
+        secret.size());
+    crypto_auth_hmacsha256_update(
+        &state,
         reinterpret_cast<const unsigned char*>(payload.data()),
-        payload.size(),
-        reinterpret_cast<const unsigned char*>(secret.data()));
+        payload.size());
+
+    unsigned char digest[crypto_auth_hmacsha256_BYTES] = {0};
+    crypto_auth_hmacsha256_final(&state, digest);
     return hex_encode(digest, crypto_auth_hmacsha256_BYTES);
 }
 
