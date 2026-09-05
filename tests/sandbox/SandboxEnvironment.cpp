@@ -93,6 +93,37 @@ std::string progress_value(std::string_view value) {
     return std::string(value.substr(0, max_length - 3)) + "...";
 }
 
+/** Redacts Stripe secrets from command output before logging it. */
+std::string redact_stripe_secrets(std::string text) {
+    const auto redact_token = [&text](std::string_view prefix) {
+        std::size_t position = 0;
+        while ((position = text.find(prefix, position)) != std::string::npos) {
+            std::size_t end = position + prefix.size();
+            while (end < text.size() &&
+                   (std::isalnum(static_cast<unsigned char>(text[end])) != 0 || text[end] == '_')) {
+                ++end;
+            }
+            text.replace(position, end - position, std::string(prefix) + "...");
+            position += prefix.size() + 3;
+        }
+    };
+
+    redact_token("whsec_");
+    redact_token("sk_test_");
+    redact_token("rk_test_");
+    return text;
+}
+
+/** Returns the end of a multi-line diagnostic string. */
+std::string progress_tail(std::string text) {
+    constexpr std::size_t max_length = 1200;
+    text = redact_stripe_secrets(std::move(text));
+    if (text.size() <= max_length) {
+        return text;
+    }
+    return "...\n" + text.substr(text.size() - max_length);
+}
+
 /** Prints a sandbox progress line immediately. */
 void sandbox_progress(std::string_view message) {
     const std::string line = "[SANDBOX] " + std::string(message);
@@ -527,6 +558,11 @@ struct SandboxEnvironment::State {
             .signature_header = std::move(signature_header)
         };
 
+        const std::string event_type = parsed.isObject() ? parsed.get("type", "").asString() : std::string();
+        sandbox_progress("Captured raw webhook delivery " +
+                         (event_type.empty() ? std::string("<unknown>") : event_type) +
+                         (delivery.event_id.empty() ? std::string() : " (" + delivery.event_id + ")"));
+
         std::lock_guard<std::mutex> lock(mutex);
         deliveries.push_back(std::move(delivery));
     }
@@ -706,6 +742,12 @@ std::optional<ReceivedEvent> SandboxEnvironment::wait_for_event(std::string_view
             if (!final_match) {
                 sandbox_progress("Timed out waiting for webhook " + event_type +
                                  (match_value.empty() ? std::string() : " matching " + match_value));
+                if (state->listener) {
+                    const std::string cli_output = progress_tail(state->listener->output());
+                    sandbox_progress(cli_output.empty()
+                                         ? "Stripe CLI has not produced any output since startup"
+                                         : "Recent Stripe CLI output:\n" + cli_output);
+                }
             }
             return final_match;
         }
