@@ -139,11 +139,6 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
     set(STRIPEKIT_DROGON_VERSION 1.9.10)
     set(stripekit_drogon_target "")
 
-    if(jsoncpp_SOURCE_DIR)
-        set(JSONCPP_INCLUDE_DIRS "${jsoncpp_SOURCE_DIR}/include" CACHE PATH "jsoncpp include dir" FORCE)
-        set(JSONCPP_LIBRARIES "${stripekit_jsoncpp_target}" CACHE STRING "jsoncpp library" FORCE)
-    endif()
-
     if(USE_EXTERNAL_DROGON)
         if(TARGET Drogon::Drogon)
             set(stripekit_drogon_target Drogon::Drogon)
