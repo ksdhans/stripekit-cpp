@@ -189,8 +189,8 @@ event stream quiet and lets you clear test data independently.
 - **Hosted Checkout cannot be completed headlessly.** Stripe's hosted checkout
   page needs a browser, so the suite asserts that a session is created correctly
   and drives the subscription itself through the API to produce the invoice
-  events. See "Manually Verifying Hosted Checkout" below for how to cover the
-  part the automated suite cannot reach.
+  events. Use the Drogon Checkout demo below to cover the part the automated
+  suite cannot reach.
 - **Stripe's server-side retry schedule is not exercised.** The Stripe CLI
   forwards events but does not reproduce Stripe's backoff behaviour for a failing
   endpoint. Testing that would require a publicly reachable endpoint registered
@@ -199,28 +199,38 @@ event stream quiet and lets you clear test data independently.
   methods or capabilities disabled that your main test-mode environment has
   enabled. Check the sandbox's settings first if a flow fails only in CI.
 
-## Manually Verifying Hosted Checkout
+## Verifying Hosted Checkout With The Demo
 
 `SandboxSubscriptionTest.CheckoutSessionIsCreatedForSubscriptionMode` only
 checks that StripeKit can create a Checkout Session correctly. It cannot drive
 the hosted page itself, complete a real card entry, or follow the redirect back
 to `success_url`, since that page is rendered and operated by Stripe in a
-browser. Cover that part by hand before releases that touch checkout, or when
-changing `CreateCheckoutSessionRequest` handling:
+browser. Cover that part with [examples/DrogonCheckoutDemo](../../examples/DrogonCheckoutDemo/README.md)
+before releases that touch checkout, or when changing
+`CreateCheckoutSessionRequest` handling:
 
-1. Run `stripe listen --forward-to http://127.0.0.1:<port>/stripe/webhook` with
-   your sandbox **secret API key** (`sk_test_...`), pointed at a local build of a small app that calls
-   `checkout().sessions().create_async(...)` and prints the returned `url`.
-2. Open that URL in a browser and pay with a
+1. Build the demo:
+
+   ```bash
+   cmake -S . -B build -DSTRIPEKIT_BUILD_EXAMPLES=ON
+   cmake --build build --target stripekit_drogon_checkout_demo
+   ```
+
+2. Run `./build/bin/stripekit_drogon_checkout_demo` and open
+   `http://127.0.0.1:4242`.
+3. Enter a sandbox **secret API key** (`sk_test_...`) and the `whsec_...` value
+   from:
+
+   ```bash
+   stripe listen --latest --forward-to http://127.0.0.1:4242/webhook
+   ```
+
+4. Start Checkout from the mock sales page and pay with a
    [Stripe test card](https://docs.stripe.com/testing#cards), for example
    `4242 4242 4242 4242` with any future expiry and any CVC.
-3. Confirm the browser redirects to `success_url`.
-4. Confirm the terminal running `stripe listen` shows `invoice.paid`, and that
-   your app's webhook handler received and processed it.
-5. Repeat with a declining test card (for example `4000 0000 0000 0002`) and
+5. Confirm the browser redirects to the demo return page.
+6. Confirm the terminal running `stripe listen` shows `invoice.paid`, and that
+   the demo's webhook table shows the verified event.
+7. Repeat with a declining test card (for example `4000 0000 0000 0002`) and
    confirm the checkout page shows a decline and no `invoice.paid` event
    arrives.
-
-If this project grows a runnable example under `examples/`, that example is the
-better home for this flow; a human still has to drive the browser step, but a
-working example removes the need to write throwaway glue code each time.

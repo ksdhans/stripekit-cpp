@@ -149,6 +149,44 @@ TEST_F(StripeApiClientTest, CreateCheckoutSessionAsyncSuccess) {
     EXPECT_EQ(session.url, "https://checkout.stripe.com/c/pay/cs_test_session_1");
 }
 
+TEST_F(StripeApiClientTest, CreateCheckoutSessionWithInlinePriceData) {
+    http_client.set_handler([](const HttpRequest& req) {
+        EXPECT_EQ(req.method, HttpMethod::Post);
+        EXPECT_EQ(req.path, "/v1/checkout/sessions");
+        EXPECT_NE(req.body.find("mode=subscription"), std::string::npos);
+        EXPECT_NE(req.body.find("customer=cus_123"), std::string::npos);
+        EXPECT_EQ(req.body.find("line_items%5B0%5D%5Bprice%5D="), std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bcurrency%5D=usd"), std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bunit_amount%5D=1200"), std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Brecurring%5D%5Binterval%5D=month"), std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bproduct_data%5D%5Bname%5D=StripeKit%20demo%20membership"), std::string::npos);
+
+        return HttpResponse{
+            .status_code = 200,
+            .headers = {},
+            .body = R"({
+                "id": "cs_test_inline_1",
+                "customer": "cus_123",
+                "status": "open",
+                "mode": "subscription",
+                "url": "https://checkout.stripe.com/c/pay/cs_test_inline_1"
+            })"
+        };
+    });
+
+    auto task = client->checkout().sessions().create_async(CreateCheckoutSessionRequest{
+        .customer_id = "cus_123",
+        .product_name = "StripeKit demo membership",
+        .currency = "usd",
+        .unit_amount = 1200,
+        .recurring_interval = "month",
+        .success_url = "https://example.com/success",
+        .cancel_url = "https://example.com/cancel"
+    });
+    const CheckoutSession session = task.result();
+    EXPECT_EQ(session.id, "cs_test_inline_1");
+}
+
 TEST_F(StripeApiClientTest, SubscriptionsRetrieveAndCancel) {
     // Retrieve
     http_client.set_handler([](const HttpRequest& req) {

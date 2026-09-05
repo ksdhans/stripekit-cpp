@@ -111,7 +111,14 @@ std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
     std::string body;
     append_form_value(body, "mode", "subscription");
     append_form_value(body, "customer", request.customer_id);
-    append_form_value(body, "line_items[0][price]", request.price_id);
+    if (!request.price_id.empty()) {
+        append_form_value(body, "line_items[0][price]", request.price_id);
+    } else {
+        append_form_value(body, "line_items[0][price_data][currency]", request.currency);
+        append_form_value(body, "line_items[0][price_data][unit_amount]", std::to_string(request.unit_amount));
+        append_form_value(body, "line_items[0][price_data][recurring][interval]", request.recurring_interval);
+        append_form_value(body, "line_items[0][price_data][product_data][name]", request.product_name);
+    }
     append_form_value(body, "line_items[0][quantity]", std::to_string(request.quantity));
     append_form_value(body, "success_url", request.success_url);
     append_form_value(body, "cancel_url", request.cancel_url);

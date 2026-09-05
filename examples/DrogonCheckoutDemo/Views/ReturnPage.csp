@@ -1,0 +1,31 @@
+<%inc
+#include "CheckoutDemoViewData.h"
+%>
+<%c++
+auto data = @@.get<stripekit::examples::ReturnPageViewData>("data");
+%>
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Returned From Checkout</title>
+    <style>
+        :root { font-family: "Aptos", "Segoe UI", sans-serif; background: #f4efe6; color: #20242a; }
+        body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: linear-gradient(135deg, #f8f2e8, #e7f0ea); }
+        main { width: min(720px, calc(100vw - 32px)); background: rgba(255,255,255,0.86); border: 1px solid #d6cbbc; border-radius: 8px; padding: 28px; box-shadow: 0 16px 40px rgba(44, 48, 53, 0.09); }
+        h1 { font-family: "Iowan Old Style", Georgia, serif; font-size: clamp(2rem, 6vw, 4rem); line-height: 0.98; margin: 0 0 18px; }
+        code { overflow-wrap: anywhere; background: #eee5d8; border-radius: 5px; padding: 2px 5px; }
+        .muted { color: #61707c; }
+        .button { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; font-weight: 800; color: white; background: #1f6f5b; border-radius: 6px; padding: 10px 14px; text-decoration: none; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Returned From Checkout</h1>
+    <p>Checkout redirected back with session id <code>{% data.session_id %}</code>.</p>
+    <p class="muted">This example records fulfillment signals from verified webhooks. Refresh the home page to see the event log.</p>
+    <a class="button" href="/">View webhooks</a>
+</main>
+</body>
+</html>

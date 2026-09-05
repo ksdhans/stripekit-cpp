@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>[[ title ]]</title>
+    <style>
+        :root { font-family: "Aptos", "Segoe UI", sans-serif; background: #f4efe6; color: #20242a; }
+        body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: linear-gradient(135deg, #fff5ea, #e7f0ea); }
+        main { width: min(720px, calc(100vw - 32px)); background: rgba(255,255,255,0.88); border: 1px solid #d6cbbc; border-radius: 8px; padding: 28px; box-shadow: 0 16px 40px rgba(44, 48, 53, 0.09); }
+        h1 { font-family: "Iowan Old Style", Georgia, serif; font-size: clamp(2rem, 6vw, 4rem); line-height: 0.98; margin: 0 0 18px; }
+        .warning { color: #803d1f; font-weight: 700; }
+        .button { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; font-weight: 800; color: white; background: #334657; border-radius: 6px; padding: 10px 14px; text-decoration: none; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>[[ title ]]</h1>
+    <p class="warning">[[ message ]]</p>
+    <a class="button" href="/">Back</a>
+</main>
+</body>
+</html>

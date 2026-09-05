@@ -11,10 +11,16 @@ include(CMakePackageConfigHelpers)
 include(ExternalProject)
 include(FetchContent)
 
+set(STRIPEKIT_STANDALONE_PROJECT OFF)
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    set(STRIPEKIT_STANDALONE_PROJECT ON)
+endif()
+
 option(STRIPEKIT_BUILD_TESTS "Build StripeKit tests" ON)
 option(STRIPEKIT_BUILD_SANDBOX_TESTS "Build the Stripe sandbox end-to-end tests" OFF)
 option(STRIPEKIT_ENABLE_SQLITE "Enable optional SQLite webhook de-dup store adapter" ON)
 option(STRIPEKIT_BUILD_DROGON_ADAPTER "Build the Drogon runtime adapter" ON)
+option(STRIPEKIT_BUILD_EXAMPLES "Build StripeKit example programs" ${STRIPEKIT_STANDALONE_PROJECT})
 
 option(USE_EXTERNAL_LIBSODIUM "Reuse libsodium provided by the parent project or system installation" OFF)
 option(USE_EXTERNAL_DROGON "Reuse Drogon provided by the parent project or system installation" OFF)
@@ -169,7 +175,7 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
             GIT_TAG v${STRIPEKIT_DROGON_VERSION}
             GIT_SUBMODULES_RECURSE TRUE
         )
-        set(BUILD_CTL OFF CACHE BOOL "" FORCE)
+        set(BUILD_CTL ${STRIPEKIT_BUILD_EXAMPLES} CACHE BOOL "" FORCE)
         set(BUILD_ORM OFF CACHE BOOL "" FORCE)
         set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
         set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
@@ -286,6 +292,10 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/StripeKitConfigVersion.cmake
     DESTINATION ${STRIPEKIT_CMAKE_CONFIG_DIR}
 )
+
+if(STRIPEKIT_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
 
 if(STRIPEKIT_BUILD_TESTS)
     set(STRIPEKIT_ENABLED_ADAPTERS "")

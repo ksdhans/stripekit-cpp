@@ -44,8 +44,20 @@ struct CreateCheckoutSessionRequest {
     /** Existing Stripe customer id to bill. */
     std::string customer_id;
 
-    /** Stripe Price id used for the subscription line item. */
+    /** Existing Stripe Price id used for the subscription line item. */
     std::string price_id;
+
+    /** Product name used when creating inline subscription price data. */
+    std::string product_name;
+
+    /** ISO currency code used for inline price data, for example usd. */
+    std::string currency = "usd";
+
+    /** Inline subscription price amount in the smallest currency unit. */
+    std::int64_t unit_amount = 0;
+
+    /** Inline recurring interval, for example month or year. */
+    std::string recurring_interval = "month";
 
     /** Redirect URL used after successful checkout completion. */
     std::string success_url;
