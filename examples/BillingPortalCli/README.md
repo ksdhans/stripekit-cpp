@@ -15,6 +15,29 @@ cmake -S . -B build -DSTRIPEKIT_BUILD_EXAMPLES=ON
 cmake --build build --target stripekit_billing_portal_cli
 ```
 
+## Prepare Stripe Objects
+
+This example needs an existing test-mode Customer because Billing Portal
+sessions are created for a Customer.
+
+Create one with the Stripe CLI:
+
+```bash
+stripe customers create \
+	--email dev@example.com \
+	--name "StripeKit Portal Example Customer"
+```
+
+Copy the returned `id` value beginning with `cus_...`.
+
+You can also use an existing Customer from the Dashboard. In test mode or in
+your sandbox, open **Customers**, choose a customer, and copy the `cus_...` ID.
+
+The hosted Billing Portal is most useful when the Customer has a subscription or
+saved payment method, and your Stripe account's Customer Portal settings are
+configured. A new empty Customer is enough to test that StripeKit creates the
+portal session, but the hosted portal page may not show much.
+
 ## Run
 
 Put the required values in `.env.live`:

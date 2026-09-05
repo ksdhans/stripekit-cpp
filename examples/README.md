@@ -51,6 +51,11 @@ The Drogon server examples choose return and webhook URLs from the port they bin
 to. The CLI examples do not bind ports; their return URL environment variables
 are just the URLs Stripe redirects to after the hosted flow.
 
+When an example asks for `cus_...`, `price_...`, or `prod_...` IDs, create those
+objects with the Stripe CLI or copy existing IDs from the Dashboard while test
+mode or your sandbox is selected. The individual example READMEs include the
+exact commands they need.
+
 ## Available Examples
 
 - [DrogonCheckoutDemo](DrogonCheckoutDemo/README.md) is the main end-to-end
