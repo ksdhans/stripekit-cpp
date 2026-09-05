@@ -101,13 +101,17 @@ Then run the suite:
    set -a
    . ./.env.local
    set +a
-   ctest --test-dir build -R stripekit.sandbox --output-on-failure
+   ctest --test-dir build -R stripekit.sandbox -V
 )
 ```
 
 Loading the file inside the subshell keeps `STRIPE_API_KEY` and the other
 sandbox variables available to `ctest` and its child processes only. They are
 removed from the shell environment when the subshell exits.
+
+Verbose CTest output is recommended for this suite because live Stripe webhook
+delivery can take several seconds. The sandbox helper prints `[SANDBOX]`
+progress lines while it makes Stripe API calls and waits for incoming webhooks.
 
 Or run the binary directly, optionally filtering by name:
 

@@ -122,6 +122,7 @@ if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
         # so they must not compete with other tests for it.
         set_tests_properties(stripekit.sandbox PROPERTIES
             LABELS sandbox
+            ENVIRONMENT "STRIPEKIT_TEST_PROGRESS_LOG=${CMAKE_BINARY_DIR}/stripekit-sandbox-progress.log"
             RUN_SERIAL TRUE
             TIMEOUT 900
         )

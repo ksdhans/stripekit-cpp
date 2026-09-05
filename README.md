@@ -94,7 +94,7 @@ ctest --test-dir build -R stripekit.integration --output-on-failure
 Run only the sandbox E2E test suite (when enabled with `STRIPEKIT_BUILD_SANDBOX_TESTS=ON`):
 
 ```bash
-ctest --test-dir build -R stripekit.sandbox --output-on-failure
+ctest --test-dir build -R stripekit.sandbox -V
 ```
 
 ### Stripe Sandbox E2E Tests
@@ -119,7 +119,7 @@ the test command, load the git-ignored `.env.local` file in a subshell:
 	set -a
 	. ./.env.local
 	set +a
-	ctest --test-dir build -R stripekit.sandbox --output-on-failure
+	ctest --test-dir build -R stripekit.sandbox -V
 )
 ```
 

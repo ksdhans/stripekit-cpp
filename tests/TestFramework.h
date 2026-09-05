@@ -9,7 +9,9 @@
 
 #pragma once
 
+#include <cstdlib>
 #include <exception>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <sstream>
@@ -18,6 +20,18 @@
 #include <vector>
 
 namespace stripekit::testing {
+
+inline void append_test_progress(const std::string& message) {
+    const char* path = std::getenv("STRIPEKIT_TEST_PROGRESS_LOG");
+    if (path == nullptr || *path == '\0') {
+        return;
+    }
+
+    std::ofstream log(path, std::ios::app);
+    if (log) {
+        log << message << '\n';
+    }
+}
 
 struct TestCase {
     std::string suite_name;
@@ -56,20 +70,28 @@ public:
                 continue;
             }
 
-            std::cout << "[ RUN      ] " << full_name << std::endl;
+            const std::string run_message = "[ RUN      ] " + full_name;
+            std::cout << run_message << std::endl;
+            append_test_progress(run_message);
             bool success = true;
             try {
                 test.test_fn();
             } catch (const std::exception& ex) {
-                std::cerr << "[  FAILED  ] " << full_name << " threw exception: " << ex.what() << std::endl;
+                const std::string failure_message = "[  FAILED  ] " + full_name + " threw exception: " + ex.what();
+                std::cerr << failure_message << std::endl;
+                append_test_progress(failure_message);
                 success = false;
             } catch (...) {
-                std::cerr << "[  FAILED  ] " << full_name << " threw unknown exception" << std::endl;
+                const std::string failure_message = "[  FAILED  ] " + full_name + " threw unknown exception";
+                std::cerr << failure_message << std::endl;
+                append_test_progress(failure_message);
                 success = false;
             }
 
             if (success) {
-                std::cout << "[       OK ] " << full_name << std::endl;
+                const std::string ok_message = "[       OK ] " + full_name;
+                std::cout << ok_message << std::endl;
+                append_test_progress(ok_message);
                 ++passed;
             } else {
                 ++failed;

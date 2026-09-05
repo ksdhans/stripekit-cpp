@@ -29,6 +29,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -68,6 +69,54 @@ bool env_flag(const char* name) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value == "1" || value == "true" || value == "yes" || value == "on";
+}
+
+/** Returns a display name for a Stripe REST method. */
+std::string_view method_name(HttpMethod method) {
+    switch (method) {
+    case HttpMethod::Get:
+        return "GET";
+    case HttpMethod::Post:
+        return "POST";
+    case HttpMethod::Delete:
+        return "DELETE";
+    }
+    return "UNKNOWN";
+}
+
+/** Shortens an identifier or match fragment for single-line progress output. */
+std::string progress_value(std::string_view value) {
+    constexpr std::size_t max_length = 80;
+    if (value.size() <= max_length) {
+        return std::string(value);
+    }
+    return std::string(value.substr(0, max_length - 3)) + "...";
+}
+
+/** Prints a sandbox progress line immediately. */
+void sandbox_progress(std::string_view message) {
+    const std::string line = "[SANDBOX] " + std::string(message);
+    std::cout << line << std::endl;
+
+    const char* path = std::getenv("STRIPEKIT_TEST_PROGRESS_LOG");
+    if (path == nullptr || *path == '\0') {
+        return;
+    }
+
+    std::ofstream log(path, std::ios::app);
+    if (log) {
+        log << line << '\n';
+    }
+}
+
+/** Clears the sandbox progress log at the start of a run. */
+void reset_sandbox_progress_log() {
+    const char* path = std::getenv("STRIPEKIT_TEST_PROGRESS_LOG");
+    if (path == nullptr || *path == '\0') {
+        return;
+    }
+
+    std::ofstream log(path, std::ios::trunc);
 }
 
 /** Reads an environment variable as a positive integer, falling back on any parse failure. */
@@ -402,11 +451,15 @@ int SandboxStripeApi::call_count() const {
 StripeApiResult SandboxStripeApi::send(HttpMethod method,
                                        std::string_view path,
                                        const FormParams& params) {
-    if (calls.fetch_add(1) >= max_calls) {
+    const int call_number = calls.fetch_add(1) + 1;
+    if (call_number > max_calls) {
         throw std::runtime_error(
             "The sandbox suite exceeded its Stripe API call budget. Raise "
             "STRIPEKIT_SANDBOX_MAX_API_CALLS only if the suite legitimately needs more calls.");
     }
+
+    sandbox_progress("Stripe API call " + std::to_string(call_number) + ": " +
+                     std::string(method_name(method)) + " " + std::string(path));
 
     stripekit::HttpRequest request;
     request.method = method;
@@ -420,6 +473,8 @@ StripeApiResult SandboxStripeApi::send(HttpMethod method,
     result.status_code = response.status_code;
     result.raw_body = std::move(response.body);
     result.body = try_parse_json(result.raw_body);
+    sandbox_progress("Stripe API response " + std::to_string(call_number) + ": HTTP " +
+                     std::to_string(result.status_code) + " for " + std::string(path));
     return result;
 }
 
@@ -460,6 +515,7 @@ struct SandboxEnvironment::State {
                 .payload_json = event.payload_json
             });
         }
+        sandbox_progress("Received webhook " + event.type + " (" + event.id + ")");
         arrived.notify_all();
     }
 
@@ -496,6 +552,8 @@ bool SandboxEnvironment::start() {
     if (state->running) {
         return true;
     }
+
+    reset_sandbox_progress_log();
 
     state->config = SandboxConfig::from_environment();
     state->reason = state->config.unavailable_reason();
@@ -631,12 +689,32 @@ std::optional<ReceivedEvent> SandboxEnvironment::wait_for_event(std::string_view
 
     std::unique_lock<std::mutex> lock(state->mutex);
     const auto deadline = std::chrono::steady_clock::now() + state->config.event_timeout;
+    const auto timeout_seconds = state->config.event_timeout.count();
+    const std::string event_type(type);
+    const std::string match_value = progress_value(must_contain);
+    sandbox_progress("Waiting up to " + std::to_string(timeout_seconds) + "s for webhook " + event_type +
+                     (match_value.empty() ? std::string() : " matching " + match_value));
     while (true) {
         if (auto found = matches()) {
+            sandbox_progress("Matched webhook " + event_type + " (" + found->id + ")");
             return found;
         }
-        if (state->arrived.wait_until(lock, deadline) == std::cv_status::timeout) {
-            return matches();
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+            auto final_match = matches();
+            if (!final_match) {
+                sandbox_progress("Timed out waiting for webhook " + event_type +
+                                 (match_value.empty() ? std::string() : " matching " + match_value));
+            }
+            return final_match;
+        }
+
+        const auto next_progress = std::min(deadline, now + std::chrono::seconds(5));
+        if (state->arrived.wait_until(lock, next_progress) == std::cv_status::timeout) {
+            const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(deadline - next_progress).count();
+            sandbox_progress("Still waiting for webhook " + event_type + "; " +
+                             std::to_string(remaining) + "s remaining");
         }
     }
 }
