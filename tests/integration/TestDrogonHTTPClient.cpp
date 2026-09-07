@@ -140,6 +140,27 @@ TEST_F(DrogonHTTPClientIntegrationTest, CheckoutSessionCreateAsyncSuccess) {
     EXPECT_EQ(session.amount_total, 2000);
 }
 
+TEST_F(DrogonHTTPClientIntegrationTest, CheckoutSessionCreateAsyncUsesDrogonFrameworkLoop) {
+    auto app_loop_client = stripekit::drogon::make_stripe_client({
+        .api_key = api_key,
+        .api_base_url = base_url,
+        .event_loop = stripekit::drogon::EventLoopOptions::drogon_framework()
+    });
+    const CreateCheckoutSessionRequest request{
+        .customer_id = "cus_drogon_123",
+        .price_id = "price_starter_monthly",
+        .success_url = "https://example.com/checkout/success",
+        .cancel_url = "https://example.com/checkout/cancel",
+        .quantity = 1
+    };
+
+    auto task = app_loop_client->checkout().sessions().create_async(request);
+    const CheckoutSession session = task.result();
+
+    EXPECT_EQ(session.id, "cs_drogon_session_1");
+    EXPECT_EQ(session.url, "https://checkout.stripe.com/c/pay/cs_drogon_session_1");
+}
+
 TEST_F(DrogonHTTPClientIntegrationTest, SubscriptionRetrieveAndCancelAsyncSuccess) {
     // Retrieve
     auto retrieve_task = client->subscriptions().retrieve_async("sub_drogon_active");

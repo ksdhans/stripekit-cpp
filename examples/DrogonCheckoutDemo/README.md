@@ -59,6 +59,15 @@ uses inline demo product data, so you do not need to create a Product or Price
 in Stripe first. You can still enter an existing recurring `price_...` id if you
 want to test a dashboard-managed Price.
 
+## Event Loop Use
+
+This example runs StripeKit requests on Drogon's framework event loop by using
+`EventLoopOptions::drogon_framework()` when creating the Stripe client. The
+checkout handler is a Drogon coroutine, so it can `co_await` `create_async()`
+without blocking the server thread. Standalone CLI examples use StripeKit's
+default own event loop so they can call `create_async().result()` without
+starting a Drogon app.
+
 ## Webhooks
 
 The setup page checks whether the Stripe CLI is installed. Click **Start Stripe

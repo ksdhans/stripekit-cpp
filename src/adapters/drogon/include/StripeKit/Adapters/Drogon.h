@@ -22,10 +22,36 @@
 #include <string>
 
 namespace trantor {
+class EventLoop;
 class EventLoopThread;
 }
 
 namespace stripekit::drogon {
+
+/** Selects the event loop used for outbound Stripe API requests. */
+struct EventLoopOptions {
+    /** Event loop ownership mode. */
+    enum class Mode {
+        Own,
+        DrogonFramework,
+        External
+    };
+
+    /** Uses a StripeKit-owned event loop thread. */
+    static EventLoopOptions own();
+
+    /** Uses Drogon's framework event loop. */
+    static EventLoopOptions drogon_framework();
+
+    /** Uses an application-owned event loop. */
+    static EventLoopOptions external(trantor::EventLoop& loop);
+
+    /** Selected ownership mode. */
+    Mode mode = Mode::Own;
+
+    /** Application-owned event loop when mode is External. */
+    trantor::EventLoop* loop = nullptr;
+};
 
 /** Options for creating a Stripe API client backed by Drogon. */
 struct ClientOptions {
@@ -34,6 +60,9 @@ struct ClientOptions {
 
     /** Stripe API base URL. */
     std::string api_base_url = "https://api.stripe.com";
+
+    /** Event loop configuration for outbound Stripe API requests. */
+    EventLoopOptions event_loop;
 };
 
 /** Options for registering a Drogon webhook handler. */
@@ -70,7 +99,8 @@ class HTTPClient final : public stripekit::HTTPClient {
 public:
     /** Creates a client for the supplied Stripe secret API key. */
     explicit HTTPClient(std::string api_key,
-                        std::string api_base_url = "https://api.stripe.com");
+                        std::string api_base_url = "https://api.stripe.com",
+                        EventLoopOptions event_loop = {});
 
     /** Destroys the client. */
     ~HTTPClient() override;

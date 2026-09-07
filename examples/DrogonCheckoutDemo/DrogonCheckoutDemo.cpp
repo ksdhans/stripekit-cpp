@@ -37,6 +37,7 @@ using stripekit::examples::CheckoutDemoViewData;
 using stripekit::examples::EventRecord;
 using stripekit::examples::ReturnPageViewData;
 
+/** Shared in-memory demo configuration and webhook history. */
 struct AppState {
     std::mutex mutex;
     std::string api_key;
@@ -126,6 +127,14 @@ std::string configured_summary(std::string_view api_key, std::string_view webhoo
     return "Secret key and webhook signing secret are configured.";
 }
 
+/**
+ * Creates the view data for the checkout demo's home page.
+ *
+ * @param state The shared application state.
+ * @param port The port on which the server is running.
+ * @param notice An optional notice message to display on the home page.
+ * @return The populated view data for the home page.
+ */
 CheckoutDemoViewData make_home_view_data(const std::shared_ptr<AppState>& state,
                                          std::uint16_t port,
                                          std::string notice = {}) {
@@ -150,6 +159,14 @@ CheckoutDemoViewData make_home_view_data(const std::shared_ptr<AppState>& state,
     return data;
 }
 
+/** Home page HTTP response.
+ *
+ * @param state The shared application state.
+ * @param port The port on which the server is running.
+ * @param notice An optional notice message to display on the home page.
+ * @param status The HTTP status code for the response.
+ * @return The HTTP response for the home page.
+ */
 ::drogon::HttpResponsePtr home_response(const std::shared_ptr<AppState>& state,
                                         std::uint16_t port,
                                         std::string notice = {},
@@ -168,6 +185,7 @@ std::string parameter_or(const ::drogon::HttpRequestPtr& request,
     return value.empty() ? std::move(fallback) : value;
 }
 
+/** Creates request options shared by the demo's Stripe API calls. */
 stripekit::RequestOptions api_options(std::string idempotency_key = {}) {
     stripekit::RequestOptions options;
     options.headers.emplace("Stripe-Version", std::string(stripe_api_version));
@@ -177,26 +195,43 @@ stripekit::RequestOptions api_options(std::string idempotency_key = {}) {
     return options;
 }
 
+/** Generates a unique idempotency key with an optional prefix.
+ *
+ * @param prefix The prefix to prepend to the generated key.
+ * @return A unique idempotency key string.
+ */
 std::string idempotency_key(std::string_view prefix) {
     const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     return std::string(prefix) + "_" + std::to_string(now);
 }
 
+/** Creates a short-lived Stripe client for requests handled by the Drogon app. */
 std::shared_ptr<stripekit::StripeClient> make_client(std::string api_key) {
-    std::unique_ptr<stripekit::StripeClient> client = stripekit::drogon::make_stripe_client({.api_key = std::move(api_key)});
+    std::unique_ptr<stripekit::StripeClient> client = stripekit::drogon::make_stripe_client({
+        .api_key = std::move(api_key),
+        .api_base_url = "https://api.stripe.com",
+        // This demo is already running inside Drogon, so StripeKit sends
+        // outbound API requests through the Drogon framework's event loop instead
+        // of creating a separate StripeKit-owned event loop thread.
+        .event_loop = stripekit::drogon::EventLoopOptions::drogon_framework()
+    });
     return std::shared_ptr<stripekit::StripeClient>(std::move(client));
 }
 
-void respond_with_error(const std::function<void(const ::drogon::HttpResponsePtr&)>& callback,
-                        std::string_view title,
-                        const std::exception& error) {
+/** Error page HTTP response.
+ *
+ * @param title The title of the error page.
+ * @param error The exception containing the error message.
+ * @return The HTTP response for the error page.
+ */
+::drogon::HttpResponsePtr error_response(std::string_view title, const std::exception& error) {
     ::drogon::HttpViewData view_data;
     view_data.insert("title", std::string(title));
     view_data.insert("message", std::string(error.what()));
     auto response = ::drogon::HttpResponse::newHttpViewResponse("ErrorPage", view_data);
     response->setStatusCode(::drogon::k500InternalServerError);
-    callback(response);
+    return response;
 }
 
 } // namespace
@@ -205,6 +240,8 @@ int main(int argc, char** argv) {
     const auto port = parse_port(argc, argv);
     const auto state = std::make_shared<AppState>();
 
+    // Seed the setup form from environment variables, then keep edits in memory
+    // for the lifetime of this demo process.
     {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->api_key = env_or("STRIPE_SECRET_KEY", "");
@@ -277,8 +314,10 @@ int main(int argc, char** argv) {
         }, {::drogon::Post});
 
     ::drogon::app().registerHandler("/checkout",
-        [state, port](const ::drogon::HttpRequestPtr& request,
-                      std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
+        [state, port](::drogon::HttpRequestPtr request) -> ::drogon::Task<::drogon::HttpResponsePtr> {
+            // This route is a Drogon coroutine. Because the Stripe client uses
+            // Drogon's framework event loop, the handler must co_await async
+            // StripeKit operations instead of blocking with Task::result().
             std::string api_key;
             std::string price_id;
             std::string product_name;
@@ -293,20 +332,20 @@ int main(int argc, char** argv) {
                 unit_amount = state->unit_amount;
             }
             if (api_key.empty()) {
-                callback(home_response(state, port, "Configure the secret key first.", ::drogon::k400BadRequest));
-                return;
+                co_return home_response(state, port, "Configure the secret key first.", ::drogon::k400BadRequest);
             }
 
             const std::string email = parameter_or(request, "email");
             auto client = make_client(api_key);
             try {
-                auto customer_task = client->customers().create_async(
+                // Create a test Customer first, then create a subscription-mode
+                // Checkout Session for that Customer and redirect to Stripe.
+                const auto customer = co_await client->customers().create_async(
                     stripekit::CreateCustomerRequest{.email = email, .name = "StripeKit demo customer"},
                     api_options(idempotency_key("customer")));
-                const auto customer = customer_task.result();
 
                 const std::string domain = "http://127.0.0.1:" + std::to_string(port);
-                auto checkout_task = client->checkout().sessions().create_async(
+                const auto session = co_await client->checkout().sessions().create_async(
                     stripekit::CreateCheckoutSessionRequest{
                         .customer_id = customer.id,
                         .price_id = price_id,
@@ -320,14 +359,13 @@ int main(int argc, char** argv) {
                         .metadata = {{"example", "drogon-checkout-demo"}}
                     },
                     api_options(idempotency_key("checkout")));
-                const auto session = checkout_task.result();
 
                 auto response = ::drogon::HttpResponse::newHttpResponse();
                 response->setStatusCode(::drogon::k303SeeOther);
                 response->addHeader("Location", session.url);
-                callback(response);
+                co_return response;
             } catch (const std::exception& exception) {
-                respond_with_error(callback, "Could not create Checkout Session", exception);
+                co_return error_response("Could not create Checkout Session", exception);
             }
         }, {::drogon::Post});
 
@@ -389,6 +427,9 @@ int main(int argc, char** argv) {
         }, {::drogon::Post});
 
     std::cout << "StripeKit Drogon Checkout demo available at http://127.0.0.1:" << port << '\n';
+    // addListener() binds the HTTP server, and run() starts Drogon's event
+    // loops. The /checkout coroutine above and StripeKit's outbound HTTP client
+    // both make progress on those loops.
     ::drogon::app().addListener("127.0.0.1", port).run();
     return 0;
 }

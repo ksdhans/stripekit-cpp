@@ -33,10 +33,28 @@ void require_tls_for_https(std::string_view api_base_url) {
     }
 }
 
+trantor::EventLoop* select_event_loop(EventLoopOptions options,
+                                      std::unique_ptr<trantor::EventLoopThread>& owned_thread) {
+    switch (options.mode) {
+    case EventLoopOptions::Mode::Own:
+        owned_thread = std::make_unique<trantor::EventLoopThread>("StripeKitDrogonHTTPClient");
+        owned_thread->run();
+        return owned_thread->getLoop();
+    case EventLoopOptions::Mode::DrogonFramework:
+        return nullptr;
+    case EventLoopOptions::Mode::External:
+        if (options.loop == nullptr) {
+            throw ConfigurationException("An external Drogon event loop is required");
+        }
+        return options.loop;
+    }
+    throw ConfigurationException("Unsupported Drogon event loop mode");
+}
+
 class OwnedStripeClient final : public StripeClient {
 public:
     explicit OwnedStripeClient(ClientOptions options)
-        : http_client(std::move(options.api_key), std::move(options.api_base_url)),
+        : http_client(std::move(options.api_key), std::move(options.api_base_url), options.event_loop),
           client(http_client) {
     }
 
@@ -63,15 +81,27 @@ private:
 
 } // namespace
 
-HTTPClient::HTTPClient(std::string api_key, std::string api_base_url)
-    : api_key(std::move(api_key)), event_loop_thread(std::make_unique<trantor::EventLoopThread>(
-                                       "StripeKitDrogonHTTPClient")) {
+EventLoopOptions EventLoopOptions::own() {
+    return {};
+}
+
+EventLoopOptions EventLoopOptions::drogon_framework() {
+    return EventLoopOptions{.mode = Mode::DrogonFramework};
+}
+
+EventLoopOptions EventLoopOptions::external(trantor::EventLoop& loop) {
+    return EventLoopOptions{.mode = Mode::External, .loop = &loop};
+}
+
+HTTPClient::HTTPClient(std::string api_key,
+                       std::string api_base_url,
+                       EventLoopOptions event_loop)
+    : api_key(std::move(api_key)) {
     if (this->api_key.empty()) {
         throw ConfigurationException("A Stripe API key is required for the Drogon HTTP client");
     }
     require_tls_for_https(api_base_url);
-    event_loop_thread->run();
-    client = ::drogon::HttpClient::newHttpClient(api_base_url, event_loop_thread->getLoop());
+    client = ::drogon::HttpClient::newHttpClient(api_base_url, select_event_loop(event_loop, event_loop_thread));
 }
 
 HTTPClient::~HTTPClient() = default;
