@@ -5,6 +5,7 @@ stages:
   - verify
   - build
   - test
+  - docs
 
 variables:
   CMAKE_BUILD_TYPE: Release
@@ -85,3 +86,28 @@ test:sandbox:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_PROJECT_ID
       when: manual
       allow_failure: true
+
+# Publishes the Doxygen API reference to GitLab Pages. Doxygen parses the
+# headers directly, so the adapters, tests and examples are all switched off to
+# keep this job free of the heavyweight dependency builds.
+pages:
+  stage: docs
+  cache: []
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends ca-certificates cmake g++ make
+    - apt-get install -y --no-install-recommends doxygen graphviz
+  script:
+    - cmake -S . -B build-docs
+      -DSTRIPEKIT_BUILD_DOCS=ON
+      -DSTRIPEKIT_BUILD_TESTS=OFF
+      -DSTRIPEKIT_BUILD_EXAMPLES=OFF
+      -DSTRIPEKIT_BUILD_DROGON_ADAPTER=OFF
+    - cmake --build build-docs --target stripekit-docs
+    - rm -rf public
+    - mv build-docs/docs/html public
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

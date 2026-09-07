@@ -296,8 +296,28 @@ See `docs/versioning.md` for release and tag policy.
 
 ## API Documentation
 
-- Public API reference is documented with Doxygen comments in headers under `include/StripeKit/`.
-- Additional usage notes are in `docs/`.
+The API reference is generated from the Doxygen comments in the public headers.
+Standalone builds generate it automatically when Doxygen is installed, so after a
+normal build it is available at `build/docs/html/index.html`.
+
+On Debian/Ubuntu, install Doxygen (and Graphviz, for the class diagrams) with:
+
+```bash
+sudo apt install doxygen graphviz
+```
+
+To build the reference on its own, without building the library:
+
+```bash
+cmake -S . -B build-docs -DSTRIPEKIT_BUILD_DOCS=ON -DSTRIPEKIT_BUILD_TESTS=OFF
+cmake --build build-docs --target stripekit-docs
+```
+
+Use `-DSTRIPEKIT_BUILD_DOCS=OFF` to skip the reference, and `-DSTRIPEKIT_BUILD_DOCS=ON`
+to make the build fail when Doxygen is missing rather than silently skipping it.
+The generated HTML is not checked into the repository.
+
+Additional usage notes are in `docs/`.
 
 ## Project Layout
 

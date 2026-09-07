@@ -25,6 +25,8 @@ option(STRIPEKIT_BUILD_EXAMPLES "Build StripeKit example programs" ${STRIPEKIT_S
 option(USE_EXTERNAL_LIBSODIUM "Reuse libsodium provided by the parent project or system installation" OFF)
 option(USE_EXTERNAL_DROGON "Reuse Drogon provided by the parent project or system installation" OFF)
 
+include(cmake/doxygen_docs.cmake)
+
 # Drogon forces BUILD_SHARED_LIBS ON for the whole build, so StripeKit's own
 # libraries pin their type explicitly instead of inheriting that setting.
 option(STRIPEKIT_LIB_SHARED "Build StripeKit's libraries as shared libraries" OFF)

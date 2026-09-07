@@ -1,6 +1,9 @@
 build/
 build*/
 
+# GitLab Pages output, staged by the CI docs job
+public/
+
 # Local Stripe sandbox credentials
 .env.local
 .env.live
