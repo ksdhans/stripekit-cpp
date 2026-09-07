@@ -3,10 +3,15 @@
 This example creates one subscription-mode Checkout Session and prints the
 Stripe-hosted Checkout URL.
 
-This is a CLI example only. It does not bind an HTTP port or serve the return
-pages. `STRIPE_RETURN_BASE_URL` is the base URL that Stripe redirects to after
-hosted Checkout; use an app you already have running, or use the
-DrogonCheckoutDemo when you want the example itself to serve the return page.
+This is a CLI example only. It does not open a browser, bind an HTTP port, or
+serve the return pages. After the program prints `Hosted URL`, copy that URL
+into a browser and complete the Stripe-hosted Checkout flow there.
+
+`STRIPE_RETURN_BASE_URL` is the base URL that Stripe redirects to after hosted
+Checkout. The CLI appends `/success?session_id={CHECKOUT_SESSION_ID}` and
+`/cancel` when it creates the session. Use an app you already have running at
+that base URL, or use the DrogonCheckoutDemo when you want the example itself to
+serve the return page.
 
 ## Build
 
@@ -84,5 +89,19 @@ Run the example in a subshell so those values are exported only to this process:
 	./build/bin/stripekit_checkout_session_cli
 )
 ```
+
+The output includes a Checkout Session ID and a hosted Stripe Checkout URL:
+
+```text
+Checkout Session: cs_test_...
+Hosted URL: https://checkout.stripe.com/c/pay/cs_test_...
+```
+
+Open the hosted URL in a browser. When checkout succeeds, Stripe redirects the
+browser to `STRIPE_RETURN_BASE_URL/success?session_id=cs_test_...`; when it is
+canceled, Stripe redirects to `STRIPE_RETURN_BASE_URL/cancel`. Those pages must
+be served by your own app if you want the browser to show a real confirmation
+page. If nothing is listening at `STRIPE_RETURN_BASE_URL`, session creation still
+works, but the final redirect will fail in the browser after leaving Stripe.
 
 The example rejects live keys and pins `Stripe-Version: 2024-06-20`.
