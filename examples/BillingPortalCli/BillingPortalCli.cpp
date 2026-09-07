@@ -6,11 +6,16 @@
 #include "StripeKit/Adapters/Drogon.h"
 #include "StripeKit/Client.h"
 
+#include <drogon/drogon.h>
+
+#include <chrono>
 #include <cstdlib>
+#include <future>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <variant>
 
 namespace {
 
@@ -31,6 +36,7 @@ bool starts_with(std::string_view value, std::string_view prefix) {
 stripekit::RequestOptions options() {
     stripekit::RequestOptions request_options;
     request_options.idempotency_key = "stripekit_billing_portal_cli";
+    request_options.timeout = std::chrono::seconds(30);
     request_options.headers.emplace("Stripe-Version", std::string(stripe_api_version));
     return request_options;
 }
@@ -48,14 +54,28 @@ int main() {
         }
 
         auto client = stripekit::drogon::make_stripe_client({.api_key = api_key});
-        auto task = client->billing_portal().sessions().create_async(
+        std::promise<stripekit::CallbackResult<stripekit::BillingPortalSession>> promise;
+        auto future = promise.get_future();
+
+        client->billing_portal().sessions().create(
             stripekit::CreateBillingPortalSessionRequest{
                 .customer_id = require_env("STRIPE_CUSTOMER_ID"),
                 .return_url = require_env("STRIPE_RETURN_URL")
             },
-            options());
+            options(),
+            [&promise](stripekit::CallbackResult<stripekit::BillingPortalSession> result) {
+                promise.set_value(std::move(result));
+                ::drogon::app().quit();
+            });
 
-        const stripekit::BillingPortalSession session = task.result();
+        ::drogon::app().run();
+
+        auto result = future.get();
+        if (const auto* error = std::get_if<std::exception_ptr>(&result)) {
+            std::rethrow_exception(*error);
+        }
+
+        const stripekit::BillingPortalSession& session = std::get<stripekit::BillingPortalSession>(result);
         std::cout << "Billing Portal Session: " << session.id << '\n';
         std::cout << "Hosted URL: " << session.url << '\n';
     } catch (const std::exception& error) {

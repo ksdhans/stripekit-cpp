@@ -71,4 +71,19 @@ Run the example in a subshell so those values are exported only to this process:
 )
 ```
 
+The CLI creates a new Billing Portal session for `STRIPE_CUSTOMER_ID` and
+prints two values:
+
+- `Billing Portal Session` is the Stripe session id for this one portal visit.
+	It is useful for logs, debugging, and matching the CLI output to the object in
+	Stripe. Your app normally does not show this id to the customer.
+- `Hosted URL` is the Stripe-hosted billing portal link for that session. Open
+	this URL in a browser to view the customer's self-serve portal, where Stripe
+	can show subscription, invoice, payment method, and cancellation options based
+	on your Customer Portal settings and the customer's current data.
+
+The hosted URL is temporary and intended for the customer represented by
+`STRIPE_CUSTOMER_ID`. Create a new Billing Portal session when you need a fresh
+portal link.
+
 The example rejects live keys and pins `Stripe-Version: 2024-06-20`.
