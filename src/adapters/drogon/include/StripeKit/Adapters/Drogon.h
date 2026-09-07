@@ -21,6 +21,10 @@
 #include <memory>
 #include <string>
 
+namespace trantor {
+class EventLoopThread;
+}
+
 namespace stripekit::drogon {
 
 /** Options for creating a Stripe API client backed by Drogon. */
@@ -77,11 +81,12 @@ public:
     /** Starts a coroutine that sends a Stripe API request. */
     Task<HttpResponse> send_async(const HttpRequest& request) override;
 
-    /** Sends a request and invokes completion exactly once on Drogon's event loop. */
+    /** Sends a request and invokes completion exactly once on the client event loop. */
     void send(const HttpRequest& request, Completion completion) override;
 
 private:
     std::string api_key;
+    std::unique_ptr<trantor::EventLoopThread> event_loop_thread;
     ::drogon::HttpClientPtr client;
 };
 

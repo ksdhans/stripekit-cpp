@@ -11,10 +11,12 @@
 #include <drogon/HttpClient.h>
 #include <drogon/HttpRequest.h>
 #include <drogon/HttpResponse.h>
+#include <trantor/net/EventLoopThread.h>
 #include <trantor/utils/Utilities.h>
 
-#include <future>
+#include <coroutine>
 #include <utility>
+#include <variant>
 
 namespace stripekit::drogon {
 
@@ -62,29 +64,49 @@ private:
 } // namespace
 
 HTTPClient::HTTPClient(std::string api_key, std::string api_base_url)
-    : api_key(std::move(api_key)), client(::drogon::HttpClient::newHttpClient(api_base_url)) {
+    : api_key(std::move(api_key)), event_loop_thread(std::make_unique<trantor::EventLoopThread>(
+                                       "StripeKitDrogonHTTPClient")) {
     if (this->api_key.empty()) {
         throw ConfigurationException("A Stripe API key is required for the Drogon HTTP client");
     }
     require_tls_for_https(api_base_url);
+    event_loop_thread->run();
+    client = ::drogon::HttpClient::newHttpClient(api_base_url, event_loop_thread->getLoop());
 }
 
 HTTPClient::~HTTPClient() = default;
 
 Task<HttpResponse> HTTPClient::send_async(const HttpRequest& request) {
-    auto promise = std::make_shared<std::promise<HttpResponse>>();
-    auto future = promise->get_future();
-    send(request, [promise](std::variant<HttpResponse, std::exception_ptr> result) {
-        try {
+    struct Awaiter {
+        HTTPClient& http_client;
+        HttpRequest request;
+        std::variant<HttpResponse, std::exception_ptr> result;
+
+        bool await_ready() const noexcept {
+            return false;
+        }
+
+        void await_suspend(std::coroutine_handle<> handle) {
+            try {
+                http_client.send(request, [this, handle](std::variant<HttpResponse, std::exception_ptr> value) mutable {
+                    result = std::move(value);
+                    handle.resume();
+                });
+            } catch (...) {
+                result = std::current_exception();
+                handle.resume();
+            }
+        }
+
+        HttpResponse await_resume() {
             if (const auto* error = std::get_if<std::exception_ptr>(&result)) {
                 std::rethrow_exception(*error);
             }
-            promise->set_value(std::get<HttpResponse>(std::move(result)));
-        } catch (...) {
-            promise->set_exception(std::current_exception());
+            return std::get<HttpResponse>(std::move(result));
         }
-    });
-    co_return future.get();
+    };
+
+    co_return co_await Awaiter{*this, request, HttpResponse{}};
 }
 
 void HTTPClient::send(const HttpRequest& request, Completion completion) {

@@ -6,6 +6,7 @@
 #include "StripeKit/Adapters/Drogon.h"
 #include "StripeKit/Client.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -36,6 +37,7 @@ bool starts_with(std::string_view value, std::string_view prefix) {
 stripekit::RequestOptions options() {
     stripekit::RequestOptions request_options;
     request_options.idempotency_key = "stripekit_checkout_session_cli";
+    request_options.timeout = std::chrono::seconds(30);
     request_options.headers.emplace("Stripe-Version", std::string(stripe_api_version));
     return request_options;
 }

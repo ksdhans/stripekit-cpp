@@ -6,16 +6,12 @@
 #include "StripeKit/Adapters/Drogon.h"
 #include "StripeKit/Client.h"
 
-#include <drogon/drogon.h>
-
 #include <chrono>
 #include <cstdlib>
-#include <future>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <variant>
 
 namespace {
 
@@ -54,28 +50,14 @@ int main() {
         }
 
         auto client = stripekit::drogon::make_stripe_client({.api_key = api_key});
-        std::promise<stripekit::CallbackResult<stripekit::BillingPortalSession>> promise;
-        auto future = promise.get_future();
-
-        client->billing_portal().sessions().create(
+        auto task = client->billing_portal().sessions().create_async(
             stripekit::CreateBillingPortalSessionRequest{
                 .customer_id = require_env("STRIPE_CUSTOMER_ID"),
                 .return_url = require_env("STRIPE_RETURN_URL")
             },
-            options(),
-            [&promise](stripekit::CallbackResult<stripekit::BillingPortalSession> result) {
-                promise.set_value(std::move(result));
-                ::drogon::app().quit();
-            });
+            options());
 
-        ::drogon::app().run();
-
-        auto result = future.get();
-        if (const auto* error = std::get_if<std::exception_ptr>(&result)) {
-            std::rethrow_exception(*error);
-        }
-
-        const stripekit::BillingPortalSession& session = std::get<stripekit::BillingPortalSession>(result);
+        const stripekit::BillingPortalSession session = task.result();
         std::cout << "Billing Portal Session: " << session.id << '\n';
         std::cout << "Hosted URL: " << session.url << '\n';
     } catch (const std::exception& error) {

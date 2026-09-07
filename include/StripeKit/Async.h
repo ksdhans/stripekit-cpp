@@ -9,8 +9,10 @@
 
 #pragma once
 
+#include <condition_variable>
 #include <coroutine>
 #include <exception>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -42,10 +44,31 @@ public:
         }
 
         /**
-         * Ends suspended to allow result retrieval after completion.
+         * Notifies waiters and resumes any awaiting coroutine.
          */
-        std::suspend_always final_suspend() noexcept {
-            return {};
+        auto final_suspend() noexcept {
+            struct FinalAwaiter {
+                bool await_ready() const noexcept {
+                    return false;
+                }
+
+                void await_suspend(std::coroutine_handle<promise_type> handle) const noexcept {
+                    std::coroutine_handle<> continuation;
+                    {
+                        std::lock_guard<std::mutex> lock(handle.promise().mutex);
+                        handle.promise().completed = true;
+                        continuation = handle.promise().continuation;
+                    }
+                    handle.promise().ready.notify_all();
+                    if (continuation) {
+                        continuation.resume();
+                    }
+                }
+
+                void await_resume() const noexcept {}
+            };
+
+            return FinalAwaiter{};
         }
 
         /**
@@ -64,6 +87,11 @@ public:
 
         std::optional<TResult> result;
         std::exception_ptr error;
+        std::mutex mutex;
+        std::condition_variable ready;
+        std::coroutine_handle<> continuation;
+        bool started = false;
+        bool completed = false;
     };
 
     /**
@@ -114,19 +142,24 @@ public:
      * Returns true when the task has already completed.
      */
     bool is_ready() const {
-        return !handle || handle.done();
+        return !handle || handle.promise().completed;
     }
 
     /**
-     * Runs the coroutine to completion and returns the result.
+     * Starts the coroutine if needed, waits for completion, and returns the result.
      */
     TResult result() {
-        if (handle && !handle.done()) {
-            handle.resume();
-        }
-
         if (!handle) {
             throw std::runtime_error("Task has no coroutine state");
+        }
+
+        start();
+
+        {
+            std::unique_lock<std::mutex> lock(handle.promise().mutex);
+            handle.promise().ready.wait(lock, [this]() {
+                return handle.promise().completed;
+            });
         }
 
         if (handle.promise().error) {
@@ -144,14 +177,31 @@ public:
             std::coroutine_handle<promise_type> task_handle;
 
             bool await_ready() const noexcept {
-                return !task_handle || task_handle.done();
+                return !task_handle || task_handle.promise().completed;
             }
 
             void await_suspend(std::coroutine_handle<> awaiting) const {
-                if (task_handle && !task_handle.done()) {
+                if (!task_handle) {
+                    awaiting.resume();
+                    return;
+                }
+
+                bool resume_task = false;
+                {
+                    std::lock_guard<std::mutex> lock(task_handle.promise().mutex);
+                    if (task_handle.promise().completed) {
+                        awaiting.resume();
+                        return;
+                    } else {
+                        task_handle.promise().continuation = awaiting;
+                        resume_task = !task_handle.promise().started;
+                        task_handle.promise().started = true;
+                    }
+                }
+
+                if (resume_task) {
                     task_handle.resume();
                 }
-                awaiting.resume();
             }
 
             TResult await_resume() {
@@ -171,6 +221,18 @@ public:
     }
 
 private:
+    void start() {
+        bool should_resume = false;
+        {
+            std::lock_guard<std::mutex> lock(handle.promise().mutex);
+            should_resume = !handle.promise().started && !handle.promise().completed;
+            handle.promise().started = true;
+        }
+        if (should_resume) {
+            handle.resume();
+        }
+    }
+
     std::coroutine_handle<promise_type> handle;
 };
 

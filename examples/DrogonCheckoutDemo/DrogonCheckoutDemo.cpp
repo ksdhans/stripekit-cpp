@@ -24,11 +24,8 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
-#include <string>
-#include <string_view>
 #include <thread>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace {
@@ -302,52 +299,36 @@ int main(int argc, char** argv) {
 
             const std::string email = parameter_or(request, "email");
             auto client = make_client(api_key);
-            client->customers().create(
-                stripekit::CreateCustomerRequest{.email = email, .name = "StripeKit demo customer"},
-                api_options(idempotency_key("customer")),
-                [client, price_id, product_name, currency, unit_amount, port, callback = std::move(callback)](stripekit::CallbackResult<stripekit::Customer> result) mutable {
-                    if (const auto* error = std::get_if<std::exception_ptr>(&result)) {
-                        try {
-                            std::rethrow_exception(*error);
-                        } catch (const std::exception& exception) {
-                            respond_with_error(callback, "Could not create customer", exception);
-                        }
-                        return;
-                    }
+            try {
+                auto customer_task = client->customers().create_async(
+                    stripekit::CreateCustomerRequest{.email = email, .name = "StripeKit demo customer"},
+                    api_options(idempotency_key("customer")));
+                const auto customer = customer_task.result();
 
-                    const auto customer = std::get<stripekit::Customer>(std::move(result));
-                    const std::string domain = "http://127.0.0.1:" + std::to_string(port);
-                    client->checkout().sessions().create(
-                        stripekit::CreateCheckoutSessionRequest{
-                            .customer_id = customer.id,
-                            .price_id = price_id,
-                            .product_name = product_name,
-                            .currency = currency,
-                            .unit_amount = unit_amount,
-                            .recurring_interval = "month",
-                            .success_url = domain + "/return?session_id={CHECKOUT_SESSION_ID}",
-                            .cancel_url = domain + "/",
-                            .quantity = 1,
-                            .metadata = {{"example", "drogon-checkout-demo"}}
-                        },
-                        api_options(idempotency_key("checkout")),
-                        [client, callback = std::move(callback)](stripekit::CallbackResult<stripekit::CheckoutSession> checkout_result) mutable {
-                            if (const auto* error = std::get_if<std::exception_ptr>(&checkout_result)) {
-                                try {
-                                    std::rethrow_exception(*error);
-                                } catch (const std::exception& exception) {
-                                    respond_with_error(callback, "Could not create Checkout Session", exception);
-                                }
-                                return;
-                            }
+                const std::string domain = "http://127.0.0.1:" + std::to_string(port);
+                auto checkout_task = client->checkout().sessions().create_async(
+                    stripekit::CreateCheckoutSessionRequest{
+                        .customer_id = customer.id,
+                        .price_id = price_id,
+                        .product_name = product_name,
+                        .currency = currency,
+                        .unit_amount = unit_amount,
+                        .recurring_interval = "month",
+                        .success_url = domain + "/return?session_id={CHECKOUT_SESSION_ID}",
+                        .cancel_url = domain + "/",
+                        .quantity = 1,
+                        .metadata = {{"example", "drogon-checkout-demo"}}
+                    },
+                    api_options(idempotency_key("checkout")));
+                const auto session = checkout_task.result();
 
-                            const auto session = std::get<stripekit::CheckoutSession>(std::move(checkout_result));
-                            auto response = ::drogon::HttpResponse::newHttpResponse();
-                            response->setStatusCode(::drogon::k303SeeOther);
-                            response->addHeader("Location", session.url);
-                            callback(response);
-                        });
-                });
+                auto response = ::drogon::HttpResponse::newHttpResponse();
+                response->setStatusCode(::drogon::k303SeeOther);
+                response->addHeader("Location", session.url);
+                callback(response);
+            } catch (const std::exception& exception) {
+                respond_with_error(callback, "Could not create Checkout Session", exception);
+            }
         }, {::drogon::Post});
 
     ::drogon::app().registerHandler("/return",
