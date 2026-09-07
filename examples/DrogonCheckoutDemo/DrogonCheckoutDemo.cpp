@@ -51,15 +51,13 @@ struct AppState {
     std::vector<EventRecord> events;
 };
 
-bool starts_with(std::string_view value, std::string_view prefix) {
-    return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
-}
-
+/** Returns an environment variable, or a fallback when it is not set. */
 std::string env_or(std::string_view name, std::string fallback) {
     const char* value = std::getenv(std::string(name).c_str());
     return value == nullptr || std::string_view(value).empty() ? std::move(fallback) : std::string(value);
 }
 
+/** Reads the demo port from --port, STRIPEKIT_DEMO_PORT, or the default. */
 std::uint16_t parse_port(int argc, char** argv) {
     for (int i = 1; i + 1 < argc; ++i) {
         if (std::string_view(argv[i]) == "--port") {
@@ -69,10 +67,12 @@ std::uint16_t parse_port(int argc, char** argv) {
     return static_cast<std::uint16_t>(std::stoi(env_or("STRIPEKIT_DEMO_PORT", "4242")));
 }
 
+/** Returns whether the Stripe CLI is available for local webhook forwarding. */
 bool stripe_cli_installed() {
     return std::system("command -v stripe >/dev/null 2>&1") == 0;
 }
 
+/** Finds the first webhook signing secret in Stripe CLI listener output. */
 std::string extract_webhook_secret(std::string_view text) {
     constexpr std::string_view prefix = "whsec_";
     const auto start = text.find(prefix);
@@ -92,6 +92,7 @@ std::string extract_webhook_secret(std::string_view text) {
     return std::string(text.substr(start, end - start));
 }
 
+/** Reads a small text file and returns an empty string when it is unavailable. */
 std::string read_file(std::string_view path) {
     std::ifstream input{std::string(path)};
     if (!input) {
@@ -102,6 +103,7 @@ std::string read_file(std::string_view path) {
     return contents.str();
 }
 
+/** Waits briefly for stripe listen to print a webhook signing secret. */
 std::string wait_for_webhook_secret(std::string_view path) {
     for (int attempt = 0; attempt < 50; ++attempt) {
         const auto secret = extract_webhook_secret(read_file(path));
@@ -113,10 +115,12 @@ std::string wait_for_webhook_secret(std::string_view path) {
     return {};
 }
 
+/** Returns the absolute path to the Stripe CLI listener log file. */
 std::string listener_log_path() {
     return std::filesystem::absolute(std::string(listener_log_filename)).string();
 }
 
+/** Summarizes whether the demo has enough credentials to run checkout. */
 std::string configured_summary(std::string_view api_key, std::string_view webhook_secret) {
     if (api_key.empty()) {
         return "Secret key is not configured.";
@@ -127,14 +131,7 @@ std::string configured_summary(std::string_view api_key, std::string_view webhoo
     return "Secret key and webhook signing secret are configured.";
 }
 
-/**
- * Creates the view data for the checkout demo's home page.
- *
- * @param state The shared application state.
- * @param port The port on which the server is running.
- * @param notice An optional notice message to display on the home page.
- * @return The populated view data for the home page.
- */
+/** Creates the view data for the checkout demo's home page. */
 CheckoutDemoViewData make_home_view_data(const std::shared_ptr<AppState>& state,
                                          std::uint16_t port,
                                          std::string notice = {}) {
@@ -178,6 +175,7 @@ CheckoutDemoViewData make_home_view_data(const std::shared_ptr<AppState>& state,
     return response;
 }
 
+/** Returns a form/query parameter, or a fallback when the parameter is empty. */
 std::string parameter_or(const ::drogon::HttpRequestPtr& request,
                          const std::string& name,
                          std::string fallback = {}) {
@@ -195,11 +193,7 @@ stripekit::RequestOptions api_options(std::string idempotency_key = {}) {
     return options;
 }
 
-/** Generates a unique idempotency key with an optional prefix.
- *
- * @param prefix The prefix to prepend to the generated key.
- * @return A unique idempotency key string.
- */
+/** Generates a unique idempotency key with the supplied prefix. */
 std::string idempotency_key(std::string_view prefix) {
     const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
@@ -219,12 +213,7 @@ std::shared_ptr<stripekit::StripeClient> make_client(std::string api_key) {
     return std::shared_ptr<stripekit::StripeClient>(std::move(client));
 }
 
-/** Error page HTTP response.
- *
- * @param title The title of the error page.
- * @param error The exception containing the error message.
- * @return The HTTP response for the error page.
- */
+/** Builds an error page response from an exception message. */
 ::drogon::HttpResponsePtr error_response(std::string_view title, const std::exception& error) {
     ::drogon::HttpViewData view_data;
     view_data.insert("title", std::string(title));
@@ -249,21 +238,23 @@ int main(int argc, char** argv) {
         state->webhook_secret = env_or("STRIPE_WEBHOOK_SECRET", "");
     }
 
+    // Handler to show the current setup, checkout form, and recent verified webhook events.
     ::drogon::app().registerHandler("/",
         [state, port](const ::drogon::HttpRequestPtr&,
                       std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
             callback(home_response(state, port));
         }, {::drogon::Get});
 
+    // Handler to save test-mode Stripe settings submitted from the setup form.
     ::drogon::app().registerHandler("/setup",
         [state, port](const ::drogon::HttpRequestPtr& request,
                       std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
             const std::string api_key = parameter_or(request, "api_key");
-            if (starts_with(api_key, "sk_live_")) {
+            if (api_key.starts_with("sk_live_")) {
                 callback(home_response(state, port, "Live keys are rejected by this example.", ::drogon::k400BadRequest));
                 return;
             }
-            if (!api_key.empty() && !starts_with(api_key, "sk_test_")) {
+            if (!api_key.empty() && !api_key.starts_with("sk_test_")) {
                 callback(home_response(state, port, "Use a Stripe test-mode secret key beginning with sk_test_.", ::drogon::k400BadRequest));
                 return;
             }
@@ -286,6 +277,7 @@ int main(int argc, char** argv) {
             callback(home_response(state, port, "Setup saved."));
         }, {::drogon::Post});
 
+    // Starts stripe listen in the background and captures the webhook secret it prints.
     ::drogon::app().registerHandler("/stripe-cli/start",
         [state, port](const ::drogon::HttpRequestPtr&,
                       std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
@@ -313,6 +305,7 @@ int main(int argc, char** argv) {
                                 : "Stripe CLI listener started and webhook secret captured."));
         }, {::drogon::Post});
 
+    // Creates the Stripe customer and Checkout Session, then redirects the browser to Stripe.
     ::drogon::app().registerHandler("/checkout",
         [state, port](::drogon::HttpRequestPtr request) -> ::drogon::Task<::drogon::HttpResponsePtr> {
             // This route is a Drogon coroutine. Because the Stripe client uses
@@ -369,6 +362,7 @@ int main(int argc, char** argv) {
             }
         }, {::drogon::Post});
 
+    // Displays the session id that Stripe places in the success redirect URL.
     ::drogon::app().registerHandler("/return",
         [](const ::drogon::HttpRequestPtr& request,
            std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
@@ -377,6 +371,7 @@ int main(int argc, char** argv) {
             callback(::drogon::HttpResponse::newHttpViewResponse("ReturnPage", view_data));
         }, {::drogon::Get});
 
+    // Verifies webhook signatures, records fresh events, and acknowledges Stripe.
     ::drogon::app().registerHandler("/webhook",
         [state](const ::drogon::HttpRequestPtr& request,
                 std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
@@ -399,6 +394,8 @@ int main(int argc, char** argv) {
                     request->getHeader("stripe-signature"),
                     webhook_secret,
                     state->dedup_store,
+                    // This handler runs only after StripeKit verifies the signature
+                    // and claims the event id in the de-duplication store.
                     [state](const stripekit::webhooks::Event& event) -> stripekit::Task<stripekit::webhooks::ProcessResult> {
                         {
                             std::lock_guard<std::mutex> lock(state->mutex);

@@ -14,6 +14,7 @@
 
 namespace {
 
+/** Returns an environment variable, or a fallback when it is not set. */
 std::string env_or(const char* name, std::string fallback) {
     const char* value = std::getenv(name);
     return value == nullptr || std::string(value).empty() ? std::move(fallback) : std::string(value);
@@ -28,6 +29,8 @@ int main() {
         return 1;
     }
 
+    // The route receives raw Stripe webhook payloads and verifies the
+    // Stripe-Signature header before acknowledging the delivery.
     ::drogon::app().registerHandler("/webhook",
         [endpoint_secret](const ::drogon::HttpRequestPtr& request,
                           std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
@@ -52,6 +55,8 @@ int main() {
         }, {::drogon::Post});
 
     std::cout << "Webhook endpoint available at http://127.0.0.1:4242/webhook\n";
+    
+    // Starts Drogon's HTTP server and event loops for the webhook route.
     ::drogon::app().addListener("127.0.0.1", 4242).run();
     return 0;
 }

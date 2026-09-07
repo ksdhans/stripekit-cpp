@@ -17,6 +17,7 @@ namespace {
 
 constexpr std::string_view stripe_api_version = "2024-06-20";
 
+/** Returns a required environment variable or reports which value is missing. */
 std::string require_env(const char* name) {
     const char* value = std::getenv(name);
     if (value == nullptr || std::string_view(value).empty()) {
@@ -25,10 +26,7 @@ std::string require_env(const char* name) {
     return value;
 }
 
-bool starts_with(std::string_view value, std::string_view prefix) {
-    return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
-}
-
+/** Builds request options shared by this example's Stripe API call. */
 stripekit::RequestOptions options() {
     stripekit::RequestOptions request_options;
     request_options.idempotency_key = "stripekit_billing_portal_cli";
@@ -42,10 +40,10 @@ stripekit::RequestOptions options() {
 int main() {
     try {
         const std::string api_key = require_env("STRIPE_SECRET_KEY");
-        if (starts_with(api_key, "sk_live_")) {
+        if (api_key.starts_with("sk_live_")) {
             throw std::runtime_error("This example refuses live keys. Use an sk_test_ key.");
         }
-        if (!starts_with(api_key, "sk_test_")) {
+        if (!api_key.starts_with("sk_test_")) {
             throw std::runtime_error("STRIPE_SECRET_KEY must begin with sk_test_.");
         }
 
