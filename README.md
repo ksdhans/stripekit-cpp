@@ -300,6 +300,9 @@ The API reference is generated from the Doxygen comments in the public headers.
 Standalone builds generate it automatically when Doxygen is installed, so after a
 normal build it is available at `build/docs/html/index.html`.
 
+The published documentation (for the main branch) is available at:
+https://keasigmadelta.gitlab.io/stripekit-cpp/
+
 On Debian/Ubuntu, install Doxygen (and Graphviz, for the class diagrams) with:
 
 ```bash
