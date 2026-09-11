@@ -28,7 +28,7 @@ Things that may be done later (if the need arises):
 Requirements:
 
 - CMake 3.24+
-- C++20 compiler
+- C++20 compiler; GCC 12 is the oldest version tested
 - C compiler and `make`, when CMake builds the bundled libsodium fallback
 - On Linux: UUID development headers and library (`uuid-dev` on Debian/Ubuntu,
 	`libuuid-devel` on Fedora/RHEL)
