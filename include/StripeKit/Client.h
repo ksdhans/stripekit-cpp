@@ -52,10 +52,12 @@ struct CreateCustomerRequest {
 /**
  * Describes the Checkout session to create.
  *
- * Checkout sessions are created in subscription mode. Price the subscription
- * one of two ways: set `price_id` to reuse a Price already configured in the
- * Stripe dashboard, or leave it empty and fill in `product_name`, `currency`,
- * `unit_amount`, and `recurring_interval` to define the price inline.
+ * StripeKit currently only creates Checkout sessions for subscriptions, not
+ * one-time payments; support for one-time payments may be added later. Price
+ * the subscription one of two ways: set `price_id` to reuse a Price already
+ * configured in the Stripe dashboard, or leave it empty and fill in
+ * `product_name`, `currency`, `unit_amount`, and `recurring_interval` to
+ * define the price inline.
  *
  * @sa https://docs.stripe.com/api/checkout/sessions/create
  */

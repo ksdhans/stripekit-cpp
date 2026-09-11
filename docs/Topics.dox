@@ -23,13 +23,14 @@
  * @defgroup client Stripe Client
  * @ingroup application_api
  *
- * Creating customers, Checkout sessions, subscriptions, and billing portal
- * sessions.
+ * Creating customers, subscription Checkout sessions, subscriptions, and
+ * billing portal sessions.
  *
  * Start at StripeClient. It mirrors Stripe's own resource grouping, so
  * `customers()`, `checkout().sessions()`, `subscriptions()`, and
  * `billing_portal().sessions()` line up with the sections of Stripe's API
- * reference.
+ * reference. Checkout sessions are currently subscription-only; see
+ * CreateCheckoutSessionRequest.
  *
  * @sa https://docs.stripe.com/api
  */
