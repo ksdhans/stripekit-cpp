@@ -333,24 +333,29 @@ int main(int argc, char** argv) {
             try {
                 // Create a test Customer first, then create a subscription-mode
                 // Checkout Session for that Customer and redirect to Stripe.
+                stripekit::CreateCustomerRequest customer_request = {
+                    .email = email,
+                    .name = "StripeKit demo customer"
+                };
                 const auto customer = co_await client->customers().create_async(
-                    stripekit::CreateCustomerRequest{.email = email, .name = "StripeKit demo customer"},
+                    customer_request,
                     api_options(idempotency_key("customer")));
 
                 const std::string domain = "http://127.0.0.1:" + std::to_string(port);
+                stripekit::CreateCheckoutSessionRequest session_request = {
+                    .customer_id = customer.id,
+                    .price_id = price_id,
+                    .product_name = product_name,
+                    .currency = currency,
+                    .unit_amount = unit_amount,
+                    .recurring_interval = "month",
+                    .success_url = domain + "/return?session_id={CHECKOUT_SESSION_ID}",
+                    .cancel_url = domain + "/",
+                    .quantity = 1,
+                    .metadata = {{"example", "drogon-checkout-demo"}}
+                };
                 const auto session = co_await client->checkout().sessions().create_async(
-                    stripekit::CreateCheckoutSessionRequest{
-                        .customer_id = customer.id,
-                        .price_id = price_id,
-                        .product_name = product_name,
-                        .currency = currency,
-                        .unit_amount = unit_amount,
-                        .recurring_interval = "month",
-                        .success_url = domain + "/return?session_id={CHECKOUT_SESSION_ID}",
-                        .cancel_url = domain + "/",
-                        .quantity = 1,
-                        .metadata = {{"example", "drogon-checkout-demo"}}
-                    },
+                    session_request,
                     api_options(idempotency_key("checkout")));
 
                 auto response = ::drogon::HttpResponse::newHttpResponse();
