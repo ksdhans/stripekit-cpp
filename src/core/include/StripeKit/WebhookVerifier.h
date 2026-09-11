@@ -17,38 +17,53 @@
 namespace stripekit {
 
 /**
- * Input payload for webhook signature verification.
+ * @addtogroup webhooks
+ * @{
+ */
+
+/**
+ * Everything needed to check a webhook signature.
  */
 struct WebhookVerificationInput {
-    /** Raw request body bytes as received from Stripe. */
+    /**
+     * The request body exactly as received.
+     *
+     * The signature covers these precise bytes, so any reformatting, parsing,
+     * or character-set conversion beforehand will cause the check to fail.
+     */
     std::string_view payload;
 
-    /** Stripe-Signature header value. */
+    /** Value of the "Stripe-Signature" header. */
     std::string_view stripe_signature_header;
 
-    /** Endpoint secret configured for the webhook destination. */
+    /** Signing secret for this endpoint, of the form "whsec_...". */
     std::string_view endpoint_secret;
 
-    /** Current wall-clock time for timestamp tolerance checks. */
+    /** Current time, used to check the signature's timestamp. */
     std::chrono::system_clock::time_point now;
 
-    /** Maximum allowed timestamp skew from Stripe signature header. */
+    /** How far the signature's timestamp may be from #now. */
     std::chrono::seconds tolerance = std::chrono::minutes(5);
 };
 
 /**
- * Metadata extracted during successful signature verification.
+ * What was learned from a signature that checked out.
  */
 struct VerificationMetadata {
-    /** Timestamp parsed from the Stripe-Signature header. */
+    /** When Stripe signed the delivery, as a Unix timestamp. */
     std::int64_t timestamp_unix = 0;
 
-    /** Concatenated string used as the signed message input. */
+    /** The exact string the signature was computed over. */
     std::string signed_payload;
 };
 
 /**
- * Abstract base class for validating Stripe webhook signatures.
+ * Checks that a webhook delivery really came from Stripe.
+ *
+ * Applications do not normally use this directly — stripekit::webhooks::construct_event()
+ * and stripekit::webhooks::process_event_once() do the verification for them.
+ * It is worth implementing only to substitute a different crypto backend, or to
+ * inject failures in tests.
  */
 class WebhookSignatureVerifier {
 public:
@@ -58,27 +73,48 @@ public:
     virtual ~WebhookSignatureVerifier() = default;
 
     /**
-     * Verifies the Stripe webhook signature and returns parsed metadata.
+     * Checks a signature and reports what it contained.
      *
-     * Throws SignatureVerificationException on validation failures.
+     * @param input The payload, signature header, secret, and timing rules.
+     * @return The timestamp and signed string from the verified signature.
+     * @throws SignatureVerificationException The header is malformed, no
+     *         signature matches, or the timestamp is outside the tolerance.
      */
     virtual VerificationMetadata verify(const WebhookVerificationInput& input) const = 0;
 };
 
 /**
- * Default webhook signature verifier implementation.
+ * The signature verifier StripeKit uses by default.
+ *
+ * Implements Stripe's scheme: HMAC-SHA256 over the timestamp and payload,
+ * compared in constant time so the comparison itself leaks nothing.
+ *
+ * @sa https://docs.stripe.com/webhooks#verify-events
  */
 class DefaultWebhookSignatureVerifier final : public WebhookSignatureVerifier {
 public:
     /**
-     * Verifies a Stripe webhook signature.
+     * Checks a signature and reports what it contained.
+     *
+     * @param input The payload, signature header, secret, and timing rules.
+     * @return The timestamp and signed string from the verified signature.
+     * @throws SignatureVerificationException The header is malformed, no
+     *         signature matches, or the timestamp is outside the tolerance.
+     * @throws ConfigurationException This build has no cryptography support.
      */
     VerificationMetadata verify(const WebhookVerificationInput& input) const override;
 
     /**
-     * Returns true when signature verification support is available.
+     * Reports whether this build can verify signatures.
+     *
+     * Verification needs libsodium, which is a build option. Without it,
+     * webhooks cannot be trusted and must not be accepted.
+     *
+     * @return True when signature verification is available.
      */
     static bool is_available();
 };
+
+/** @} */
 
 } // namespace stripekit

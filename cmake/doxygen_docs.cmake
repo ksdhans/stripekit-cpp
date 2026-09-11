@@ -26,13 +26,43 @@ if(STRIPEKIT_BUILD_DOCS)
 
     set(STRIPEKIT_DOXYGEN_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/docs)
 
-    set(stripekit_doxygen_inputs
-        ${CMAKE_CURRENT_SOURCE_DIR}/README.md
-        ${CMAKE_CURRENT_SOURCE_DIR}/include/StripeKit
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/core/include/StripeKit
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/adapters/drogon/include/StripeKit
+    # Add new documentation pages and public headers here so Doxygen picks them
+    # up and the target rebuilds when they change.
+    set(stripekit_doc_pages
+        docs/MainPage.dox
+        docs/Topics.dox
+        docs/Overview.md
+        docs/Quickstart.md
+        docs/WritingAnAdapter.md
+        docs/versioning.md
     )
-    list(JOIN stripekit_doxygen_inputs " \\\n                         " STRIPEKIT_DOXYGEN_INPUT)
+
+    set(stripekit_doc_headers
+        include/StripeKit/Async.h
+        include/StripeKit/Callback.h
+        include/StripeKit/Client.h
+        include/StripeKit/Errors.h
+        include/StripeKit/Models.h
+        include/StripeKit/RequestOptions.h
+        include/StripeKit/StripeKit.h
+        src/core/include/StripeKit/Events.h
+        src/core/include/StripeKit/HTTPClient.h
+        src/core/include/StripeKit/Logging.h
+        src/core/include/StripeKit/SqliteWebhookDedupStore.h
+        src/core/include/StripeKit/StripeApiClient.h
+        src/core/include/StripeKit/WebhookDedupStore.h
+        src/core/include/StripeKit/WebhookProcessor.h
+        src/core/include/StripeKit/WebhookVerifier.h
+        src/core/include/StripeKit/Webhooks.h
+        src/adapters/drogon/include/StripeKit/Adapters/Drogon.h
+    )
+
+    set(stripekit_doc_sources "")
+    foreach(stripekit_doc_source IN LISTS stripekit_doc_pages stripekit_doc_headers)
+        list(APPEND stripekit_doc_sources ${CMAKE_CURRENT_SOURCE_DIR}/${stripekit_doc_source})
+    endforeach()
+
+    list(JOIN stripekit_doc_sources " \\\n                         " STRIPEKIT_DOXYGEN_INPUT)
 
     set(STRIPEKIT_DOXYGEN_HAVE_DOT NO)
     if(TARGET Doxygen::dot)
@@ -46,17 +76,11 @@ if(STRIPEKIT_BUILD_DOCS)
         @ONLY
     )
 
-    file(GLOB stripekit_doc_sources CONFIGURE_DEPENDS
-        ${CMAKE_CURRENT_SOURCE_DIR}/include/StripeKit/*.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/core/include/StripeKit/*.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/adapters/drogon/include/StripeKit/Adapters/*.h
-    )
-
     add_custom_command(
         OUTPUT ${STRIPEKIT_DOXYGEN_OUTPUT_DIR}/html/index.html
         COMMAND ${DOXYGEN_EXECUTABLE} ${stripekit_doxyfile}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS ${stripekit_doxyfile} ${stripekit_doc_sources} ${CMAKE_CURRENT_SOURCE_DIR}/README.md
+        DEPENDS ${stripekit_doxyfile} ${stripekit_doc_sources}
         COMMENT "Generating the StripeKit API reference with Doxygen"
         VERBATIM
     )

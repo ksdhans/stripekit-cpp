@@ -16,41 +16,60 @@
 namespace stripekit {
 
 /**
- * Logging levels supported by StripeKit.
+ * @addtogroup logging
+ * @{
+ */
+
+/**
+ * Severity of a log entry.
  */
 enum class LogLevel {
-    Trace,
-    Debug,
-    Info,
-    Warn,
-    Error,
-    Off
+    Trace, /**< Very detailed tracing. Noisy. */
+    Debug, /**< Diagnostic detail useful while developing. */
+    Info,  /**< Normal, noteworthy activity. */
+    Warn,  /**< Something unexpected that did not stop the operation. */
+    Error, /**< An operation failed. */
+    Off    /**< Nothing at all. Use as a threshold to silence logging. */
 };
 
 /**
- * Optional metadata fields that can be attached to a log message.
+ * Extra identifiers attached to a log entry.
  *
- * Leave any field empty when it is not relevant for a given message.
+ * These are the fields worth searching on when tracing a payment through
+ * Stripe's dashboard and the application's own logs. A logger that supports
+ * structured output should emit them as separate fields.
+ *
+ * Fields that do not apply are left empty.
  */
 struct LogContext {
-    /** Stripe request id associated with an outbound request. */
+    /** Stripe request id for an outbound call, of the form "req_...". */
     std::string request_id;
 
-    /** Stripe event id associated with webhook processing. */
+    /** Stripe event id for webhook work, of the form "evt_...". */
     std::string event_id;
 
-    /** Stripe webhook type, for example invoice.paid. */
+    /** Stripe event type, for example "invoice.paid". */
     std::string webhook_type;
 
-    /** Retry attempt index where available. */
+    /** Which attempt this is, for operations that are retried. */
     std::optional<int> retry_attempt;
 
-    /** Adapter name generating the log entry. */
+    /** Name of the adapter that produced the entry. */
     std::string adapter_name;
 };
 
 /**
- * Abstract base class for StripeKit loggers.
+ * Receives StripeKit's log entries.
+ *
+ * Implement this to route StripeKit's diagnostics into the application's own
+ * log. Adapters usually provide one already, such as
+ * stripekit::drogon::LogBridge.
+ *
+ * Entries may be written from any thread, so implementations must be
+ * thread-safe. They must not throw, and must never write the API key or the
+ * webhook signing secret; redact_sensitive_text() helps with the latter.
+ *
+ * @sa @ref writing_an_adapter
  */
 class Logger {
 public:
@@ -60,15 +79,22 @@ public:
     virtual ~Logger() = default;
 
     /**
-     * Returns true when entries at the given level should be emitted.
+     * Reports whether entries at this level are wanted.
+     *
+     * StripeKit checks this before building a message, so answering honestly
+     * avoids formatting work for entries that would be thrown away.
+     *
+     * @param level Severity being considered.
+     * @return True when an entry at that level would be written.
      */
     virtual bool should_log(LogLevel level) const = 0;
 
     /**
-     * Writes a message to the log.
+     * Writes one entry.
      *
-     * Context is optional. Pass an empty context when there is no request or
-     * webhook metadata to attach.
+     * @param level Severity of the entry.
+     * @param message The text to record.
+     * @param context Identifiers to attach. Fields that do not apply are empty.
      */
     virtual void log(LogLevel level,
                      std::string_view message,
@@ -76,38 +102,59 @@ public:
 };
 
 /**
- * No-op logger implementation.
+ * A logger that discards everything.
+ *
+ * Use it where a Logger is required but no output is wanted.
  */
 class NullLogger final : public Logger {
 public:
     /**
-     * Returns false for all levels.
+     * Reports whether entries at this level are wanted.
+     *
+     * @param level Ignored.
+     * @return Always false.
      */
     bool should_log(LogLevel level) const override;
 
     /**
-     * Ignores all log requests.
+     * Discards the entry.
+     *
+     * @param level Ignored.
+     * @param message Ignored.
+     * @param context Ignored.
      */
     void log(LogLevel level, std::string_view message, const LogContext& context) override;
 };
 
 /**
- * Console logger fallback used when no framework bridge logger is supplied.
+ * A logger that writes to the process's standard error stream.
+ *
+ * Convenient for command-line tools and getting started. Applications with
+ * their own logging should implement Logger, or use their adapter's bridge.
  */
 class ConsoleLogger final : public Logger {
 public:
     /**
-     * Creates a console logger with the provided minimum level threshold.
+     * Creates a console logger.
+     *
+     * @param threshold Lowest severity to write. Entries below it are dropped.
      */
     explicit ConsoleLogger(LogLevel threshold = LogLevel::Info);
 
     /**
-     * Returns true when level is at or above the configured threshold.
+     * Reports whether entries at this level are wanted.
+     *
+     * @param level Severity being considered.
+     * @return True when it is at or above the configured threshold.
      */
     bool should_log(LogLevel level) const override;
 
     /**
-     * Writes a formatted line to the process log stream.
+     * Writes one formatted line.
+     *
+     * @param level Severity of the entry.
+     * @param message The text to record.
+     * @param context Identifiers to include in the line.
      */
     void log(LogLevel level, std::string_view message, const LogContext& context) override;
 
@@ -116,18 +163,35 @@ private:
 };
 
 /**
- * Returns true when the field name should be treated as sensitive.
+ * Reports whether a field is one whose value should never be logged.
+ *
+ * Recognises the names Stripe uses for keys, secrets, and card details.
+ *
+ * @param field_name Name of the field being considered.
+ * @return True when the value should be replaced before logging.
  */
 bool is_sensitive_field_name(std::string_view field_name);
 
 /**
- * Returns a redacted placeholder for sensitive values.
+ * Replaces a secret value with a placeholder.
+ *
+ * @param value The value to hide.
+ * @return A placeholder that shows something was present without revealing it.
  */
 std::string redact_sensitive_value(std::string_view value);
 
 /**
- * Redacts secret-looking tokens from free-form log text.
+ * Strips secret-looking tokens out of free-form text.
+ *
+ * Catches API keys and signing secrets by their recognisable prefixes, which
+ * makes it useful for sanitising an error message or a response body before
+ * writing it to a log.
+ *
+ * @param text The text to sanitise.
+ * @return The text with recognised secrets replaced by placeholders.
  */
 std::string redact_sensitive_text(std::string_view text);
+
+/** @} */
 
 } // namespace stripekit

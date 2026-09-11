@@ -16,80 +16,191 @@
 namespace stripekit {
 
 /**
- * Converts Stripe HTTP response payloads into StripeKit models.
+ * @addtogroup adapter_interfaces
+ * @{
+ */
+
+/**
+ * Turns Stripe's responses into StripeKit models.
+ *
+ * StripeKit decodes Stripe's JSON with JsonStripeResponseParser by default.
+ * Implement this only when the application needs different decoding, such as
+ * to reuse a JSON library it already links.
  */
 class StripeResponseParser {
 public:
     /** Destroys the parser instance. */
     virtual ~StripeResponseParser() = default;
 
-    /** Parses a successful customer response. */
+    /**
+     * Reads a customer out of a successful response.
+     *
+     * @param response The response body and status from Stripe.
+     * @return The parsed customer.
+     * @throws ConfigurationException The body was not a valid customer object.
+     */
     virtual Customer parse_customer(const HttpResponse& response) const = 0;
 
-    /** Parses a successful Checkout Session response. */
+    /**
+     * Reads a Checkout session out of a successful response.
+     *
+     * @param response The response body and status from Stripe.
+     * @return The parsed session.
+     * @throws ConfigurationException The body was not a valid session object.
+     */
     virtual CheckoutSession parse_checkout_session(const HttpResponse& response) const = 0;
 
-    /** Parses a successful subscription response. */
+    /**
+     * Reads a subscription out of a successful response.
+     *
+     * @param response The response body and status from Stripe.
+     * @return The parsed subscription.
+     * @throws ConfigurationException The body was not a valid subscription object.
+     */
     virtual Subscription parse_subscription(const HttpResponse& response) const = 0;
 
-    /** Parses a successful Billing Portal session response. */
+    /**
+     * Reads a billing portal session out of a successful response.
+     *
+     * @param response The response body and status from Stripe.
+     * @return The parsed session.
+     * @throws ConfigurationException The body was not a valid session object.
+     */
     virtual BillingPortalSession parse_billing_portal_session(const HttpResponse& response) const = 0;
 
-    /** Parses an unsuccessful Stripe API response. */
+    /**
+     * Reads the error details out of a failed response.
+     *
+     * Must not throw: it is already handling a failure. Fall back to a
+     * StripeErrorType::Unknown payload when the body cannot be parsed.
+     *
+     * @param response The response body and status from Stripe.
+     * @return The error details, used to build a StripeApiException.
+     */
     virtual StripeErrorPayload parse_error(const HttpResponse& response) const = 0;
 };
 
 /**
- * Default Stripe response parser using JsonCpp.
+ * The response parser StripeKit uses by default.
+ *
+ * Decodes Stripe's JSON with JsonCpp. Applications get this automatically and
+ * only need to think about it when supplying a parser of their own.
  */
 class JsonStripeResponseParser final : public StripeResponseParser {
 public:
-    /** Parses a successful customer response. */
+    /**
+     * Reads a customer out of a successful response.
+     *
+     * @param response The response body and status from Stripe.
+     * @return The parsed customer.
+     * @throws ConfigurationException The body was not valid JSON, or not a customer.
+     */
     Customer parse_customer(const HttpResponse& response) const override;
 
-    /** Parses a successful Checkout Session response. */
+    /**
+     * Reads a Checkout session out of a successful response.
+     *
+     * @param response The response body and status from Stripe.
+     * @return The parsed session.
+     * @throws ConfigurationException The body was not valid JSON, or not a session.
+     */
     CheckoutSession parse_checkout_session(const HttpResponse& response) const override;
 
-    /** Parses a successful subscription response. */
+    /**
+     * Reads a subscription out of a successful response.
+     *
+     * @param response The response body and status from Stripe.
+     * @return The parsed subscription.
+     * @throws ConfigurationException The body was not valid JSON, or not a subscription.
+     */
     Subscription parse_subscription(const HttpResponse& response) const override;
 
-    /** Parses a successful Billing Portal session response. */
+    /**
+     * Reads a billing portal session out of a successful response.
+     *
+     * @param response The response body and status from Stripe.
+     * @return The parsed session.
+     * @throws ConfigurationException The body was not valid JSON, or not a session.
+     */
     BillingPortalSession parse_billing_portal_session(const HttpResponse& response) const override;
 
-    /** Parses an unsuccessful Stripe API response. */
+    /**
+     * Reads the error details out of a failed response.
+     *
+     * @param response The response body and status from Stripe.
+     * @return The error details, falling back to StripeErrorType::Unknown when
+     *         the body cannot be parsed.
+     */
     StripeErrorPayload parse_error(const HttpResponse& response) const override;
 };
 
 /**
- * Concrete Stripe client that uses an application-provided HTTP client.
+ * The StripeClient implementation, built on any HTTPClient.
  *
- * By default, StripeKit decodes Stripe JSON responses with JsonCpp. Pass a
- * custom parser when the host application needs different response decoding.
+ * This is what turns an adapter's transport into a working Stripe client: it
+ * builds the requests, sends them through the supplied HTTPClient, parses the
+ * responses, and raises StripeApiException on failure. An adapter's factory
+ * function constructs one of these, so applications rarely need to.
+ *
+ * Construct it directly when you need to supply a custom response parser:
+ *
+ * @code
+ * stripekit::drogon::HTTPClient http_client("sk_test_...");
+ * stripekit::StripeApiClient stripe(http_client, custom_parser);
+ * @endcode
+ *
+ * The HTTP client and parser are referenced, not owned, so both must outlive
+ * the client. Safe to use from several threads.
  */
 class StripeApiClient final : public StripeClient {
 public:
-     /** Creates a client using the supplied HTTP client and the default JsonCpp parser. */
+    /**
+     * Creates a client that decodes responses with JsonCpp.
+     *
+     * @param http_client Transport to send requests through. Must outlive the client.
+     */
      explicit StripeApiClient(HTTPClient& http_client);
 
-    /** Creates a client using the supplied HTTP client and custom response parser. */
+    /**
+     * Creates a client that decodes responses with a parser of your own.
+     *
+     * @param http_client Transport to send requests through. Must outlive the client.
+     * @param response_parser Decoder for Stripe's responses. Must outlive the client.
+     */
     StripeApiClient(HTTPClient& http_client, const StripeResponseParser& response_parser);
 
-    /** Destroys the client and resource groups. */
+    /** Destroys the client and its operation groups. */
     ~StripeApiClient() override;
 
     StripeApiClient(const StripeApiClient&) = delete;
     StripeApiClient& operator=(const StripeApiClient&) = delete;
 
-    /** Returns customer operations. */
+    /**
+     * Returns the customer operations.
+     *
+     * @return A reference valid for the lifetime of this client.
+     */
     Customers& customers() override;
 
-    /** Returns Checkout Session operations. */
+    /**
+     * Returns the Checkout operations.
+     *
+     * @return A reference valid for the lifetime of this client.
+     */
     Checkout& checkout() override;
 
-    /** Returns subscription operations. */
+    /**
+     * Returns the subscription operations.
+     *
+     * @return A reference valid for the lifetime of this client.
+     */
     Subscriptions& subscriptions() override;
 
-    /** Returns Billing Portal Session operations. */
+    /**
+     * Returns the billing portal operations.
+     *
+     * @return A reference valid for the lifetime of this client.
+     */
     BillingPortal& billing_portal() override;
 
 private:
@@ -184,5 +295,7 @@ private:
     BillingPortalSessionOperations billing_portal_session_operations;
     BillingPortalOperations billing_portal_operations;
 };
+
+/** @} */
 
 } // namespace stripekit

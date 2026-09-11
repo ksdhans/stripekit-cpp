@@ -21,54 +21,95 @@
 namespace stripekit {
 
 /**
- * HTTP methods used when calling Stripe's API.
+ * @addtogroup adapter_interfaces
+ * @{
+ */
+
+/**
+ * HTTP method for a Stripe API request.
  */
 enum class HttpMethod {
-    Get,
-    Post,
-    Delete
+    Get,   /**< Fetch an object. */
+    Post,  /**< Create or update an object. */
+    Delete /**< Remove an object. */
 };
 
 /**
- * Represents an outbound HTTP request issued to Stripe.
+ * A request StripeKit wants sent to Stripe.
+ *
+ * StripeKit fills this in; the adapter turns it into a real HTTP request.
  */
 struct HttpRequest {
-    /** HTTP method used by the request. */
+    /** Method to use. */
     HttpMethod method = HttpMethod::Get;
 
-    /** Request path relative to the Stripe API base URL. */
+    /**
+     * Path relative to the Stripe API base URL, for example "/v1/customers".
+     *
+     * Join it to the base URL, normally "https://api.stripe.com".
+     */
     std::string path;
 
-    /** Outbound request headers. */
+    /**
+     * Headers StripeKit needs sent.
+     *
+     * The adapter adds its own on top, notably the "Authorization" header
+     * carrying the secret key.
+     */
     std::unordered_map<std::string, std::string> headers;
 
-    /** Outbound request body payload. */
+    /**
+     * The request body, already encoded as "application/x-www-form-urlencoded".
+     *
+     * Send it unchanged. Stripe's API does not accept JSON request bodies.
+     */
     std::string body;
 
-    /** Shared request options including idempotency, timeout, and header overrides. */
+    /**
+     * Per-call settings the adapter must honour.
+     *
+     * `idempotency_key` becomes the "Idempotency-Key" header when set,
+     * `timeout` overrides the adapter's default, and `headers` are merged over
+     * the adapter's defaults. Ignoring the idempotency key means a retried call
+     * can charge a customer twice.
+     */
     RequestOptions options;
 };
 
 /**
- * Represents a normalized HTTP response returned from Stripe.
+ * Stripe's answer to a request.
  */
 struct HttpResponse {
-    /** HTTP status code. */
+    /** HTTP status Stripe returned. */
     int status_code = 0;
 
-    /** Response headers. */
+    /** Response headers, with lower-case keys. StripeKit looks them up that way. */
     std::unordered_map<std::string, std::string> headers;
 
-    /** Response payload body. */
+    /** Response body, unmodified. */
     std::string body;
 };
 
 /**
- * Abstract base class for making HTTP calls to Stripe.
+ * Sends StripeKit's requests to Stripe.
+ *
+ * This is the outbound half of an adapter. Implement it to put StripeKit on
+ * top of an existing HTTP stack; applications normally use a ready-made
+ * adapter such as stripekit::drogon::HTTPClient instead.
+ *
+ * A rejected request is not an error here. Report a 4xx or 5xx from Stripe as
+ * a normal HttpResponse and let StripeKit parse Stripe's error document and
+ * throw StripeApiException itself. Reserve exceptions for failures that stopped
+ * the request reaching Stripe at all, such as DNS, TLS, or timeout failures.
+ *
+ * Implementations must be thread-safe and must tolerate several requests being
+ * in flight at once.
+ *
+ * @sa @ref writing_an_adapter
  */
 class HTTPClient {
 public:
-    /** Callback type used by compatibility overloads. */
+    /** Completion callback for the callback form of send(). */
     using Completion = std::function<void(std::variant<HttpResponse, std::exception_ptr>)>;
 
     /**
@@ -77,16 +118,28 @@ public:
     virtual ~HTTPClient() = default;
 
     /**
-     * Starts a coroutine that sends an HTTP request to Stripe.
+     * Sends a request to Stripe.
+     *
+     * @param request What to send, including the options to honour.
+     * @return A task producing Stripe's response.
+     * @throws std::exception Stripe could not be reached. A response with an
+     *         error status is returned normally, not thrown.
      */
     virtual Task<HttpResponse> send_async(const HttpRequest& request) = 0;
 
     /**
-     * Sends a request using callback compatibility semantics.
+     * Sends a request to Stripe, reporting the result through a callback.
      *
-     * Implementations must complete exactly once.
+     * The callback must be invoked exactly once, on every path including the
+     * failure paths. Calling it twice corrupts whatever is waiting on it;
+     * never calling it hangs the request. OnceCallback exists to enforce this.
+     *
+     * @param request What to send, including the options to honour.
+     * @param completion Receives Stripe's response, or the transport failure.
      */
     virtual void send(const HttpRequest& request, Completion completion) = 0;
 };
+
+/** @} */
 
 } // namespace stripekit

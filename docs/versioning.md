@@ -1,4 +1,4 @@
-# Versioning and Release Tags
+# Versioning and Release Tags {#versioning}
 
 StripeKit C++ uses Semantic Versioning (SemVer):
 

@@ -12,5 +12,13 @@ for details. The generated HTML is not checked into the repository.
 
 Current docs:
 
-- `Doxyfile.in`: Doxygen configuration template used by the `stripekit-docs` target.
+- `MainPage.dox`: landing page for the generated reference.
+- `Topics.dox`: topic definitions that structure the reference.
+- `Overview.md`: what StripeKit does and how the pieces fit together.
+- `Quickstart.md`: a worked integration, from build setup to webhooks.
+- `WritingAnAdapter.md`: supporting a web framework other than Drogon.
 - `versioning.md`: versioning policy and release tag format.
+- `Doxyfile.in`: Doxygen configuration template used by the `stripekit-docs` target.
+
+New pages and public headers must be added to the lists in
+`cmake/doxygen_docs.cmake` to appear in the generated reference.

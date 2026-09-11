@@ -16,7 +16,14 @@
 namespace stripekit {
 
 /**
- * Represents a Stripe customer object used by StripeKit's public API.
+ * @addtogroup models
+ * @{
+ */
+
+/**
+ * A Stripe customer: the account everything else is billed against.
+ *
+ * @sa https://docs.stripe.com/api/customers/object
  */
 struct Customer {
     /** Stripe-assigned customer identifier. */
@@ -36,7 +43,12 @@ struct Customer {
 };
 
 /**
- * Represents a Stripe Checkout Session object for subscription-mode flows.
+ * A Stripe Checkout session: one attempt by a customer to subscribe.
+ *
+ * Send the customer to `url` to start payment. `subscription_id` is only
+ * filled in once checkout completes.
+ *
+ * @sa https://docs.stripe.com/api/checkout/sessions/object
  */
 struct CheckoutSession {
     /** Stripe-assigned checkout session identifier. */
@@ -71,7 +83,13 @@ struct CheckoutSession {
 };
 
 /**
- * Represents a Stripe subscription object.
+ * A Stripe subscription: a customer's recurring agreement to pay.
+ *
+ * `status` is what decides whether the customer should have access. "active"
+ * and "trialing" mean yes; "past_due" means Stripe is retrying a failed
+ * payment; "canceled" and "unpaid" mean no.
+ *
+ * @sa https://docs.stripe.com/api/subscriptions/object
  */
 struct Subscription {
     /** Stripe-assigned subscription identifier. */
@@ -100,7 +118,12 @@ struct Subscription {
 };
 
 /**
- * Represents a Stripe invoice object used for entitlement decisions in host applications.
+ * A Stripe invoice: the bill for one subscription period.
+ *
+ * A paid invoice is the signal that a period has been paid for, and is
+ * normally what access should be granted from.
+ *
+ * @sa https://docs.stripe.com/api/invoices/object
  */
 struct Invoice {
     /** Stripe-assigned invoice identifier. */
@@ -132,7 +155,10 @@ struct Invoice {
 };
 
 /**
- * Represents a Stripe Billing Portal session object.
+ * A Stripe billing portal session: a short-lived link to the self-serve
+ * billing page.
+ *
+ * @sa https://docs.stripe.com/api/customer_portal/sessions/object
  */
 struct BillingPortalSession {
     /** Stripe-assigned billing portal session identifier. */
@@ -155,32 +181,44 @@ struct BillingPortalSession {
 };
 
 /**
- * Represents a generic Stripe event envelope as emitted by webhook delivery.
+ * A Stripe event, as delivered by a webhook.
+ *
+ * `type` says what happened; `payload_json` holds Stripe's raw JSON for the
+ * event, which is where to look for any detail StripeKit does not model.
+ *
+ * @sa https://docs.stripe.com/api/events/object
+ * @sa @ref webhooks
  */
 struct EventEnvelope {
-    /** Stripe event identifier. */
+    /** Stripe event identifier, of the form "evt_...". */
     std::string id;
 
-    /** Stripe event type, for example invoice.paid. */
+    /** What happened, for example "invoice.paid". */
     std::string type;
 
-    /** Stripe API version associated with the event payload. */
+    /** Stripe API version the payload is formatted for. */
     std::string api_version;
 
-    /** Unix timestamp when the event was created in Stripe. */
+    /** Unix timestamp of when the event occurred in Stripe. */
     std::int64_t created_unix = 0;
 
     /** True when the event belongs to a live Stripe account. */
     bool livemode = false;
 
-    /** Stripe request identifier when available. */
+    /** Id of the API request that caused the event, when there was one. */
     std::string request_id;
 
-    /** Stripe connected account identifier when available. */
+    /** Connected account the event belongs to, when using Stripe Connect. */
     std::string account;
 
-    /** Raw JSON payload for downstream parsing or inspection. */
+    /**
+     * Stripe's raw JSON for the whole event.
+     *
+     * Parse this when the handler needs a field the models above do not carry.
+     */
     std::string payload_json;
 };
+
+/** @} */
 
 } // namespace stripekit

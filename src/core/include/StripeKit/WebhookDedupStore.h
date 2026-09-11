@@ -18,11 +18,16 @@
 
 namespace stripekit {
 
-/** Default timeout used to reclaim stale in-flight webhook claims. */
+/**
+ * @addtogroup webhooks
+ * @{
+ */
+
+/** How long an unfinished claim is honoured before another process may take it. */
 inline constexpr std::chrono::minutes defaultStaleInflightTimeout{15};
 
 /**
- * Possible results when claiming a webhook event id for processing.
+ * The result of trying to reserve an event for processing.
  */
 enum class ClaimOutcome {
     Claimed, /**< This worker reserved the event id and should process it now. */
@@ -33,52 +38,65 @@ enum class ClaimOutcome {
 };
 
 /**
- * Default response action mapping for claim outcomes.
+ * What to tell Stripe about a delivery.
  */
 enum class WebhookResponseAction {
-    AcknowledgeSuccess,
-    RetryLater
+    AcknowledgeSuccess, /**< Answer 2xx. Stripe stops retrying this event. */
+    RetryLater          /**< Answer 5xx. Stripe delivers the event again later. */
 };
 
 /**
- * Input passed when claiming an event id in the store.
+ * Asks the store to reserve an event id.
  *
- * A claim request asks the store to reserve the Stripe event id for exactly one
- * processor. If the id is already reserved or already processed, the store
- * returns a duplicate outcome instead of allowing a second processor to work it.
+ * The store must hand out a reservation to exactly one caller. If the id is
+ * already reserved or already finished, it reports a duplicate instead, which
+ * is what keeps repeated Stripe deliveries from being processed twice.
  */
 struct ClaimRequest {
-    /** Stripe event id being reserved for processing. */
+    /** The Stripe event id to reserve. */
     std::string event_id;
 
-    /** Current wall-clock time used by store implementations. */
+    /** Current time, used for claim timestamps and staleness checks. */
     std::chrono::system_clock::time_point now;
 
-    /** Reclaim timeout for stale in-flight claim records. */
+    /** How old an unfinished claim must be before it can be taken over. */
     std::chrono::minutes stale_inflight_timeout = defaultStaleInflightTimeout;
 };
 
 /**
- * Result returned by claim operations.
+ * The store's answer to a ClaimRequest.
  */
 struct ClaimResult {
-    /** Store-level claim outcome category. */
+    /** What happened. */
     ClaimOutcome outcome = ClaimOutcome::FatalStoreError;
 
-    /** Optional implementation detail for diagnostics. */
+    /** Optional free-form detail from the implementation, for diagnostics. */
     std::string detail;
 
     /**
-     * Returns true when the caller should continue processing the event.
+     * Reports whether the caller won the reservation.
+     *
+     * @return True only for ClaimOutcome::Claimed.
      */
     bool should_process() const;
 };
 
 /**
- * Abstract base class for webhook event-id persistence.
+ * Remembers which webhook events have been handled.
  *
- * Implementations provide atomic claim and mark-processed operations so
- * duplicate Stripe deliveries can be handled safely.
+ * Stripe delivers the same event more than once whenever it cannot confirm
+ * receipt, so a handler that grants access or charges money must run only once
+ * per event. This interface is what makes that possible.
+ *
+ * Which implementation to use depends on the deployment. Use
+ * InMemoryWebhookDedupStore for tests, SqliteWebhookDedupStore for a single
+ * host, and an implementation backed by the application's shared database when
+ * several instances handle the same endpoint.
+ *
+ * Implementations must be thread-safe, and claim() must be atomic: two
+ * instances racing on the same event id must produce exactly one
+ * ClaimOutcome::Claimed. A read followed by a write is not sufficient; use the
+ * database's conditional insert.
  */
 class WebhookDedupStore {
 public:
@@ -88,32 +106,55 @@ public:
     virtual ~WebhookDedupStore() = default;
 
     /**
-     * Attempts to claim an event id for processing.
+     * Tries to reserve an event id for processing.
+     *
+     * @param request The event id to reserve, and the timing rules to apply.
+     * @return Whether this caller won the reservation, and why not if it did
+     *         not. Store failures are reported here rather than thrown.
      */
     virtual ClaimResult claim(const ClaimRequest& request) = 0;
 
     /**
-     * Marks an event id as processed.
+     * Records that an event has been fully handled.
      *
-     * Returns true when an existing claim record was updated.
+     * Later deliveries of the same event then report
+     * ClaimOutcome::DuplicateProcessed.
+     *
+     * @param event_id The event id that was handled.
+     * @param processed_at When it finished.
+     * @return True if a claim record was updated; false if there was nothing
+     *         to update.
      */
     virtual bool mark_processed(std::string_view event_id,
                                 std::chrono::system_clock::time_point processed_at) = 0;
 
     /**
-     * Removes expired records according to retention policy.
+     * Deletes records older than the retention period.
+     *
+     * Call this periodically to stop the store growing without limit. Keep the
+     * retention comfortably longer than Stripe's retry window, which runs for
+     * several days, or an old event could be processed a second time.
+     *
+     * @param now Current time.
+     * @param retention How long a record must be kept.
      */
     virtual void erase_expired(std::chrono::system_clock::time_point now,
                                std::chrono::hours retention) = 0;
 };
 
 /**
- * In-memory de-duplication store for tests and local development.
+ * A de-duplication store that keeps everything in memory.
+ *
+ * Suitable for tests and local development. It forgets everything when the
+ * process exits and is not shared between processes, so it is not appropriate
+ * for production.
+ *
+ * Safe to use from several threads.
  */
 class InMemoryWebhookDedupStore final : public WebhookDedupStore {
 public:
     /**
-     * Creates an empty in-memory store.
+     * Creates an empty store.
      */
     InMemoryWebhookDedupStore();
 
@@ -123,18 +164,28 @@ public:
     ~InMemoryWebhookDedupStore() override;
 
     /**
-     * Attempts to claim an event id for processing.
+     * Tries to reserve an event id for processing.
+     *
+     * @param request The event id to reserve, and the timing rules to apply.
+     * @return Whether this caller won the reservation.
      */
     ClaimResult claim(const ClaimRequest& request) override;
 
     /**
-     * Marks an event id as processed.
+     * Records that an event has been fully handled.
+     *
+     * @param event_id The event id that was handled.
+     * @param processed_at When it finished.
+     * @return True if a claim record was updated.
      */
     bool mark_processed(std::string_view event_id,
                         std::chrono::system_clock::time_point processed_at) override;
 
     /**
-     * Removes expired records according to retention policy.
+     * Deletes records older than the retention period.
+     *
+     * @param now Current time.
+     * @param retention How long a record must be kept.
      */
     void erase_expired(std::chrono::system_clock::time_point now,
                        std::chrono::hours retention) override;
@@ -151,8 +202,17 @@ private:
 };
 
 /**
- * Maps a claim outcome to the default webhook HTTP response action.
+ * Works out what to tell Stripe, given a claim outcome.
+ *
+ * Duplicates count as success: the event was already handled, so there is no
+ * point asking Stripe to send it again.
+ *
+ * @param outcome The result of a claim attempt.
+ * @return WebhookResponseAction::AcknowledgeSuccess for duplicates, and
+ *         WebhookResponseAction::RetryLater for store failures.
  */
 WebhookResponseAction map_claim_outcome_to_response(ClaimOutcome outcome);
+
+/** @} */
 
 } // namespace stripekit

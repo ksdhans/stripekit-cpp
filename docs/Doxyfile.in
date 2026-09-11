@@ -9,15 +9,12 @@ HTML_OUTPUT            = html
 HTML_FILE_EXTENSION    = .html
 
 INPUT                  = @STRIPEKIT_DOXYGEN_INPUT@
-FILE_PATTERNS          = *.h *.md
-RECURSIVE              = YES
-EXCLUDE_PATTERNS       = */build*/*
+FILE_PATTERNS          = *.h *.md *.dox
 
 EXAMPLE_PATH           = @CMAKE_CURRENT_SOURCE_DIR@/examples
 EXAMPLE_RECURSIVE      = YES
 IMAGE_PATH             = @CMAKE_CURRENT_SOURCE_DIR@/docs
 
-USE_MDFILE_AS_MAINPAGE = @CMAKE_CURRENT_SOURCE_DIR@/README.md
 MARKDOWN_SUPPORT       = YES
 AUTOLINK_SUPPORT       = YES
 TOC_INCLUDE_HEADINGS   = 3
@@ -43,7 +40,8 @@ ALWAYS_DETAILED_SEC    = YES
 REPEAT_BRIEF           = YES
 
 # StripeKit's file header comments use an @License line.
-ALIASES                = "License=@par License:^^"
+ALIASES                = "License=@par License:^^" \
+                         "license=@par License:^^"
 
 SOURCE_BROWSER         = YES
 INLINE_SOURCES         = NO

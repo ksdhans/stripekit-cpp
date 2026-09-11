@@ -1,0 +1,58 @@
+/** MainPage.dox
+ *
+ * Landing page for the StripeKit API reference.
+ *
+ * @author Hans de Ruiter
+ *
+ * @License See LICENSE for details.
+ */
+
+/**
+ * @mainpage StripeKit C++
+ *
+ * StripeKit is a C++20 toolkit for integrating Stripe subscription billing
+ * into an application: creating customers and Checkout sessions, offering a
+ * self-serve billing portal, and reacting to the webhooks Stripe sends
+ * afterwards.
+ *
+ * It keeps the Stripe work separate from the web framework underneath, so the
+ * same billing code runs whichever framework the host application uses.
+ *
+ * @section main_start Getting started
+ *
+ * - @ref overview — what StripeKit does and how the pieces fit together.
+ * - @ref quickstart — a working integration, step by step.
+ *
+ * @section main_reference Reference
+ *
+ * - @ref application_api — the API applications use to talk to Stripe.
+ *   - @ref client — customers, Checkout, subscriptions, billing portal.
+ *   - @ref models — the Stripe objects StripeKit returns.
+ *   - @ref webhooks — verifying deliveries and handling each event once.
+ *   - @ref errors — the exceptions StripeKit throws.
+ *   - @ref async — coroutine and callback plumbing.
+ *   - @ref logging — routing diagnostics into the host application's log.
+ * - @ref adapter_api — framework integration.
+ *   - @ref writing_an_adapter — supporting a new framework.
+ *   - @ref adapter_interfaces — the interfaces an adapter implements.
+ *   - @ref drogon_adapter — the bundled Drogon adapter.
+ *
+ * @section main_examples Examples
+ *
+ * Runnable programs live in the `examples/` directory of the source tree:
+ *
+ * - `CheckoutSessionCli` — creates a Checkout session from the command line.
+ * - `BillingPortalCli` — creates a billing portal session.
+ * - `WebhookSignature` — the smallest possible verified webhook endpoint.
+ * - `DrogonCheckoutDemo` — the full flow inside a Drogon server.
+ *
+ * @section main_more Project documentation
+ *
+ * - @ref versioning — versioning policy and release tag format.
+ *
+ * Build instructions and test setup are in the project `README.md`.
+ *
+ * @section main_license License
+ *
+ * BSD-3-Clause. See `LICENSE`.
+ */

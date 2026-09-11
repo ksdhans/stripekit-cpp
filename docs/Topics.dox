@@ -1,0 +1,130 @@
+/** Topics.dox
+ *
+ * Topic (group) definitions for the StripeKit API reference.
+ *
+ * @author Hans de Ruiter
+ *
+ * @License See LICENSE for details.
+ */
+
+/**
+ * @defgroup application_api Application API
+ *
+ * The API applications use to talk to Stripe.
+ *
+ * Everything here is framework agnostic. Pick an adapter to supply the
+ * networking and web-server plumbing, then use these types for the actual
+ * Stripe work.
+ *
+ * @sa @ref quickstart
+ */
+
+/**
+ * @defgroup client Stripe Client
+ * @ingroup application_api
+ *
+ * Creating customers, Checkout sessions, subscriptions, and billing portal
+ * sessions.
+ *
+ * Start at StripeClient. It mirrors Stripe's own resource grouping, so
+ * `customers()`, `checkout().sessions()`, `subscriptions()`, and
+ * `billing_portal().sessions()` line up with the sections of Stripe's API
+ * reference.
+ *
+ * @sa https://docs.stripe.com/api
+ */
+
+/**
+ * @defgroup models Stripe Models
+ * @ingroup application_api
+ *
+ * Plain structs describing the Stripe objects StripeKit returns.
+ *
+ * Each struct carries the fields StripeKit needs for billing and entitlement
+ * decisions rather than every field Stripe returns. When you need something
+ * that is not present, read it from the raw JSON in
+ * stripekit::EventEnvelope::payload_json, or file a request.
+ *
+ * @sa https://docs.stripe.com/api
+ */
+
+/**
+ * @defgroup webhooks Webhooks
+ * @ingroup application_api
+ *
+ * Webhooks, are HTTP requests made by Stripe to our server to notify us of 
+ * events (e.g., payment success). 
+ *
+ * Stripe can deliver the same event more than once whenever it cannot confirm
+ * that you received it, so a webhook handler must be safe to run twice. The
+ * types here do that for you: they check the signature, reserve the event id
+ * in a store, and only then call your handler.
+ *
+ * @sa https://docs.stripe.com/webhooks
+ */
+
+/**
+ * @defgroup errors Errors
+ * @ingroup application_api
+ *
+ * The exceptions StripeKit throws, and the Stripe error details attached to
+ * them.
+ */
+
+/**
+ * @defgroup async Async Support
+ * @ingroup application_api
+ *
+ * Coroutine and callback plumbing shared by the asynchronous client methods.
+ *
+ * Most applications only need to know that `*_async` methods return a
+ * stripekit::Task that can be `co_await`ed.
+ */
+
+/**
+ * @defgroup logging Logging
+ * @ingroup application_api
+ *
+ * Routing StripeKit's diagnostics into the host application's log, with
+ * helpers for keeping secrets out of log output.
+ */
+
+/**
+ * @defgroup adapter_api Adapter API
+ *
+ * Adapters integrate StripeKit into a web framework (e.g., Drogon). They
+ * provide the ability to send and receive HTTP requests to/from Stripe's
+ * servers.
+ *
+ * An adapter supplies the two pieces of plumbing StripeKit deliberately does
+ * not implement itself: outbound HTTPS requests to Stripe, and an inbound
+ * route that receives webhook deliveries. Applications normally use a
+ * ready-made adapter and never touch these interfaces.
+ *
+ * @sa @ref writing_an_adapter
+ */
+
+/**
+ * @defgroup adapter_interfaces Adapter Interfaces
+ * @ingroup adapter_api
+ *
+ * The abstract base classes an adapter implements.
+ *
+ * @sa @ref writing_an_adapter
+ */
+
+/**
+ * @defgroup drogon_adapter Drogon Adapter
+ * @ingroup adapter_api
+ *
+ * The adapter for the [Drogon](https://drogon.org/) web framework.
+ *
+ * @sa @ref writing_an_adapter
+ */
+
+/**
+ * @defgroup version Version Information
+ * @ingroup application_api
+ *
+ * Reading the StripeKit version and build metadata at runtime.
+ */

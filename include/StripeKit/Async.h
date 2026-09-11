@@ -20,31 +20,57 @@
 namespace stripekit {
 
 /**
- * Move-only coroutine task that yields a single result value.
+ * @ingroup async
+ *
+ * The result of an asynchronous StripeKit operation.
+ *
+ * Every `*_async` method returns one of these. `co_await` it to get the value:
+ *
+ * @code
+ * const stripekit::Customer customer = co_await stripe->customers().create_async(request);
+ * @endcode
+ *
+ * Outside a coroutine, result() blocks until the value is ready. That is
+ * convenient in command-line tools and tests, but must never be done on a
+ * thread that is running an event loop, since the work being waited on may
+ * need that loop to make progress.
+ *
+ * The task starts on the first `co_await` or result(), not on construction, so
+ * a task that is created and dropped never runs. Tasks are move-only, and each
+ * one produces its value once.
+ *
+ * @tparam TResult Type of value the operation produces.
  */
 template <typename TResult>
 class Task {
 public:
     /**
-     * Promise type used by the C++ coroutine machinery.
+     * Coroutine promise type. Used by the compiler; not called directly.
      */
     struct promise_type {
         /**
-         * Creates the task object associated with this promise.
+         * Creates the task object handed back to the caller.
+         *
+         * @return The task wrapping this coroutine.
          */
         Task get_return_object() {
             return Task(std::coroutine_handle<promise_type>::from_promise(*this));
         }
 
         /**
-         * Starts suspended so callers control scheduling.
+         * Suspends the coroutine at its start so the caller controls when it runs.
+         *
+         * @return An awaitable that always suspends.
          */
         std::suspend_always initial_suspend() noexcept {
             return {};
         }
 
         /**
-         * Notifies waiters and resumes any awaiting coroutine.
+         * Wakes anything waiting on this task once it finishes.
+         *
+         * @return An awaitable that notifies waiters and resumes the awaiting
+         *         coroutine.
          */
         auto final_suspend() noexcept {
             struct FinalAwaiter {
@@ -72,35 +98,39 @@ public:
         }
 
         /**
-         * Stores the returned result value.
+         * Stores the value the coroutine returned.
+         *
+         * @param value The produced value.
          */
         void return_value(TResult value) {
             result = std::move(value);
         }
 
         /**
-         * Stores unhandled exceptions for later rethrow.
+         * Captures an escaping exception so it can be rethrown to the waiter.
          */
         void unhandled_exception() {
             error = std::current_exception();
         }
 
-        std::optional<TResult> result;
-        std::exception_ptr error;
-        std::mutex mutex;
-        std::condition_variable ready;
-        std::coroutine_handle<> continuation;
-        bool started = false;
-        bool completed = false;
+        std::optional<TResult> result; /**< The produced value, once available. */
+        std::exception_ptr error; /**< The exception that escaped, if one did. */
+        std::mutex mutex; /**< Guards the fields below. */
+        std::condition_variable ready; /**< Signalled when the coroutine finishes. */
+        std::coroutine_handle<> continuation; /**< Coroutine waiting on this task. */
+        bool started = false; /**< True once the coroutine has been resumed. */
+        bool completed = false; /**< True once the coroutine has finished. */
     };
 
     /**
-     * Creates an empty task.
+     * Creates a task with no coroutine attached.
+     *
+     * Awaiting or querying an empty task throws.
      */
     Task() = default;
 
     /**
-     * Releases coroutine resources.
+     * Destroys the task and its coroutine state.
      */
     ~Task() {
         if (handle) {
@@ -109,7 +139,9 @@ public:
     }
 
     /**
-     * Creates a task from an existing coroutine handle.
+     * Adopts an existing coroutine handle.
+     *
+     * @param coroutine The coroutine this task takes ownership of.
      */
     explicit Task(std::coroutine_handle<promise_type> coroutine)
         : handle(coroutine) {
@@ -119,14 +151,19 @@ public:
     Task& operator=(const Task&) = delete;
 
     /**
-     * Moves a task.
+     * Takes over another task's coroutine, leaving it empty.
+     *
+     * @param other The task to move from.
      */
     Task(Task&& other) noexcept
         : handle(std::exchange(other.handle, {})) {
     }
 
     /**
-     * Move-assigns a task.
+     * Takes over another task's coroutine, leaving it empty.
+     *
+     * @param other The task to move from.
+     * @return This task.
      */
     Task& operator=(Task&& other) noexcept {
         if (this != &other) {
@@ -139,14 +176,24 @@ public:
     }
 
     /**
-     * Returns true when the task has already completed.
+     * Reports whether the value is already available.
+     *
+     * @return True when the operation has finished, or the task is empty.
      */
     bool is_ready() const {
         return !handle || handle.promise().completed;
     }
 
     /**
-     * Starts the coroutine if needed, waits for completion, and returns the result.
+     * Waits for the operation to finish and returns its value.
+     *
+     * Starts the operation if it has not started yet, then blocks the calling
+     * thread. Do not call this from an event loop thread: the work being waited
+     * on may need that loop to run, which would deadlock. Prefer `co_await`.
+     *
+     * @return The produced value, moved out of the task.
+     * @throws std::runtime_error The task is empty.
+     * @throws StripeApiException Or any other exception the operation threw.
      */
     TResult result() {
         if (!handle) {
@@ -170,7 +217,13 @@ public:
     }
 
     /**
-     * Enables co_await support for this task type.
+     * Makes the task awaitable, so `co_await` yields its value.
+     *
+     * Starts the operation if it has not started yet, suspends the awaiting
+     * coroutine, and resumes it with the value. An exception thrown by the
+     * operation is rethrown at the `co_await`.
+     *
+     * @return The awaiter used by the compiler.
      */
     auto operator co_await() {
         struct Awaiter {
