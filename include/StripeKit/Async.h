@@ -81,11 +81,18 @@ public:
                 void await_suspend(std::coroutine_handle<promise_type> handle) const noexcept {
                     std::coroutine_handle<> continuation;
                     {
+                        // Notify while still holding the lock: a waiter woken by
+                        // notify_all() cannot reacquire the mutex, and therefore
+                        // cannot destroy this coroutine's promise (mutex and
+                        // condition_variable included), until this scope releases
+                        // it below. Notifying after unlocking would let the
+                        // waiter finish and destroy the promise concurrently with
+                        // this notify_all() call, corrupting the heap.
                         std::lock_guard<std::mutex> lock(handle.promise().mutex);
                         handle.promise().completed = true;
                         continuation = handle.promise().continuation;
+                        handle.promise().ready.notify_all();
                     }
-                    handle.promise().ready.notify_all();
                     if (continuation) {
                         continuation.resume();
                     }

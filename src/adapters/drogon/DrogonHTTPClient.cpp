@@ -136,7 +136,12 @@ Task<HttpResponse> HTTPClient::send_async(const HttpRequest& request) {
         }
     };
 
-    co_return co_await Awaiter{*this, request, HttpResponse{}};
+    // Awaiting through a named local instead of `co_return co_await Awaiter{...}`
+    // directly: GCC 12 miscalculates the coroutine frame size for the combined
+    // pattern, corrupting the heap once the network callback writes into it.
+    Awaiter awaiter{*this, request, HttpResponse{}};
+    HttpResponse response = co_await awaiter;
+    co_return response;
 }
 
 void HTTPClient::send(const HttpRequest& request, Completion completion) {
