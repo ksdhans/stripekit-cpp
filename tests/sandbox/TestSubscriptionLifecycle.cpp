@@ -64,6 +64,33 @@ TEST_F(SandboxSubscriptionTest, CheckoutSessionIsCreatedForSubscriptionMode) {
     EXPECT_EQ(session.metadata.at("stripekit_run_id"), environment->run_id());
 }
 
+TEST_F(SandboxSubscriptionTest, CheckoutSessionIsCreatedForPaymentMode) {
+    const std::string customer_id =
+        create_customer_with_card(*environment, "pm_card_visa", "checkout_payment");
+
+    const CreateCheckoutSessionRequest request{
+        .customer_id = customer_id,
+        .mode = "payment",
+        .product_name = "One-Time Product",
+        .currency = "usd",
+        .unit_amount = 2500,
+        .success_url = "https://example.com/success",
+        .cancel_url = "https://example.com/cancel",
+        .metadata = {{"stripekit_run_id", environment->run_id()}}
+    };
+
+    const CheckoutSession session =
+        environment->stripe_client().checkout().sessions().create_async(request).result();
+
+    EXPECT_FALSE(session.id.empty());
+    EXPECT_EQ(session.customer_id, customer_id);
+    EXPECT_EQ(session.mode, "payment");
+    EXPECT_EQ(session.status, "open");
+    EXPECT_FALSE(session.url.empty());
+    EXPECT_FALSE(session.livemode);
+    EXPECT_EQ(session.metadata.at("stripekit_run_id"), environment->run_id());
+}
+
 TEST_F(SandboxSubscriptionTest, PaidSubscriptionEmitsInvoicePaid) {
     const std::string customer_id =
         create_customer_with_card(*environment, "pm_card_visa", "paid");
