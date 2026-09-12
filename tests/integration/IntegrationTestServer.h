@@ -433,19 +433,25 @@ private:
                 }
                 telemetry.record_api_request(req);
 
+                std::string req_body{req->getBody()};
+                bool is_payment_mode = req_body.find("mode=payment") != std::string::npos;
+                std::string session_id = is_payment_mode ? "cs_drogon_payment_1" : "cs_drogon_session_1";
+                std::string mode = is_payment_mode ? "payment" : "subscription";
+                std::string payment_intent_field = is_payment_mode ? R"(, "payment_intent": "pi_drogon_123")" : "";
+
                 auto resp = ::drogon::HttpResponse::newHttpResponse();
                 resp->setStatusCode(::drogon::k200OK);
                 resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
                 resp->setBody(R"({
-                    "id": "cs_drogon_session_1",
+                    "id": ")" + session_id + R"(",
                     "object": "checkout.session",
                     "customer": "cus_drogon_123",
                     "status": "open",
-                    "mode": "subscription",
-                    "url": "https://checkout.stripe.com/c/pay/cs_drogon_session_1",
+                    "mode": ")" + mode + R"(",
+                    "url": "https://checkout.stripe.com/c/pay/)" + session_id + R"(",
                     "currency": "usd",
                     "amount_total": 2000,
-                    "livemode": false,
+                    "livemode": false)" + payment_intent_field + R"(,
                     "metadata": {}
                 })");
                 callback(resp);

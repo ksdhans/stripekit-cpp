@@ -140,6 +140,30 @@ TEST_F(DrogonHTTPClientIntegrationTest, CheckoutSessionCreateAsyncSuccess) {
     EXPECT_EQ(session.amount_total, 2000);
 }
 
+TEST_F(DrogonHTTPClientIntegrationTest, CheckoutSessionCreateOneTimePurchaseAsyncSuccess) {
+    const CreateCheckoutSessionRequest request{
+        .customer_id = "cus_drogon_123",
+        .mode = "payment",
+        .product_name = "Lifetime License",
+        .currency = "usd",
+        .unit_amount = 9900,
+        .success_url = "https://example.com/checkout/success",
+        .cancel_url = "https://example.com/cancel",
+        .quantity = 1
+    };
+
+    auto task = client->checkout().sessions().create_async(request);
+    const CheckoutSession session = task.result();
+
+    EXPECT_EQ(session.id, "cs_drogon_payment_1");
+    EXPECT_EQ(session.customer_id, "cus_drogon_123");
+    EXPECT_EQ(session.status, "open");
+    EXPECT_EQ(session.mode, "payment");
+    EXPECT_EQ(session.payment_intent_id, "pi_drogon_123");
+    EXPECT_EQ(session.url, "https://checkout.stripe.com/c/pay/cs_drogon_payment_1");
+    EXPECT_EQ(session.amount_total, 2000);
+}
+
 TEST_F(DrogonHTTPClientIntegrationTest, CheckoutSessionCreateAsyncUsesDrogonFrameworkLoop) {
     auto app_loop_client = stripekit::drogon::make_stripe_client({
         .api_key = api_key,

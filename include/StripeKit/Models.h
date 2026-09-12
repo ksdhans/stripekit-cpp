@@ -43,10 +43,11 @@ struct Customer {
 };
 
 /**
- * A Stripe Checkout session: one attempt by a customer to subscribe.
+ * A Stripe Checkout session: one attempt by a customer to pay or subscribe.
  *
- * Send the customer to `url` to start payment. `subscription_id` is only
- * filled in once checkout completes.
+ * Send the customer to `url` to start payment. `subscription_id` or
+ * `payment_intent_id` is filled in depending on whether `mode` is subscription
+ * or payment.
  *
  * @sa https://docs.stripe.com/api/checkout/sessions/object
  */
@@ -59,6 +60,9 @@ struct CheckoutSession {
 
     /** Stripe subscription identifier created by checkout, when present. */
     std::string subscription_id;
+
+    /** Stripe payment intent identifier created by checkout, when present. */
+    std::string payment_intent_id;
 
     /** Session status, for example open, complete, or expired. */
     std::string status;

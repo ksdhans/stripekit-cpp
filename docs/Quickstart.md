@@ -40,9 +40,8 @@ that request and reacts to it, for example by giving the customer access.
 
 **A subscription is an ongoing agreement to pay.** A customer subscribes once,
 through Checkout, and Stripe then bills them automatically every month (or
-week, or year) until they cancel. StripeKit's Checkout support is for setting
-up this kind of subscription; it does not currently handle a single one-time
-purchase.
+week, or year) until they cancel. StripeKit's Checkout support handles both recurring
+subscriptions (`mode = "subscription"`) and one-time purchases (`mode = "payment"`).
 
 @section quickstart_prerequisites Before you start
 

@@ -52,18 +52,24 @@ struct CreateCustomerRequest {
 /**
  * Describes the Checkout session to create.
  *
- * StripeKit currently only creates Checkout sessions for subscriptions, not
- * one-time payments; support for one-time payments may be added later. Price
- * the subscription one of two ways: set `price_id` to reuse a Price already
- * configured in the Stripe dashboard, or leave it empty and fill in
- * `product_name`, `currency`, `unit_amount`, and `recurring_interval` to
- * define the price inline.
+ * StripeKit creates Checkout sessions for subscriptions (`mode = "subscription"`)
+ * or one-time payments (`mode = "payment"`). Price the item one of two ways:
+ * set `price_id` to reuse a Price already configured in the Stripe dashboard,
+ * or leave it empty and fill in `product_name`, `currency`, `unit_amount`, and
+ * (for subscriptions) `recurring_interval` to define the price inline.
  *
  * @sa https://docs.stripe.com/api/checkout/sessions/create
  */
 struct CreateCheckoutSessionRequest {
-    /** Id of an existing Stripe customer to bill. */
+    /** Id of an existing Stripe customer to bill. Optional for one-time payments. */
     std::string customer_id;
+
+    /**
+     * Mode of the Checkout session: "subscription" or "payment".
+     *
+     * Defaults to "subscription". Use "payment" for one-time purchases.
+     */
+    std::string mode = "subscription";
 
     /** Id of an existing Stripe Price. Leave empty to price the line item inline. */
     std::string price_id;
@@ -75,13 +81,17 @@ struct CreateCheckoutSessionRequest {
     std::string currency = "usd";
 
     /**
-     * Amount per interval for inline pricing, in the currency's smallest unit.
+     * Amount per unit for inline pricing, in the currency's smallest unit.
      *
      * That means cents for USD, so 1499 is $14.99.
      */
     std::int64_t unit_amount = 0;
 
-    /** Billing interval for inline pricing: "day", "week", "month", or "year". */
+    /**
+     * Billing interval for inline pricing in subscription mode: "day", "week", "month", or "year".
+     *
+     * Ignored when `mode` is "payment".
+     */
     std::string recurring_interval = "month";
 
     /**
@@ -89,14 +99,14 @@ struct CreateCheckoutSessionRequest {
      *
      * Reaching this URL is not proof of payment; the customer may close the tab
      * first, and anyone can visit the URL directly. Grant access from the
-     * `invoice.paid` webhook instead.
+     * `checkout.session.completed` or `invoice.paid` webhook instead.
      */
     std::string success_url;
 
     /** Where Stripe sends the customer's browser if they abandon checkout. */
     std::string cancel_url;
 
-    /** Number of units of the subscription to bill for. */
+    /** Number of units of the item to bill for. */
     std::int64_t quantity = 1;
 
     /** Free-form key/value pairs to store on the session. */

@@ -168,14 +168,19 @@ bool is_success(const HttpResponse& response) {
 
 std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
     std::string body;
-    append_form_value(body, "mode", "subscription");
-    append_form_value(body, "customer", request.customer_id);
+    const std::string session_mode = request.mode.empty() ? "subscription" : request.mode;
+    append_form_value(body, "mode", session_mode);
+    if (!request.customer_id.empty()) {
+        append_form_value(body, "customer", request.customer_id);
+    }
     if (!request.price_id.empty()) {
         append_form_value(body, "line_items[0][price]", request.price_id);
     } else {
         append_form_value(body, "line_items[0][price_data][currency]", request.currency);
         append_form_value(body, "line_items[0][price_data][unit_amount]", std::to_string(request.unit_amount));
-        append_form_value(body, "line_items[0][price_data][recurring][interval]", request.recurring_interval);
+        if (session_mode == "subscription" && !request.recurring_interval.empty()) {
+            append_form_value(body, "line_items[0][price_data][recurring][interval]", request.recurring_interval);
+        }
         append_form_value(body, "line_items[0][price_data][product_data][name]", request.product_name);
     }
     append_form_value(body, "line_items[0][quantity]", std::to_string(request.quantity));
@@ -262,11 +267,33 @@ Customer JsonStripeResponseParser::parse_customer(const HttpResponse& response) 
 
 CheckoutSession JsonStripeResponseParser::parse_checkout_session(const HttpResponse& response) const {
     const auto object = json_value::parse(response.body);
-    return CheckoutSession{.id = json_value::string(object, "id"), .customer_id = json_value::string(object, "customer"),
-        .subscription_id = json_value::string(object, "subscription"), .status = json_value::string(object, "status"),
-        .mode = json_value::string(object, "mode"), .url = json_value::string(object, "url"),
-        .currency = json_value::string(object, "currency"), .amount_total = json_value::integer(object, "amount_total"),
-        .livemode = json_value::boolean(object, "livemode"), .metadata = metadata_value(object)};
+    const auto string_or_object_id = [](const Json::Value& obj, const char* name) -> std::string {
+        if (!obj.isObject() || !obj.isMember(name)) {
+            return {};
+        }
+        const auto& val = obj[name];
+        if (val.isString()) {
+            return val.asString();
+        }
+        if (val.isObject() && val.isMember("id") && val["id"].isString()) {
+            return val["id"].asString();
+        }
+        return {};
+    };
+
+    return CheckoutSession{
+        .id = json_value::string(object, "id"),
+        .customer_id = string_or_object_id(object, "customer"),
+        .subscription_id = string_or_object_id(object, "subscription"),
+        .payment_intent_id = string_or_object_id(object, "payment_intent"),
+        .status = json_value::string(object, "status"),
+        .mode = json_value::string(object, "mode"),
+        .url = json_value::string(object, "url"),
+        .currency = json_value::string(object, "currency"),
+        .amount_total = json_value::integer(object, "amount_total"),
+        .livemode = json_value::boolean(object, "livemode"),
+        .metadata = metadata_value(object)
+    };
 }
 
 Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& response) const {

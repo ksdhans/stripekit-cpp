@@ -281,6 +281,83 @@ TEST_F(StripeApiClientTest, CreateCheckoutSessionWithInlinePriceData) {
     EXPECT_EQ(session.id, "cs_test_inline_1");
 }
 
+TEST_F(StripeApiClientTest, CreateCheckoutSessionOneTimePurchaseInlinePriceData) {
+    http_client.set_handler([](const HttpRequest& req) {
+        EXPECT_EQ(req.method, HttpMethod::Post);
+        EXPECT_EQ(req.path, "/v1/checkout/sessions");
+        EXPECT_NE(req.body.find("mode=payment"), std::string::npos);
+        EXPECT_EQ(req.body.find("customer="), std::string::npos);
+        EXPECT_EQ(req.body.find("recurring"), std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bcurrency%5D=usd"), std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bunit_amount%5D=2999"), std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bproduct_data%5D%5Bname%5D=One-time%20Ebook"), std::string::npos);
+
+        return HttpResponse{
+            .status_code = 200,
+            .headers = {},
+            .body = R"({
+                "id": "cs_test_payment_1",
+                "customer": null,
+                "status": "open",
+                "mode": "payment",
+                "payment_intent": "pi_test_12345",
+                "url": "https://checkout.stripe.com/c/pay/cs_test_payment_1",
+                "amount_total": 2999
+            })"
+        };
+    });
+
+    auto task = client->checkout().sessions().create_async(CreateCheckoutSessionRequest{
+        .mode = "payment",
+        .product_name = "One-time Ebook",
+        .currency = "usd",
+        .unit_amount = 2999,
+        .success_url = "https://example.com/success",
+        .cancel_url = "https://example.com/cancel"
+    });
+    const CheckoutSession session = task.result();
+    EXPECT_EQ(session.id, "cs_test_payment_1");
+    EXPECT_EQ(session.mode, "payment");
+    EXPECT_EQ(session.payment_intent_id, "pi_test_12345");
+    EXPECT_EQ(session.amount_total, 2999);
+}
+
+TEST_F(StripeApiClientTest, CreateCheckoutSessionOneTimePurchaseWithPriceIdAndCustomer) {
+    http_client.set_handler([](const HttpRequest& req) {
+        EXPECT_EQ(req.method, HttpMethod::Post);
+        EXPECT_EQ(req.path, "/v1/checkout/sessions");
+        EXPECT_NE(req.body.find("mode=payment"), std::string::npos);
+        EXPECT_NE(req.body.find("customer=cus_456"), std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice%5D=price_onetime_456"), std::string::npos);
+
+        return HttpResponse{
+            .status_code = 200,
+            .headers = {},
+            .body = R"({
+                "id": "cs_test_payment_2",
+                "customer": "cus_456",
+                "status": "open",
+                "mode": "payment",
+                "payment_intent": "pi_test_67890",
+                "url": "https://checkout.stripe.com/c/pay/cs_test_payment_2"
+            })"
+        };
+    });
+
+    auto task = client->checkout().sessions().create_async(CreateCheckoutSessionRequest{
+        .customer_id = "cus_456",
+        .mode = "payment",
+        .price_id = "price_onetime_456",
+        .success_url = "https://example.com/success",
+        .cancel_url = "https://example.com/cancel"
+    });
+    const CheckoutSession session = task.result();
+    EXPECT_EQ(session.id, "cs_test_payment_2");
+    EXPECT_EQ(session.customer_id, "cus_456");
+    EXPECT_EQ(session.mode, "payment");
+    EXPECT_EQ(session.payment_intent_id, "pi_test_67890");
+}
+
 TEST_F(StripeApiClientTest, SubscriptionsRetrieveAndCancel) {
     // Retrieve
     http_client.set_handler([](const HttpRequest& req) {
