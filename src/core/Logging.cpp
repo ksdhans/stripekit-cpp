@@ -69,25 +69,34 @@ static bool is_token_character(char ch) {
     return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '_' || ch == '-';
 }
 
-/** Redacts every token beginning with a known sensitive prefix. */
+/** Redacts every token beginning with a known sensitive prefix, regardless of case. */
 static void redact_prefixed_tokens(std::string& text, std::string_view prefix) {
+    const std::string lowercase_prefix = lowercase_ascii(prefix);
+    std::string lowercase_text = lowercase_ascii(text);
     std::size_t position = 0;
-    while ((position = text.find(prefix, position)) != std::string::npos) {
-        std::size_t end = position + prefix.size();
+
+    while ((position = lowercase_text.find(lowercase_prefix, position)) != std::string::npos) {
+        const std::size_t value_start = position;
+        std::size_t end = value_start + prefix.size();
         while (end < text.size() && is_token_character(text[end])) {
             ++end;
         }
 
-        text.replace(position, end - position, std::string(prefix) + "...");
-        position += prefix.size() + 3;
+        const std::string matched_prefix = text.substr(value_start, prefix.size());
+        text.replace(value_start, end - value_start, matched_prefix + "...");
+        lowercase_text.replace(value_start, end - value_start, std::string(lowercase_prefix) + "...");
+        position = value_start + prefix.size() + 3;
     }
 }
 
-/** Redacts bearer token values from free-form text. */
+/** Redacts bearer token values from free-form text, regardless of case. */
 static void redact_bearer_tokens(std::string& text) {
     constexpr std::string_view prefix = "Bearer ";
+    const std::string lowercase_prefix = lowercase_ascii(prefix);
+    std::string lowercase_text = lowercase_ascii(text);
     std::size_t position = 0;
-    while ((position = text.find(prefix, position)) != std::string::npos) {
+
+    while ((position = lowercase_text.find(lowercase_prefix, position)) != std::string::npos) {
         const std::size_t value_start = position + prefix.size();
         std::size_t end = value_start;
         while (end < text.size() && !std::isspace(static_cast<unsigned char>(text[end]))) {
@@ -95,6 +104,7 @@ static void redact_bearer_tokens(std::string& text) {
         }
 
         text.replace(value_start, end - value_start, "<redacted>");
+        lowercase_text.replace(value_start, end - value_start, std::string("<redacted>"));
         position = value_start + 10;
     }
 }

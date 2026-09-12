@@ -69,3 +69,13 @@ TEST(LoggingTest, SensitiveTextRedaction) {
               "failed with sk_test_..., whsec_..., rk_live_..., "
               "pk_test_..., and Authorization: Bearer <redacted>");
 }
+
+TEST(LoggingTest, SensitiveTextRedactionIsCaseInsensitive) {
+    const std::string text =
+        "failed with SK_TEST_abc123, WHSEC_secret456, rk_live_restricted, "
+        "pk_test_publishable and authorization: bearer secret-token";
+
+    EXPECT_EQ(redact_sensitive_text(text),
+              "failed with SK_TEST_..., WHSEC_..., rk_live_..., "
+              "pk_test_... and authorization: bearer <redacted>");
+}
