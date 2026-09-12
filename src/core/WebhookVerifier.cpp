@@ -8,9 +8,9 @@
 #include "StripeKit/Errors.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cstdint>
-#include <cstdlib>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -73,12 +73,12 @@ static void parse_signature_header(std::string_view header,
         const std::string value = trim_copy(std::string_view(part).substr(eq + 1));
 
         if (key == "t") {
-            try {
-                timestamp_out = std::stoll(value);
-                has_timestamp = true;
-            } catch (...) {
+            const auto parsed = std::from_chars(
+                value.data(), value.data() + value.size(), timestamp_out);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) {
                 throw SignatureVerificationException("Stripe-Signature header contains invalid timestamp");
             }
+            has_timestamp = true;
             continue;
         }
 
@@ -151,8 +151,11 @@ VerificationMetadata DefaultWebhookSignatureVerifier::verify(const WebhookVerifi
 
     const auto now_unix = std::chrono::duration_cast<std::chrono::seconds>(
         input.now.time_since_epoch()).count();
-    const auto age_seconds = std::llabs(now_unix - timestamp);
-    if (age_seconds > input.tolerance.count()) {
+    const auto age_seconds = timestamp >= now_unix
+        ? static_cast<std::uint64_t>(timestamp) - static_cast<std::uint64_t>(now_unix)
+        : static_cast<std::uint64_t>(now_unix) - static_cast<std::uint64_t>(timestamp);
+    const auto tolerance_seconds = input.tolerance.count();
+    if (tolerance_seconds < 0 || age_seconds > static_cast<std::uint64_t>(tolerance_seconds)) {
         throw SignatureVerificationException("Webhook signature timestamp is outside allowed tolerance");
     }
 

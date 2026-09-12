@@ -31,12 +31,15 @@ WebhookEndpoint::WebhookEndpoint(WebhookProcessor& processor, std::string endpoi
     : processor(processor), endpoint_secret(std::move(endpoint_secret)) {}
 
 void WebhookEndpoint::register_handler(std::string path) const {
+    WebhookProcessor* processor_ptr = &processor;
+    std::string endpoint_secret_copy = endpoint_secret;
     ::drogon::app().registerHandler(path,
-        [this](const ::drogon::HttpRequestPtr& request,
+        [processor_ptr, endpoint_secret = std::move(endpoint_secret_copy)](
+               const ::drogon::HttpRequestPtr& request,
                std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
             auto response = ::drogon::HttpResponse::newHttpResponse();
             try {
-                const auto action = processor.process(WebhookVerificationInput{
+                const auto action = processor_ptr->process(WebhookVerificationInput{
                     .payload = request->body(),
                     .stripe_signature_header = request->getHeader("stripe-signature"),
                     .endpoint_secret = endpoint_secret,

@@ -45,6 +45,8 @@ SqliteWebhookDedupStore::SqliteWebhookDedupStore(std::string database_path) {
         if (error_message != nullptr) {
             sqlite3_free(error_message);
         }
+        sqlite3_close(db);
+        db = nullptr;
         throw ConfigurationException("Failed to initialize SQLite schema: " + message);
     }
 #else
@@ -120,18 +122,25 @@ ClaimResult SqliteWebhookDedupStore::claim(const ClaimRequest& request) {
     if (age_seconds >= std::chrono::duration_cast<std::chrono::seconds>(request.stale_inflight_timeout).count()) {
         sqlite3_stmt* update_stmt = nullptr;
         const char* update_sql =
-            "UPDATE stripekit_webhook_dedup SET claimed_at_unix = ?1 WHERE event_id = ?2;";
+            "UPDATE stripekit_webhook_dedup SET claimed_at_unix = ?1 "
+            "WHERE event_id = ?2 AND processed = 0 AND claimed_at_unix = ?3;";
         if (sqlite3_prepare_v2(db, update_sql, -1, &update_stmt, nullptr) != SQLITE_OK) {
             return ClaimResult{.outcome = ClaimOutcome::RetryableStoreError, .detail = sqlite3_errmsg(db)};
         }
 
         sqlite3_bind_int64(update_stmt, 1, static_cast<sqlite3_int64>(now_unix));
         sqlite3_bind_text(update_stmt, 2, request.event_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(update_stmt, 3, static_cast<sqlite3_int64>(claimed_at_unix));
 
         const int update_rc = sqlite3_step(update_stmt);
+        const int changed = sqlite3_changes(db);
         sqlite3_finalize(update_stmt);
         if (update_rc != SQLITE_DONE) {
             return ClaimResult{.outcome = ClaimOutcome::RetryableStoreError, .detail = sqlite3_errmsg(db)};
+        }
+
+        if (changed == 0) {
+            return ClaimResult{.outcome = ClaimOutcome::DuplicateInflight, .detail = "already-claimed-inflight"};
         }
 
         return ClaimResult{.outcome = ClaimOutcome::Claimed, .detail = "reclaimed-stale-inflight"};

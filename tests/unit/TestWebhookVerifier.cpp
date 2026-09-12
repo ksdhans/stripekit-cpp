@@ -136,6 +136,40 @@ TEST_F(WebhookVerifierTest, InvalidTimestampThrows) {
     }, SignatureVerificationException);
 }
 
+TEST_F(WebhookVerifierTest, TimestampWithTrailingDataThrows) {
+    const std::string dummy_sig = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const std::string header = "t=1700000000trailing,v1=" + dummy_sig;
+
+    const WebhookVerificationInput input{
+        .payload = payload,
+        .stripe_signature_header = header,
+        .endpoint_secret = secret,
+        .now = now,
+        .tolerance = std::chrono::minutes(5)
+    };
+
+    EXPECT_THROW({
+        verifier.verify(input);
+    }, SignatureVerificationException);
+}
+
+TEST_F(WebhookVerifierTest, ExtremeTimestampDoesNotOverflowAgeCalculation) {
+    const std::string dummy_sig = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const std::string header = "t=-9223372036854775808,v1=" + dummy_sig;
+
+    const WebhookVerificationInput input{
+        .payload = payload,
+        .stripe_signature_header = header,
+        .endpoint_secret = secret,
+        .now = now,
+        .tolerance = std::chrono::minutes(5)
+    };
+
+    EXPECT_THROW({
+        verifier.verify(input);
+    }, SignatureVerificationException);
+}
+
 TEST_F(WebhookVerifierTest, MissingV1SignaturesThrows) {
     const std::string header = "t=" + std::to_string(timestamp_unix);
 

@@ -9,14 +9,73 @@
 #include "StripeKit/Callback.h"
 
 #include <cctype>
+#include <condition_variable>
 #include <iomanip>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <utility>
 
 namespace stripekit {
 
+/** Coordinates client shutdown with callback-based response parsing. */
+struct CallbackLifetime {
+    std::mutex mutex;
+    std::condition_variable finished;
+    std::size_t active = 0;
+    bool closing = false;
+
+    /** Reserves a callback operation unless shutdown has started. */
+    bool acquire() {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (closing) {
+            return false;
+        }
+        ++active;
+        return true;
+    }
+
+    /** Releases one callback operation and wakes a waiting destructor. */
+    void release() {
+        std::lock_guard<std::mutex> lock(mutex);
+        --active;
+        if (active == 0) {
+            finished.notify_all();
+        }
+    }
+
+    /** Prevents new operations and waits for all active callbacks. */
+    void close_and_wait() {
+        std::unique_lock<std::mutex> lock(mutex);
+        closing = true;
+        finished.wait(lock, [this]() { return active == 0; });
+    }
+};
+
 namespace {
+
+/** Releases a callback lifetime reservation exactly once. */
+class CallbackLifetimeLease final {
+public:
+    explicit CallbackLifetimeLease(std::shared_ptr<CallbackLifetime> lifetime)
+        : lifetime(std::move(lifetime)) {}
+
+    ~CallbackLifetimeLease() {
+        release();
+    }
+
+    /** Releases the reservation before user code is called. */
+    void release() {
+        if (active) {
+            active = false;
+            lifetime->release();
+        }
+    }
+
+private:
+    std::shared_ptr<CallbackLifetime> lifetime;
+    bool active = true;
+};
 
 std::unordered_map<std::string, std::string> metadata_value(const Json::Value& object) {
     std::unordered_map<std::string, std::string> metadata;
@@ -148,28 +207,48 @@ Task<TResult> send_and_parse_async(HTTPClient& http_client,
 template <typename TResult, typename TParser, typename TCompletion>
 void send_and_parse(HTTPClient& http_client,
                     const StripeResponseParser& response_parser,
+                    std::shared_ptr<CallbackLifetime> callback_lifetime,
                     HttpRequest request,
                     TParser parser,
                     TCompletion completion) {
     auto once_completion = std::make_shared<OnceCallback<CallbackResult<TResult>>>(std::move(completion));
-    http_client.send(request, [once_completion, &response_parser, parser = std::move(parser)](
-                                std::variant<HttpResponse, std::exception_ptr> result) mutable {
-        try {
-            if (const auto* error = std::get_if<std::exception_ptr>(&result)) {
-                once_completion->invoke(*error);
-                return;
+    if (!callback_lifetime->acquire()) {
+        once_completion->invoke(std::make_exception_ptr(
+            StripeKitException("Stripe API client is shutting down")));
+        return;
+    }
+
+    try {
+        http_client.send(request, [callback_lifetime, once_completion, &response_parser,
+                                   parser = std::move(parser)](
+                                      std::variant<HttpResponse, std::exception_ptr> result) mutable {
+            CallbackLifetimeLease lease(callback_lifetime);
+            try {
+                if (const auto* error = std::get_if<std::exception_ptr>(&result)) {
+                    lease.release();
+                    once_completion->invoke(*error);
+                    return;
+                }
+                const auto& response = std::get<HttpResponse>(result);
+                if (!is_success(response)) {
+                    auto error = std::make_exception_ptr(
+                        StripeApiException(response_parser.parse_error(response)));
+                    lease.release();
+                    once_completion->invoke(error);
+                    return;
+                }
+                auto parsed = parser(response_parser, response);
+                lease.release();
+                once_completion->invoke(std::move(parsed));
+            } catch (...) {
+                lease.release();
+                once_completion->invoke(std::current_exception());
             }
-            const auto& response = std::get<HttpResponse>(result);
-            if (!is_success(response)) {
-                once_completion->invoke(std::make_exception_ptr(
-                    StripeApiException(response_parser.parse_error(response))));
-                return;
-            }
-            once_completion->invoke(parser(response_parser, response));
-        } catch (...) {
-            once_completion->invoke(std::current_exception());
-        }
-    });
+        });
+    } catch (...) {
+        callback_lifetime->release();
+        once_completion->invoke(std::current_exception());
+    }
 }
 
 } // namespace
@@ -244,7 +323,7 @@ void StripeApiClient::CustomerOperations::create(const CreateCustomerRequest& re
     append_form_value(body, "email", request.email);
     append_form_value(body, "name", request.name);
     append_metadata(body, request.metadata);
-    send_and_parse<Customer>(owner.http_client, owner.response_parser,
+    send_and_parse<Customer>(owner.http_client, owner.response_parser, owner.callback_lifetime,
         make_request(HttpMethod::Post, "/v1/customers", std::move(body), options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_customer(response);
@@ -263,7 +342,7 @@ Task<Customer> StripeApiClient::CustomerOperations::retrieve_async(std::string c
 void StripeApiClient::CustomerOperations::retrieve(std::string customer_id,
                                                    const RequestOptions& options,
                                                    RetrieveCompletion completion) {
-    send_and_parse<Customer>(owner.http_client, owner.response_parser,
+    send_and_parse<Customer>(owner.http_client, owner.response_parser, owner.callback_lifetime,
         make_request(HttpMethod::Get, "/v1/customers/" + url_encode(customer_id), {}, options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_customer(response);
@@ -285,7 +364,7 @@ Task<CheckoutSession> StripeApiClient::CheckoutSessionOperations::create_async(
 void StripeApiClient::CheckoutSessionOperations::create(const CreateCheckoutSessionRequest& request,
                                                         const RequestOptions& options,
                                                         CreateCompletion completion) {
-    send_and_parse<CheckoutSession>(owner.http_client, owner.response_parser,
+    send_and_parse<CheckoutSession>(owner.http_client, owner.response_parser, owner.callback_lifetime,
         make_request(HttpMethod::Post, "/v1/checkout/sessions", checkout_session_body(request), options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_checkout_session(response);
@@ -312,7 +391,7 @@ Task<Subscription> StripeApiClient::SubscriptionOperations::retrieve_async(std::
 void StripeApiClient::SubscriptionOperations::retrieve(std::string subscription_id,
                                                        const RequestOptions& options,
                                                        RetrieveCompletion completion) {
-    send_and_parse<Subscription>(owner.http_client, owner.response_parser,
+    send_and_parse<Subscription>(owner.http_client, owner.response_parser, owner.callback_lifetime,
         make_request(HttpMethod::Get, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_subscription(response);
@@ -331,7 +410,7 @@ Task<Subscription> StripeApiClient::SubscriptionOperations::cancel_async(std::st
 void StripeApiClient::SubscriptionOperations::cancel(std::string subscription_id,
                                                      const RequestOptions& options,
                                                      CancelCompletion completion) {
-    send_and_parse<Subscription>(owner.http_client, owner.response_parser,
+    send_and_parse<Subscription>(owner.http_client, owner.response_parser, owner.callback_lifetime,
         make_request(HttpMethod::Delete, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_subscription(response);
@@ -355,7 +434,7 @@ void StripeApiClient::BillingPortalSessionOperations::create(
     const CreateBillingPortalSessionRequest& request,
     const RequestOptions& options,
     CreateCompletion completion) {
-    send_and_parse<BillingPortalSession>(owner.http_client, owner.response_parser,
+    send_and_parse<BillingPortalSession>(owner.http_client, owner.response_parser, owner.callback_lifetime,
         make_request(HttpMethod::Post, "/v1/billing_portal/sessions", billing_portal_session_body(request), options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_billing_portal_session(response);
@@ -372,6 +451,7 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client)
     : http_client(http_client),
       default_response_parser(),
       response_parser(default_response_parser),
+    callback_lifetime(std::make_shared<CallbackLifetime>()),
       customer_operations(*this),
       checkout_session_operations(*this),
       checkout_operations(*this),
@@ -383,6 +463,7 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client, const StripeResponsePa
     : http_client(http_client),
       default_response_parser(),
       response_parser(response_parser),
+    callback_lifetime(std::make_shared<CallbackLifetime>()),
       customer_operations(*this),
       checkout_session_operations(*this),
       checkout_operations(*this),
@@ -390,7 +471,9 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client, const StripeResponsePa
       billing_portal_session_operations(*this),
       billing_portal_operations(*this) {}
 
-StripeApiClient::~StripeApiClient() = default;
+StripeApiClient::~StripeApiClient() {
+    callback_lifetime->close_and_wait();
+}
 
 Customers& StripeApiClient::customers() {
     return customer_operations;

@@ -188,7 +188,11 @@ public:
      * @return True when the operation has finished, or the task is empty.
      */
     bool is_ready() const {
-        return !handle || handle.promise().completed;
+        if (!handle) {
+            return true;
+        }
+        std::lock_guard<std::mutex> lock(handle.promise().mutex);
+        return handle.promise().completed;
     }
 
     /**

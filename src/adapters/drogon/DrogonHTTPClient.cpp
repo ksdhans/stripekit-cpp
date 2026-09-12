@@ -15,6 +15,10 @@
 #include <trantor/utils/Utilities.h>
 
 #include <coroutine>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <thread>
 #include <utility>
 #include <variant>
 
@@ -23,14 +27,33 @@ namespace stripekit::drogon {
 namespace {
 
 void require_tls_for_https(std::string_view api_base_url) {
-    if (!api_base_url.starts_with("https://")) {
+    if (api_base_url.starts_with("https://")) {
+        if (trantor::utils::tlsBackend() == "None") {
+            throw ConfigurationException(
+                "The Drogon HTTP client requires a Trantor TLS backend for HTTPS Stripe API requests");
+        }
         return;
     }
 
-    if (trantor::utils::tlsBackend() == "None") {
-        throw ConfigurationException(
-            "The Drogon HTTP client requires a Trantor TLS backend for HTTPS Stripe API requests");
+    constexpr std::string_view http_prefix = "http://";
+    if (!api_base_url.starts_with(http_prefix)) {
+        throw ConfigurationException("The Drogon HTTP client requires an HTTPS API base URL");
     }
+
+    const std::string_view authority = api_base_url.substr(http_prefix.size());
+    const std::size_t authority_end = authority.find_first_of("/?#");
+    const std::string_view host = authority.substr(0, authority_end);
+    const bool local_test_host = authority.find('@') == std::string_view::npos
+        && (host == "localhost"
+        || host.starts_with("localhost:")
+        || host == "127.0.0.1"
+        || host.starts_with("127.0.0.1:")
+        || host == "[::1]"
+        || host.starts_with("[::1]:"));
+    if (!local_test_host) {
+        throw ConfigurationException("The Drogon HTTP client requires HTTPS except for loopback test servers");
+    }
+
 }
 
 trantor::EventLoop* select_event_loop(EventLoopOptions options,
@@ -107,39 +130,89 @@ HTTPClient::HTTPClient(std::string api_key,
 HTTPClient::~HTTPClient() = default;
 
 Task<HttpResponse> HTTPClient::send_async(const HttpRequest& request) {
+    /** Keeps the transport callback independent from the coroutine frame. */
+    struct State {
+        std::mutex mutex;
+        std::condition_variable callback_finished;
+        std::variant<HttpResponse, std::exception_ptr> result{HttpResponse{}};
+        std::coroutine_handle<> handle;
+        std::thread::id callback_thread;
+        bool callback_running = false;
+        bool cancelled = false;
+
+        /** Cancels resumption and waits for a callback on another thread. */
+        void cancel() {
+            std::unique_lock<std::mutex> lock(mutex);
+            cancelled = true;
+            handle = {};
+            if (callback_running && callback_thread != std::this_thread::get_id()) {
+                callback_finished.wait(lock, [this]() { return !callback_running; });
+            }
+        }
+
+        /** Stores the result and resumes the coroutine unless it was cancelled. */
+        void complete(std::variant<HttpResponse, std::exception_ptr> value) {
+            std::coroutine_handle<> handle_to_resume;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (cancelled) {
+                    return;
+                }
+                result = std::move(value);
+                callback_running = true;
+                callback_thread = std::this_thread::get_id();
+                handle_to_resume = handle;
+            }
+
+            handle_to_resume.resume();
+
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                callback_running = false;
+                callback_finished.notify_all();
+            }
+        }
+    };
+
     struct Awaiter {
         HTTPClient& http_client;
         HttpRequest request;
-        std::variant<HttpResponse, std::exception_ptr> result;
+        std::shared_ptr<State> state;
+
+        ~Awaiter() {
+            state->cancel();
+        }
 
         bool await_ready() const noexcept {
             return false;
         }
 
         void await_suspend(std::coroutine_handle<> handle) {
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                state->handle = handle;
+            }
             try {
-                http_client.send(request, [this, handle](std::variant<HttpResponse, std::exception_ptr> value) mutable {
-                    result = std::move(value);
-                    handle.resume();
+                http_client.send(request, [state = state](std::variant<HttpResponse, std::exception_ptr> value) mutable {
+                    state->complete(std::move(value));
                 });
             } catch (...) {
-                result = std::current_exception();
-                handle.resume();
+                state->complete(std::current_exception());
             }
         }
 
         HttpResponse await_resume() {
-            if (const auto* error = std::get_if<std::exception_ptr>(&result)) {
+            if (const auto* error = std::get_if<std::exception_ptr>(&state->result)) {
                 std::rethrow_exception(*error);
             }
-            return std::get<HttpResponse>(std::move(result));
+            return std::get<HttpResponse>(std::move(state->result));
         }
     };
 
     // Awaiting through a named local instead of `co_return co_await Awaiter{...}`
     // directly: GCC 12 miscalculates the coroutine frame size for the combined
     // pattern, corrupting the heap once the network callback writes into it.
-    Awaiter awaiter{*this, request, HttpResponse{}};
+    Awaiter awaiter{*this, request, std::make_shared<State>()};
     HttpResponse response = co_await awaiter;
     co_return response;
 }

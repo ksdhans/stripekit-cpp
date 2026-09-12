@@ -10,7 +10,47 @@
 #include "StripeKit/Errors.h"
 #include "StripeKit/StripeApiClient.h"
 
+#include <condition_variable>
+#include <mutex>
 #include <string>
+#include <thread>
+
+namespace stripekit {
+
+class DeferredHttpClient final : public HTTPClient {
+public:
+    Task<HttpResponse> send_async(const HttpRequest&) override {
+        co_return HttpResponse{};
+    }
+
+    void send(const HttpRequest&, Completion completion) override {
+        std::lock_guard<std::mutex> lock(mutex);
+        pending = std::move(completion);
+        ready.notify_all();
+    }
+
+    void wait_until_pending() {
+        std::unique_lock<std::mutex> lock(mutex);
+        ready.wait(lock, [this]() { return pending != nullptr; });
+    }
+
+    void complete(HttpResponse response) {
+        Completion completion;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            completion = std::move(pending);
+        }
+        ASSERT_TRUE(completion != nullptr);
+        completion(std::move(response));
+    }
+
+private:
+    std::mutex mutex;
+    std::condition_variable ready;
+    Completion pending;
+};
+
+} // namespace stripekit
 
 using namespace stripekit;
 using namespace stripekit::testing;
@@ -90,6 +130,60 @@ TEST_F(StripeApiClientTest, CreateCustomerCallbackSuccess) {
         });
 
     EXPECT_TRUE(callback_invoked);
+}
+
+TEST(StripeApiClientLifetimeTest, WaitsForCallbackBeforeDestroyingParser) {
+    DeferredHttpClient http_client;
+    bool callback_invoked = false;
+    bool destruction_finished = false;
+
+    std::thread destroyer([&]() {
+        {
+            StripeApiClient client(http_client);
+            client.customers().create(
+                CreateCustomerRequest{.email = "deferred@example.com"},
+                RequestOptions{},
+                [&](CallbackResult<Customer> result) {
+                    callback_invoked = true;
+                    ASSERT_TRUE(std::holds_alternative<Customer>(result));
+                });
+            http_client.wait_until_pending();
+        }
+        destruction_finished = true;
+    });
+
+    http_client.wait_until_pending();
+    http_client.complete(HttpResponse{
+        .status_code = 200,
+        .headers = {},
+        .body = R"({"id":"cus_deferred_1","email":"deferred@example.com"})"
+    });
+    destroyer.join();
+
+    EXPECT_TRUE(callback_invoked);
+    EXPECT_TRUE(destruction_finished);
+}
+
+TEST(StripeApiClientLifetimeTest, CallbackCanDestroyClient) {
+    DeferredHttpClient http_client;
+    auto client = std::make_unique<StripeApiClient>(http_client);
+
+    client->customers().create(
+        CreateCustomerRequest{.email = "destroy@example.com"},
+        RequestOptions{},
+        [&](CallbackResult<Customer> result) {
+            ASSERT_TRUE(std::holds_alternative<Customer>(result));
+            client.reset();
+        });
+
+    http_client.wait_until_pending();
+    http_client.complete(HttpResponse{
+        .status_code = 200,
+        .headers = {},
+        .body = R"({"id":"cus_destroy_1","email":"destroy@example.com"})"
+    });
+
+    EXPECT_EQ(client, nullptr);
 }
 
 TEST_F(StripeApiClientTest, RetrieveCustomerAsyncSuccess) {

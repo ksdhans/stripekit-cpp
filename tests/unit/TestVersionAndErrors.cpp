@@ -104,3 +104,10 @@ TEST(AsyncAndCallbackTest, TaskExceptionPropagation) {
         task.result();
     }, std::runtime_error);
 }
+
+TEST(AsyncAndCallbackTest, ReadyStateIsFalseBeforeResultAndTrueAfter) {
+    auto task = make_simple_task(21);
+    EXPECT_FALSE(task.is_ready());
+    EXPECT_EQ(task.result(), 42);
+    EXPECT_TRUE(task.is_ready());
+}

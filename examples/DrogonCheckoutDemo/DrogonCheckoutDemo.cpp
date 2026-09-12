@@ -24,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -268,7 +269,18 @@ int main(int argc, char** argv) {
             state->currency = parameter_or(request, "currency", state->currency);
             const auto unit_amount = parameter_or(request, "unit_amount");
             if (!unit_amount.empty()) {
-                state->unit_amount = std::stoll(unit_amount);
+                try {
+                    std::size_t parsed_length = 0;
+                    const auto parsed_amount = std::stoll(unit_amount, &parsed_length);
+                    if (parsed_length != unit_amount.size() || parsed_amount <= 0) {
+                        throw std::invalid_argument("unit amount must be a positive integer");
+                    }
+                    state->unit_amount = parsed_amount;
+                } catch (const std::exception&) {
+                    callback(home_response(state, port,
+                        "Unit amount must be a positive integer.", ::drogon::k400BadRequest));
+                    return;
+                }
             }
             const std::string webhook_secret = parameter_or(request, "webhook_secret");
             if (!webhook_secret.empty()) {

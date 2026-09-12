@@ -13,7 +13,11 @@
 #include "StripeKit/Errors.h"
 #include "StripeKit/HTTPClient.h"
 
+#include <memory>
+
 namespace stripekit {
+
+struct CallbackLifetime;
 
 /**
  * @addtogroup adapter_interfaces
@@ -288,6 +292,7 @@ private:
     HTTPClient& http_client;
     JsonStripeResponseParser default_response_parser;
     const StripeResponseParser& response_parser;
+    std::shared_ptr<CallbackLifetime> callback_lifetime;
     CustomerOperations customer_operations;
     CheckoutSessionOperations checkout_session_operations;
     CheckoutOperations checkout_operations;

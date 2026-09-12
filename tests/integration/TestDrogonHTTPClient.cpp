@@ -359,3 +359,9 @@ TEST_F(DrogonHTTPClientIntegrationTest, EmptyApiKeyThrowsConfigurationException)
         stripekit::drogon::HTTPClient bad_client("", base_url);
     }, ConfigurationException);
 }
+
+TEST_F(DrogonHTTPClientIntegrationTest, RemoteCleartextBaseUrlIsRejected) {
+    EXPECT_THROW({
+        stripekit::drogon::HTTPClient insecure_client(api_key, "http://example.com");
+    }, ConfigurationException);
+}

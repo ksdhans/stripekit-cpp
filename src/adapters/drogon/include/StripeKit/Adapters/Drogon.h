@@ -90,7 +90,7 @@ struct ClientOptions {
      */
     std::string api_key;
 
-    /** Stripe API base URL. Override only to point tests at a mock server. */
+    /** Stripe API base URL. HTTPS is required except for loopback mock servers. */
     std::string api_base_url = "https://api.stripe.com";
 
     /** Which event loop outbound requests run on. */
@@ -147,8 +147,8 @@ public:
      *
      * @param api_key Stripe secret key. Sent as the bearer token on every
      *        request; never logged.
-     * @param api_base_url Stripe API base URL. Override only to point tests at
-     *        a mock server.
+    * @param api_base_url Stripe API base URL. HTTPS is required except for a
+    *        loopback mock server.
      * @param event_loop Which event loop requests run on. Inside a Drogon
      *        server, pass EventLoopOptions::drogon_framework().
      */
@@ -194,7 +194,8 @@ private:
  * Construct this directly only when webhook handling is driven by a
  * stripekit::EventDispatcher; otherwise register_webhook_handler() is simpler.
  *
- * The processor is referenced, not owned, so it must outlive the endpoint.
+ * The processor is referenced, not owned, so it must outlive the registered
+ * Drogon route.
  */
 class WebhookEndpoint final {
 public:
