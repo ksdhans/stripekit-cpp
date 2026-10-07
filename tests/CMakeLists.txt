@@ -46,6 +46,19 @@ endif()
 
 add_test(NAME stripekit.unit COMMAND stripekit_unit_tests)
 
+if(STRIPEKIT_STANDALONE_PROJECT)
+    add_test(NAME stripekit.packaging
+        COMMAND ${CMAKE_COMMAND}
+            -DSTRIPEKIT_BUILD_DIR=${CMAKE_BINARY_DIR}
+            -DSTRIPEKIT_CONSUMER_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/packaging
+            -DSTRIPEKIT_TEST_CONFIG=$<CONFIG>
+            -DSTRIPEKIT_TEST_GENERATOR=${CMAKE_GENERATOR}
+            -DSTRIPEKIT_TEST_COMPILER=${CMAKE_CXX_COMPILER}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/packaging/TestPackage.cmake
+    )
+    set_tests_properties(stripekit.packaging PROPERTIES LABELS packaging TIMEOUT 120)
+endif()
+
 if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
     add_executable(stripekit_integration_tests
         integration/Main.cpp
