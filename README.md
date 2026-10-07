@@ -323,7 +323,8 @@ Version metadata is generated at build time via:
 
 - `include(cmake/generate_version_header.cmake)`
 
-See `docs/versioning.md` for release and tag policy.
+See the [changelog](Changelog.md) for release notes and
+[versioning](docs/versioning.md) for release and tag policy.
 
 ## API Documentation
 
