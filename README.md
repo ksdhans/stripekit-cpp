@@ -13,6 +13,10 @@ This is part of a larger project of mine, which is a full web app [foundation/st
 StripeKit supports Stripe-hosted Checkout for subscriptions and one-time card
 payments. It sends API requests, parses responses, and verifies and parses webhooks.
 
+It covers a subset of Stripe's API, focused on hosted Checkout. Embedded/custom
+payment forms and the full range of Stripe products and API options are not
+currently supported.
+
 Your application decides what to do with those results: billing policies, access
 control, and other business logic are up to you.
 
@@ -21,13 +25,9 @@ For adding support for other web frameworks, see [Writing an Adapter](docs/Writi
 
 ## Roadmap
 
-Things that may be done later (if the need arises):
-
-- Broad direct `payment_intents` client surface.
-- Non-card payment methods.
-- Webhook families outside the current checkout/subscription/invoice/dispute/refund scope.
-- Backends (adaptors) for frameworks other than Drogon.
-- Expanded billing portal configuration helpers beyond session creation.
+Features are added as practical needs arise, rather than on a fixed schedule.
+Current development focuses on Stripe-hosted Checkout. Embedded/custom checkout
+may come further down the line.
 
 ## Build
 
