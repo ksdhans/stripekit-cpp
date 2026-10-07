@@ -324,19 +324,29 @@ JsonStripeResponseParser::parse_billing_portal_session(const HttpResponse& respo
 }
 
 StripeErrorPayload JsonStripeResponseParser::parse_error(const HttpResponse& response) const {
-    const auto root = json_value::parse(response.body);
-    const auto& error = root["error"];
-    StripeErrorPayload payload{ .type = error_type(json_value::string(error, "type")),
-                                .code = json_value::string(error, "code"),
-                                .message = json_value::string(error, "message"),
+    StripeErrorPayload payload{ .type = StripeErrorType::Unknown,
+                                .message = "Stripe API request failed",
                                 .http_status = response.status_code,
                                 .retryable = retryable_status(response.status_code) };
     const auto request_id = response.headers.find("request-id");
     if (request_id != response.headers.end()) {
         payload.request_id = request_id->second;
     }
-    if (payload.message.empty()) {
-        payload.message = "Stripe API request failed";
+    Json::Value root;
+    try {
+        root = json_value::parse(response.body);
+    } catch (const ConfigurationException&) {
+        payload.message = "Stripe API request failed with an invalid JSON error response";
+        return payload;
+    }
+    if (root.isObject() && root["error"].isObject()) {
+        const auto& error = root["error"];
+        payload.type = error_type(json_value::string(error, "type"));
+        payload.code = json_value::string(error, "code");
+        const auto message = json_value::string(error, "message");
+        if (!message.empty()) {
+            payload.message = message;
+        }
     }
     return payload;
 }

@@ -225,5 +225,25 @@ TEST_F(ModelsAndParserTest, ParseInvalidJsonThrowsConfigurationException) {
 
     EXPECT_THROW({ parser.parse_billing_portal_session(bad_resp); }, ConfigurationException);
 
-    EXPECT_THROW({ parser.parse_error(bad_resp); }, ConfigurationException);
+    const auto error = parser.parse_error(bad_resp);
+    EXPECT_EQ(error.type, StripeErrorType::Unknown);
+    EXPECT_FALSE(error.message.empty());
+}
+
+TEST_F(ModelsAndParserTest, MalformedErrorResponsesPreserveStatusAndRequestId) {
+    for (const std::string body : { "",
+                                    "<html>Bad gateway</html>",
+                                    "null",
+                                    "[]",
+                                    R"({"error":"unexpected"})",
+                                    R"({"error":null})" }) {
+        const auto error = parser.parse_error(HttpResponse{
+            .status_code = 502, .headers = { { "request-id", "req_bad_gateway" } }, .body = body });
+        EXPECT_EQ(error.type, StripeErrorType::Unknown);
+        EXPECT_EQ(error.http_status, 502);
+        EXPECT_EQ(error.request_id, "req_bad_gateway");
+        EXPECT_TRUE(error.retryable);
+        EXPECT_FALSE(error.message.empty());
+        EXPECT_EQ(error.message.find("Bad gateway"), std::string::npos);
+    }
 }

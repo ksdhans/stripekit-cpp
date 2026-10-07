@@ -372,6 +372,36 @@ TEST_F(StripeApiClientTest, SubscriptionsRetrieveAndCancel) {
     EXPECT_EQ(canceled_sub.status, "canceled");
 }
 
+TEST_F(StripeApiClientTest, MalformedErrorResponseThrowsStripeApiException) {
+    http_client.set_response(HttpResponse{ .status_code = 502,
+                                           .headers = { { "request-id", "req_gateway" } },
+                                           .body = "<html>Bad gateway</html>" });
+    try {
+        client->customers().retrieve_async("cus_test").result();
+        FAIL();
+    } catch (const StripeApiException& error) {
+        EXPECT_EQ(error.payload().http_status, 502);
+        EXPECT_EQ(error.payload().request_id, "req_gateway");
+        EXPECT_EQ(error.payload().type, StripeErrorType::Unknown);
+        EXPECT_TRUE(error.payload().retryable);
+    }
+
+    int completions = 0;
+    client->customers().retrieve("cus_test", {}, [&](CallbackResult<Customer> result) {
+        ++completions;
+        ASSERT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+        try {
+            std::rethrow_exception(std::get<std::exception_ptr>(result));
+            FAIL();
+        } catch (const StripeApiException& error) {
+            EXPECT_EQ(error.payload().http_status, 502);
+            EXPECT_EQ(error.payload().request_id, "req_gateway");
+            EXPECT_TRUE(error.payload().retryable);
+        }
+    });
+    EXPECT_EQ(completions, 1);
+}
+
 TEST_F(StripeApiClientTest, SubscriptionsRetrieveAndCancelCallbacks) {
     // Retrieve via callback
     http_client.set_response(HttpResponse{
