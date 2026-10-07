@@ -78,6 +78,10 @@ public:
     bool mark_processed(std::string_view event_id,
                         std::chrono::system_clock::time_point processed_at) override;
 
+    /** @copydoc WebhookDedupStore::release_claim */
+    bool release_claim(std::string_view event_id,
+                       std::chrono::system_clock::time_point claimed_at) override;
+
     /**
      * Deletes records older than the retention period.
      *

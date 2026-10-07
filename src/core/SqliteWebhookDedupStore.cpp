@@ -195,6 +195,37 @@ bool SqliteWebhookDedupStore::mark_processed(std::string_view event_id,
 #endif
 }
 
+bool SqliteWebhookDedupStore::release_claim(std::string_view event_id,
+                                            std::chrono::system_clock::time_point claimed_at) {
+#if defined(STRIPEKIT_WITH_SQLITE3)
+    std::lock_guard<std::mutex> lock(mutex);
+    sqlite3_stmt* statement = nullptr;
+    const char* sql = "DELETE FROM stripekit_webhook_dedup "
+                      "WHERE event_id = ?1 AND processed = 0 AND claimed_at_unix = ?2;";
+    if (sqlite3_prepare_v2(db, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        throw ConfigurationException("Failed to release webhook claim: " +
+                                     std::string(sqlite3_errmsg(db)));
+    }
+    const std::string id(event_id);
+    const auto claimed_unix =
+        std::chrono::duration_cast<std::chrono::seconds>(claimed_at.time_since_epoch()).count();
+    sqlite3_bind_text(statement, 1, id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(statement, 2, static_cast<sqlite3_int64>(claimed_unix));
+    const int result = sqlite3_step(statement);
+    const int changed = sqlite3_changes(db);
+    const std::string error = result != SQLITE_DONE ? sqlite3_errmsg(db) : "";
+    sqlite3_finalize(statement);
+    if (result != SQLITE_DONE) {
+        throw ConfigurationException("Failed to release webhook claim: " + error);
+    }
+    return changed > 0;
+#else
+    (void)event_id;
+    (void)claimed_at;
+    throw ConfigurationException("StripeKit was built without SQLite support");
+#endif
+}
+
 void SqliteWebhookDedupStore::erase_expired(std::chrono::system_clock::time_point now,
                                             std::chrono::hours retention) {
 #if defined(STRIPEKIT_WITH_SQLITE3)

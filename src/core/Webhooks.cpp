@@ -60,6 +60,25 @@ Task<ProcessEventOnceResult> ready_result(ProcessEventOnceResult result) {
     co_return result;
 }
 
+/** Makes a finished, failed attempt available to the next delivery. */
+void release_failed_claim(WebhookDedupStore& store,
+                          const Event& event,
+                          const ProcessEventOptions& options) {
+    try {
+        if (!store.release_claim(event.id, options.now)) {
+            log_message(options.logger,
+                        LogLevel::Error,
+                        "Webhook store could not release the failed claim",
+                        event);
+        }
+    } catch (const std::exception& error) {
+        log_message(options.logger,
+                    LogLevel::Error,
+                    std::string("Webhook store claim release failed: ") + error.what(),
+                    event);
+    }
+}
+
 } // namespace
 
 Event construct_event(std::string_view payload,
@@ -127,6 +146,7 @@ Task<ProcessEventOnceResult> process_event_once(const Event& event,
                     LogLevel::Error,
                     std::string("Webhook handler failed: ") + error.what(),
                     event);
+        release_failed_claim(dedup_store, event, options);
         return ready_result(
             result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
     }
@@ -138,6 +158,7 @@ Task<ProcessEventOnceResult> process_event_once(const Event& event,
                                                                   : LogLevel::Warn,
                     "Webhook handler requested a retry",
                     event);
+        release_failed_claim(dedup_store, event, options);
         return ready_result(
             result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
     }
@@ -148,6 +169,7 @@ Task<ProcessEventOnceResult> process_event_once(const Event& event,
                         LogLevel::Error,
                         "Webhook store could not mark the event as processed",
                         event);
+            release_failed_claim(dedup_store, event, options);
             return ready_result(
                 result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
         }
@@ -156,6 +178,7 @@ Task<ProcessEventOnceResult> process_event_once(const Event& event,
                     LogLevel::Error,
                     std::string("Webhook store completion failed: ") + error.what(),
                     event);
+        release_failed_claim(dedup_store, event, options);
         return ready_result(
             result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
     }

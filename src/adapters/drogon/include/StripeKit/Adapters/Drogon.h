@@ -118,7 +118,7 @@ struct WebhookHandlerOptions {
      */
     WebhookDedupStore& dedup_store;
 
-    /** Called once per event, after verification and de-duplication. */
+    /** Called for claimed events after verification. Failed attempts may be retried. */
     webhooks::EventHandler handler;
 
     /** Where to report failures. No logging when null. */
@@ -285,10 +285,10 @@ std::unique_ptr<StripeClient> make_stripe_client(ClientOptions options);
  * Adds a Stripe webhook route to the Drogon application.
  *
  * The route verifies Stripe's signature, reserves the event id in the store,
- * and only then calls the handler, so it runs once per event however many
- * times Stripe delivers it. Replies 200 when handled or already handled, 500
- * when the handler reports a retryable failure, and 400 when the signature
- * does not check out.
+ * and only then calls the handler. Completed events are skipped; failed or
+ * interrupted attempts may run again, so the handler must be safe to retry.
+ * Replies 200 when handled or already handled, 500 on handler or store failures,
+ * and 400 when the signature does not check out.
  *
  * Call this before Drogon starts running.
  *

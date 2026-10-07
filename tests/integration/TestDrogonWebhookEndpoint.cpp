@@ -181,6 +181,33 @@ TEST_F(DrogonWebhookEndpointIntegrationTest, HandlerExceptionReturns500) {
     EXPECT_EQ(resp->statusCode(), ::drogon::k500InternalServerError);
 }
 
+TEST_F(DrogonWebhookEndpointIntegrationTest, FailedDeliveriesCanRecoverWithoutStaleTimeout) {
+    auto& environment = DrogonIntegrationEnvironment::get();
+    for (const std::string failure : { "retryable", "fatal", "throwing" }) {
+        const auto payload = make_event_payload("evt_recover_" + failure, "invoice.paid");
+        const auto signature = make_stripe_signature_header(now_unix, payload, webhook_secret);
+        auto [failed_result, failed_response] = environment.send_raw_post(
+            "/test/webhook/" + failure, payload, { { "stripe-signature", signature } });
+        EXPECT_EQ(failed_result, ::drogon::ReqResult::Ok);
+        ASSERT_TRUE(failed_response != nullptr);
+        EXPECT_EQ(failed_response->statusCode(), ::drogon::k500InternalServerError);
+
+        // The standard route shares the store and represents the recovered handler.
+        auto [retry_result, retry_response] = environment.send_raw_post(
+            "/test/webhook/standard", payload, { { "stripe-signature", signature } });
+        EXPECT_EQ(retry_result, ::drogon::ReqResult::Ok);
+        ASSERT_TRUE(retry_response != nullptr);
+        EXPECT_EQ(retry_response->statusCode(), ::drogon::k200OK);
+
+        auto [duplicate_result, duplicate_response] = environment.send_raw_post(
+            "/test/webhook/standard", payload, { { "stripe-signature", signature } });
+        EXPECT_EQ(duplicate_result, ::drogon::ReqResult::Ok);
+        ASSERT_TRUE(duplicate_response != nullptr);
+        EXPECT_EQ(duplicate_response->statusCode(), ::drogon::k200OK);
+    }
+    EXPECT_EQ(environment.telemetry.handled_events_count.load(), 3);
+}
+
 TEST_F(DrogonWebhookEndpointIntegrationTest, HandlerExceptionLogRedactsSecretTokens) {
     const std::string payload = make_event_payload("evt_int_secret_throwing_1", "invoice.paid");
     const std::string sig_header = make_stripe_signature_header(now_unix, payload, webhook_secret);

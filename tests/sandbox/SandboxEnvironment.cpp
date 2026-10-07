@@ -656,8 +656,6 @@ bool SandboxEnvironment::start() {
           },
           .logger = &state->progress_logger });
 
-    // Zero timeout so a replayed delivery can reclaim the in-flight record
-    // immediately, instead of waiting out the production reclaim window.
     stripekit::drogon::register_webhook_handler(
         { .path = retry_webhook_path,
           .endpoint_secret = state->listener->webhook_secret(),
@@ -668,8 +666,7 @@ bool SandboxEnvironment::start() {
               }
               co_return webhooks::ProcessResult::Handled;
           },
-          .logger = &state->progress_logger,
-          .stale_inflight_timeout = std::chrono::minutes(0) });
+          .logger = &state->progress_logger });
 
     ::drogon::app().addListener("127.0.0.1", state->port);
     state->server_thread = std::thread([]() { ::drogon::app().run(); });

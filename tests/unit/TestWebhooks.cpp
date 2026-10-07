@@ -8,12 +8,45 @@
 
 #include "StripeKit/Errors.h"
 #include "StripeKit/Webhooks.h"
+#include "StripeKit/SqliteWebhookDedupStore.h"
 
 #include <chrono>
 #include <string>
 
 using namespace stripekit;
 using namespace stripekit::testing;
+
+/** Simulates database failures while completing or releasing a claim. */
+class FailingCompletionStore final : public WebhookDedupStore {
+public:
+    bool fail_release = false;
+    InMemoryWebhookDedupStore records;
+
+    /** Reserves an event using the normal in-memory store. */
+    ClaimResult claim(const ClaimRequest& request) override {
+        return records.claim(request);
+    }
+
+    /** Simulates a failed completion write. */
+    bool mark_processed(std::string_view, std::chrono::system_clock::time_point) override {
+        return false;
+    }
+
+    /** Releases normally, or simulates a database error. */
+    bool release_claim(std::string_view id,
+                       std::chrono::system_clock::time_point claimed_at) override {
+        if (fail_release) {
+            throw ConfigurationException("Release unavailable");
+        }
+        return records.release_claim(id, claimed_at);
+    }
+
+    /** Applies normal retention behavior. */
+    void erase_expired(std::chrono::system_clock::time_point now,
+                       std::chrono::hours retention) override {
+        records.erase_expired(now, retention);
+    }
+};
 
 class WebhooksTest : public ::testing::Test {
 protected:
@@ -265,6 +298,122 @@ TEST_F(WebhooksTest, ProcessEventOnceHandlerRetryableFailureReturnsRetryLater) {
     const auto result = task.result();
     EXPECT_EQ(result.response_action, WebhookResponseAction::RetryLater);
 }
+
+TEST_F(WebhooksTest, FailedHandlersCanRetryImmediatelyWithDefaultTimeout) {
+    InMemoryWebhookDedupStore store;
+    for (const auto failure :
+         { webhooks::ProcessResult::RetryableFailure, webhooks::ProcessResult::FatalFailure }) {
+        const webhooks::Event event{ .id = failure == webhooks::ProcessResult::RetryableFailure
+                                               ? "evt_retry"
+                                               : "evt_fatal",
+                                     .type = "invoice.paid" };
+        int attempts = 0;
+        auto handler = [&](const webhooks::Event&) -> Task<webhooks::ProcessResult> {
+            co_return ++attempts == 1 ? failure : webhooks::ProcessResult::Handled;
+        };
+        EXPECT_EQ(webhooks::process_event_once(
+                      event, store, handler, webhooks::ProcessEventOptions{ .now = now })
+                      .result()
+                      .response_action,
+                  WebhookResponseAction::RetryLater);
+        EXPECT_EQ(webhooks::process_event_once(
+                      event, store, handler, webhooks::ProcessEventOptions{ .now = now })
+                      .result()
+                      .response_action,
+                  WebhookResponseAction::AcknowledgeSuccess);
+        EXPECT_EQ(attempts, 2);
+        EXPECT_EQ(store.claim(ClaimRequest{ .event_id = event.id, .now = now }).outcome,
+                  ClaimOutcome::DuplicateProcessed);
+    }
+}
+
+TEST_F(WebhooksTest, ThrowingHandlerCanRetryImmediately) {
+    InMemoryWebhookDedupStore store;
+    const webhooks::Event event{ .id = "evt_throw_retry", .type = "invoice.paid" };
+    int attempts = 0;
+    auto handler = [&](const webhooks::Event&) -> Task<webhooks::ProcessResult> {
+        if (++attempts == 1) {
+            throw std::runtime_error("Temporary database failure");
+        }
+        co_return webhooks::ProcessResult::Handled;
+    };
+    EXPECT_EQ(webhooks::process_event_once(
+                  event, store, handler, webhooks::ProcessEventOptions{ .now = now })
+                  .result()
+                  .response_action,
+              WebhookResponseAction::RetryLater);
+    EXPECT_EQ(webhooks::process_event_once(
+                  event, store, handler, webhooks::ProcessEventOptions{ .now = now })
+                  .result()
+                  .response_action,
+              WebhookResponseAction::AcknowledgeSuccess);
+    EXPECT_EQ(attempts, 2);
+}
+
+TEST_F(WebhooksTest, FailedCompletionWriteReleasesClaim) {
+    FailingCompletionStore store;
+    const webhooks::Event event{ .id = "evt_completion_failed", .type = "invoice.paid" };
+    auto handler = [](const webhooks::Event&) -> Task<webhooks::ProcessResult> {
+        co_return webhooks::ProcessResult::Handled;
+    };
+    TestLogger logger;
+    EXPECT_EQ(
+        webhooks::process_event_once(
+            event, store, handler, webhooks::ProcessEventOptions{ .now = now, .logger = &logger })
+            .result()
+            .response_action,
+        WebhookResponseAction::RetryLater);
+    EXPECT_EQ(store.records.claim(ClaimRequest{ .event_id = event.id, .now = now }).outcome,
+              ClaimOutcome::Claimed);
+    ASSERT_EQ(logger.get_entries().size(), 1u);
+    EXPECT_EQ(logger.get_entries()[0].level, LogLevel::Error);
+}
+
+TEST_F(WebhooksTest, FailedReleaseIsLoggedAndStillRequestsRetry) {
+    FailingCompletionStore store;
+    store.fail_release = true;
+    const webhooks::Event event{ .id = "evt_release_failed", .type = "invoice.paid" };
+    TestLogger logger;
+    EXPECT_EQ(webhooks::process_event_once(
+                  event,
+                  store,
+                  [](const webhooks::Event&) -> Task<webhooks::ProcessResult> {
+                      co_return webhooks::ProcessResult::RetryableFailure;
+                  },
+                  webhooks::ProcessEventOptions{ .now = now, .logger = &logger })
+                  .result()
+                  .response_action,
+              WebhookResponseAction::RetryLater);
+    EXPECT_EQ(store.records.claim(ClaimRequest{ .event_id = event.id, .now = now }).outcome,
+              ClaimOutcome::DuplicateInflight);
+    const auto logs = logger.get_entries();
+    ASSERT_EQ(logs.size(), 2u);
+    EXPECT_EQ(logs[1].level, LogLevel::Error);
+    EXPECT_NE(logs[1].message.find("claim release failed"), std::string::npos);
+}
+
+#if defined(STRIPEKIT_WITH_SQLITE3)
+TEST_F(WebhooksTest, SqliteFailedHandlerCanRetryImmediately) {
+    SqliteWebhookDedupStore store(":memory:");
+    const webhooks::Event event{ .id = "evt_sqlite_retry", .type = "invoice.paid" };
+    int attempts = 0;
+    auto handler = [&](const webhooks::Event&) -> Task<webhooks::ProcessResult> {
+        co_return ++attempts == 1 ? webhooks::ProcessResult::RetryableFailure
+                                  : webhooks::ProcessResult::Handled;
+    };
+    EXPECT_EQ(webhooks::process_event_once(
+                  event, store, handler, webhooks::ProcessEventOptions{ .now = now })
+                  .result()
+                  .response_action,
+              WebhookResponseAction::RetryLater);
+    EXPECT_EQ(webhooks::process_event_once(
+                  event, store, handler, webhooks::ProcessEventOptions{ .now = now })
+                  .result()
+                  .response_action,
+              WebhookResponseAction::AcknowledgeSuccess);
+    EXPECT_EQ(attempts, 2);
+}
+#endif
 
 TEST_F(WebhooksTest, ProcessEventOnceWithPayloadAndSignatureOverload) {
     InMemoryWebhookDedupStore dedup_store;

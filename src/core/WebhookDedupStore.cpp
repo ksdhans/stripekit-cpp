@@ -57,6 +57,17 @@ bool InMemoryWebhookDedupStore::mark_processed(std::string_view event_id,
     return true;
 }
 
+bool InMemoryWebhookDedupStore::release_claim(std::string_view event_id,
+                                              std::chrono::system_clock::time_point claimed_at) {
+    std::lock_guard<std::mutex> lock(mutex);
+    const auto it = records.find(std::string(event_id));
+    if (it == records.end() || it->second.processed || it->second.claimed_at != claimed_at) {
+        return false;
+    }
+    records.erase(it);
+    return true;
+}
+
 void InMemoryWebhookDedupStore::erase_expired(std::chrono::system_clock::time_point now,
                                               std::chrono::hours retention) {
     std::lock_guard<std::mutex> lock(mutex);

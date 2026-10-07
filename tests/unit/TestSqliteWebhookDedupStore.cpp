@@ -128,4 +128,29 @@ TEST_F(SqliteWebhookDedupStoreTest, InvalidPathThrowsConfigurationException) {
         { SqliteWebhookDedupStore store("/nonexistent_directory_for_test/database.sqlite3"); },
         ConfigurationException);
 }
+
+TEST_F(SqliteWebhookDedupStoreTest, ReleaseOnlyMatchingUnfinishedClaims) {
+    SqliteWebhookDedupStore store(":memory:");
+    EXPECT_FALSE(store.release_claim("evt_missing", now));
+    store.claim(ClaimRequest{ .event_id = "evt_release", .now = now });
+    EXPECT_FALSE(store.release_claim("evt_release", now + std::chrono::seconds(1)));
+    EXPECT_TRUE(store.release_claim("evt_release", now));
+    EXPECT_EQ(store.claim(ClaimRequest{ .event_id = "evt_release", .now = now }).outcome,
+              ClaimOutcome::Claimed);
+    store.mark_processed("evt_release", now);
+    EXPECT_FALSE(store.release_claim("evt_release", now));
+    EXPECT_EQ(store.claim(ClaimRequest{ .event_id = "evt_release", .now = now }).outcome,
+              ClaimOutcome::DuplicateProcessed);
+}
+
+TEST_F(SqliteWebhookDedupStoreTest, OldAttemptCannotReleaseReclaimedEvent) {
+    SqliteWebhookDedupStore store(":memory:");
+    store.claim(ClaimRequest{ .event_id = "evt_reclaimed", .now = now });
+    const auto later = now + defaultStaleInflightTimeout;
+    EXPECT_EQ(store.claim(ClaimRequest{ .event_id = "evt_reclaimed", .now = later }).outcome,
+              ClaimOutcome::Claimed);
+    EXPECT_FALSE(store.release_claim("evt_reclaimed", now));
+    EXPECT_EQ(store.claim(ClaimRequest{ .event_id = "evt_reclaimed", .now = later }).outcome,
+              ClaimOutcome::DuplicateInflight);
+}
 #endif

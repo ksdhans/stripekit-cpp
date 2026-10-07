@@ -91,8 +91,10 @@ The second is duplicates. Stripe retries a delivery whenever it cannot confirm
 you received it, so the same event will arrive more than once. If your handler
 grants a month of service each time it runs, that is a real problem.
 stripekit::webhooks::process_event_once reserves the event id in a
-stripekit::WebhookDedupStore before calling your handler, so only one delivery
-of a given event ever reaches your code.
+stripekit::WebhookDedupStore before calling your handler. Completed events are
+not handled again while their records are retained. Failed attempts are retried,
+and unfinished work can be retried after a crash. Make your handler safe to run
+again, since its database changes and the event record are not one transaction.
 
 @code
 auto result = co_await stripekit::webhooks::process_event_once(

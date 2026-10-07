@@ -85,8 +85,9 @@ struct ClaimResult {
  * Remembers which webhook events have been handled.
  *
  * Stripe delivers the same event more than once whenever it cannot confirm
- * receipt, so a handler that grants access or charges money must run only once
- * per event. This interface is what makes that possible.
+ * receipt. This interface skips completed events and reserves unfinished events
+ * for one worker at a time. Handlers must still be safe to retry after failure
+ * or a crash.
  *
  * Which implementation to use depends on the deployment. Use
  * InMemoryWebhookDedupStore for tests, SqliteWebhookDedupStore for a single
@@ -127,6 +128,20 @@ public:
      */
     virtual bool mark_processed(std::string_view event_id,
                                 std::chrono::system_clock::time_point processed_at) = 0;
+
+    /**
+     * Releases an unfinished claim after its handler has stopped.
+     *
+     * Delete only the unprocessed record whose claim time matches @p claimed_at,
+     * so an older attempt cannot release a newer worker's reservation.
+     *
+     * @param event_id The event to allow another delivery to retry.
+     * @param claimed_at The successful ClaimRequest::now for this attempt.
+     * @return True if the matching claim was removed; false if it no longer exists.
+     * @throws StripeKitException The store could not release the claim.
+     */
+    virtual bool release_claim(std::string_view event_id,
+                               std::chrono::system_clock::time_point claimed_at) = 0;
 
     /**
      * Deletes records older than the retention period.
@@ -181,6 +196,10 @@ public:
     bool mark_processed(std::string_view event_id,
                         std::chrono::system_clock::time_point processed_at) override;
 
+    /** @copydoc WebhookDedupStore::release_claim */
+    bool release_claim(std::string_view event_id,
+                       std::chrono::system_clock::time_point claimed_at) override;
+
     /**
      * Deletes records older than the retention period.
      *
@@ -204,12 +223,12 @@ private:
 /**
  * Works out what to tell Stripe, given a claim outcome.
  *
- * Duplicates count as success: the event was already handled, so there is no
- * point asking Stripe to send it again.
+ * Already-processed duplicates count as success. In-flight duplicates and
+ * store failures ask Stripe to retry.
  *
  * @param outcome The result of a claim attempt.
- * @return WebhookResponseAction::AcknowledgeSuccess for duplicates, and
- *         WebhookResponseAction::RetryLater for store failures.
+ * @return WebhookResponseAction::AcknowledgeSuccess for a claim or processed
+ *         duplicate; WebhookResponseAction::RetryLater otherwise.
  */
 WebhookResponseAction map_claim_outcome_to_response(ClaimOutcome outcome);
 

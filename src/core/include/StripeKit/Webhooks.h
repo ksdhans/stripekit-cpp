@@ -51,8 +51,9 @@ using ProcessResult = EventDispatchResult;
 /**
  * The application's webhook handler.
  *
- * Called once per event, only after the signature has been checked and the
- * event id claimed. Return quickly: Stripe treats a slow endpoint as a failed
+ * Called after the signature has been checked and the event id claimed.
+ * Completed events are skipped; failed or interrupted attempts may run again.
+ * Make the handler safe to retry. Return quickly: Stripe treats a slow endpoint as a failed
  * delivery, so queue any long work rather than doing it here.
  */
 using EventHandler = std::function<Task<ProcessResult>(const Event&)>;
@@ -128,11 +129,12 @@ Event construct_event(std::string_view payload,
                       ConstructEventOptions options = {});
 
 /**
- * Runs the handler for an already-verified event, at most once.
+ * Runs the handler for an already-verified event unless it was already completed.
  *
  * Reserves the event id in @p dedup_store first, so repeated deliveries of the
- * same event reach the handler only the first time. Use this overload when the
- * event has already been through construct_event().
+ * same completed event are skipped while its record is retained. Failed attempts
+ * release their claims for retry; crashed attempts wait for the stale timeout.
+ * Use this overload when the event has already been through construct_event().
  *
  * @param event The verified event.
  * @param dedup_store Where claims are recorded. Must outlive the call, and must
@@ -147,7 +149,7 @@ Task<ProcessEventOnceResult> process_event_once(const Event& event,
                                                 ProcessEventOptions options = {});
 
 /**
- * Verifies a webhook delivery and runs the handler for it, at most once.
+ * Verifies a webhook delivery and handles it unless it was already completed.
  *
  * This is the whole inbound path in one call: check the signature, reserve the
  * event id, run the handler, and report the status to send back to Stripe. It

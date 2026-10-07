@@ -54,8 +54,9 @@ struct VerifiedEventSignal {
  * Implement this when webhook handling is better expressed as a class than as
  * a callback; otherwise use stripekit::webhooks::EventHandler.
  *
- * dispatch() is called once per event, only after the signature has been
- * checked and the event id claimed, so it never sees a duplicate. It must
+ * dispatch() is called after the signature has been checked and the event id
+ * claimed. Completed events are skipped; failed or interrupted attempts may
+ * run again, so make the handler safe to retry. It must
  * return quickly, since Stripe treats a slow endpoint as a failed delivery.
  */
 class EventDispatcher {
