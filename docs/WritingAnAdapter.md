@@ -213,6 +213,54 @@ returns 200, a tampered body returns 400, and delivering the same event twice
 runs the handler once. StripeKit's own tests under `tests/integration/` cover
 the Drogon adapter this way and are a reasonable template.
 
+@section adapter_migration Moving an application from Drogon to another adapter
+
+Your application can keep using stripekit::StripeClient and the same webhook
+handler. What changes, is how you create the client and how your server receives webhooks:
+
+1. Use an existing StripeKit adapter for your framework, or write one as
+   described in @ref adapter_what and the sections that follow.
+2. Build StripeKit with `STRIPEKIT_BUILD_DROGON_ADAPTER=OFF`,
+   `STRIPEKIT_BUILD_TESTS=OFF`, and `STRIPEKIT_BUILD_EXAMPLES=OFF`.
+   The bundled tests require the Drogon adapter; run the new adapter's tests in
+   its own project. Link the application to `StripeKit::stripekit` and the new
+   adapter target, not `StripeKit::drogon`.
+3. Replace `stripekit::drogon::make_stripe_client()` with your adapter's client
+   creation function. Keep the same API key and request settings, including the
+   keys that prevent repeated requests from creating duplicate payments.
+   Keep the client alive while requests are running. Remove the Drogon
+   event-loop settings.
+4. Replace `stripekit::drogon::register_webhook_handler()` with the new route.
+   Keep the signing secret and pass the request body to StripeKit without
+   changing it. Reuse your event handler and database of processed events.
+   Keep the same limits for signature age and for retrying an event left
+   unfinished after a crash. This prevents the switch from processing completed
+   events again.
+5. If the public webhook URL changes, update the endpoint in Stripe and use
+   that endpoint's signing secret. If the URL stays the same, keep its secret.
+   Do not clear the database of processed events when deploying the new route.
+
+Before using the adapter with real payments, run the tests described above and
+check these cases:
+
+- An event that was already handled returns a success response without running
+  the handler again.
+- An event that is still being handled returns a response asking Stripe to
+  retry later.
+- A failure to read or write the event database also asks Stripe to retry.
+- After a crash and restart, an unfinished event can be handled again once the
+  configured waiting period has passed.
+- Callbacks run on the documented thread or event loop, and requests respect
+  their timeouts.
+- Retried POST requests keep the same idempotency key.
+- Log levels work as expected, and logs do not expose secrets or sensitive data.
+
+Then test against a real Stripe sandbox. Check successful and failed invoice
+payments, subscription changes, disputes, refunds, and repeated webhook
+deliveries. The existing sandbox tests use Drogon, so add tests for these same
+cases with your adapter. You can use your own adapter without waiting for
+StripeKit to ship one for your framework.
+
 @section adapter_next Where to go next
 
 - @ref adapter_interfaces — reference for the interfaces above.
