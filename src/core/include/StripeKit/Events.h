@@ -30,7 +30,7 @@ enum class EventDispatchResult {
     Handled,          /**< Dealt with. Stripe is told the delivery succeeded. */
     Ignored,          /**< Not interesting to this application. Also reported as success. */
     RetryableFailure, /**< Something was temporarily unavailable. Stripe will deliver again. */
-    FatalFailure      /**< Cannot be handled, ever. Stripe is told to stop retrying. */
+    FatalFailure      /**< Needs intervention. Logged as an error; Stripe is asked to retry. */
 };
 
 /**
