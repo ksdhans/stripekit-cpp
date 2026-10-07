@@ -1,9 +1,9 @@
 /** IntegrationTestServer.h
- * 
+ *
  * Local test server fixture using Drogon for StripeKit integration tests.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 
@@ -73,15 +73,11 @@ inline std::string compute_hmac_sha256(std::string_view payload, std::string_vie
     }
     crypto_auth_hmacsha256_state state;
     crypto_auth_hmacsha256_init(
-        &state,
-        reinterpret_cast<const unsigned char*>(secret.data()),
-        secret.size());
+        &state, reinterpret_cast<const unsigned char*>(secret.data()), secret.size());
     crypto_auth_hmacsha256_update(
-        &state,
-        reinterpret_cast<const unsigned char*>(payload.data()),
-        payload.size());
+        &state, reinterpret_cast<const unsigned char*>(payload.data()), payload.size());
 
-    unsigned char digest[crypto_auth_hmacsha256_BYTES] = {0};
+    unsigned char digest[crypto_auth_hmacsha256_BYTES] = { 0 };
     crypto_auth_hmacsha256_final(&state, digest);
     return hex_encode(digest, crypto_auth_hmacsha256_BYTES);
 }
@@ -178,8 +174,8 @@ inline std::uint16_t find_free_port() {
  * Shared state and telemetry for webhook handlers in integration tests.
  */
 struct WebhookTestTelemetry {
-    std::atomic<int> handled_events_count{0};
-    std::atomic<int> ignored_events_count{0};
+    std::atomic<int> handled_events_count{ 0 };
+    std::atomic<int> ignored_events_count{ 0 };
     std::vector<std::string> received_event_ids;
     std::vector<std::unordered_map<std::string, std::string>> api_request_headers;
     mutable std::mutex mutex;
@@ -199,11 +195,10 @@ struct WebhookTestTelemetry {
 
     void record_api_request(const ::drogon::HttpRequestPtr& request) {
         std::lock_guard<std::mutex> lock(mutex);
-        api_request_headers.push_back({
-            {"authorization", request->getHeader("authorization")},
-            {"stripe-version", request->getHeader("stripe-version")},
-            {"x-custom-client-header", request->getHeader("x-custom-client-header")}
-        });
+        api_request_headers.push_back(
+            { { "authorization", request->getHeader("authorization") },
+              { "stripe-version", request->getHeader("stripe-version") },
+              { "x-custom-client-header", request->getHeader("x-custom-client-header") } });
     }
 
     std::string latest_api_request_header(const std::string& name) const {
@@ -237,11 +232,8 @@ public:
         }
 
         std::lock_guard<std::mutex> lock(mutex);
-        entries.push_back(Entry{
-            .level = level,
-            .message = std::string(message),
-            .context = context
-        });
+        entries.push_back(
+            Entry{ .level = level, .message = std::string(message), .context = context });
     }
 
     std::vector<Entry> get_entries() const {
@@ -298,9 +290,7 @@ public:
 
         ::drogon::app().addListener("127.0.0.1", server_port);
 
-        server_thread = std::thread([]() {
-            ::drogon::app().run();
-        });
+        server_thread = std::thread([]() { ::drogon::app().run(); });
 
         for (int i = 0; i < 200 && !::drogon::app().isRunning(); ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -321,10 +311,10 @@ public:
     /**
      * Sends a raw HTTP POST to a path on this test server.
      */
-    std::pair<::drogon::ReqResult, ::drogon::HttpResponsePtr> send_raw_post(
-        std::string_view path,
-        std::string_view body,
-        const std::unordered_map<std::string, std::string>& headers = {}) {
+    std::pair<::drogon::ReqResult, ::drogon::HttpResponsePtr>
+    send_raw_post(std::string_view path,
+                  std::string_view body,
+                  const std::unordered_map<std::string, std::string>& headers = {}) {
         auto client = ::drogon::HttpClient::newHttpClient(base_url);
         auto req = ::drogon::HttpRequest::newHttpRequest();
         req->setMethod(::drogon::Post);
@@ -339,10 +329,10 @@ public:
     /**
      * Sends a raw HTTP GET to a path on this test server.
      */
-    std::pair<::drogon::ReqResult, ::drogon::HttpResponsePtr> send_raw_get(
-        std::string_view path,
-        const std::unordered_map<std::string, std::string>& headers = {},
-        double timeout = 10.0) {
+    std::pair<::drogon::ReqResult, ::drogon::HttpResponsePtr>
+    send_raw_get(std::string_view path,
+                 const std::unordered_map<std::string, std::string>& headers = {},
+                 double timeout = 10.0) {
         auto client = ::drogon::HttpClient::newHttpClient(base_url);
         auto req = ::drogon::HttpRequest::newHttpRequest();
         req->setMethod(::drogon::Get);
@@ -366,7 +356,8 @@ private:
                     auto resp = ::drogon::HttpResponse::newHttpResponse();
                     resp->setStatusCode(::drogon::k401Unauthorized);
                     resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
-                    resp->setBody(R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
+                    resp->setBody(
+                        R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
                     callback(resp);
                     return;
                 }
@@ -386,7 +377,8 @@ private:
                     }
                 })");
                 callback(resp);
-            }, {::drogon::Post});
+            },
+            { ::drogon::Post });
 
         // GET /v1/customers/{customer_id}
         ::drogon::app().registerHandler(
@@ -398,7 +390,8 @@ private:
                     auto resp = ::drogon::HttpResponse::newHttpResponse();
                     resp->setStatusCode(::drogon::k401Unauthorized);
                     resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
-                    resp->setBody(R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
+                    resp->setBody(
+                        R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
                     callback(resp);
                     return;
                 }
@@ -408,7 +401,8 @@ private:
                 resp->setStatusCode(::drogon::k200OK);
                 resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
                 resp->setBody(R"({
-                    "id": ")" + customer_id + R"(",
+                    "id": ")" +
+                              customer_id + R"(",
                     "object": "customer",
                     "email": "retrieved@example.com",
                     "name": "Retrieved Customer",
@@ -416,7 +410,8 @@ private:
                     "metadata": {}
                 })");
                 callback(resp);
-            }, {::drogon::Get});
+            },
+            { ::drogon::Get });
 
         // POST /v1/checkout/sessions
         ::drogon::app().registerHandler(
@@ -427,35 +422,43 @@ private:
                     auto resp = ::drogon::HttpResponse::newHttpResponse();
                     resp->setStatusCode(::drogon::k401Unauthorized);
                     resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
-                    resp->setBody(R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
+                    resp->setBody(
+                        R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
                     callback(resp);
                     return;
                 }
                 telemetry.record_api_request(req);
 
-                std::string req_body{req->getBody()};
+                std::string req_body{ req->getBody() };
                 bool is_payment_mode = req_body.find("mode=payment") != std::string::npos;
-                std::string session_id = is_payment_mode ? "cs_drogon_payment_1" : "cs_drogon_session_1";
+                std::string session_id =
+                    is_payment_mode ? "cs_drogon_payment_1" : "cs_drogon_session_1";
                 std::string mode = is_payment_mode ? "payment" : "subscription";
-                std::string payment_intent_field = is_payment_mode ? R"(, "payment_intent": "pi_drogon_123")" : "";
+                std::string payment_intent_field =
+                    is_payment_mode ? R"(, "payment_intent": "pi_drogon_123")" : "";
 
                 auto resp = ::drogon::HttpResponse::newHttpResponse();
                 resp->setStatusCode(::drogon::k200OK);
                 resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
                 resp->setBody(R"({
-                    "id": ")" + session_id + R"(",
+                    "id": ")" +
+                              session_id + R"(",
                     "object": "checkout.session",
                     "customer": "cus_drogon_123",
                     "status": "open",
-                    "mode": ")" + mode + R"(",
-                    "url": "https://checkout.stripe.com/c/pay/)" + session_id + R"(",
+                    "mode": ")" +
+                              mode + R"(",
+                    "url": "https://checkout.stripe.com/c/pay/)" +
+                              session_id + R"(",
                     "currency": "usd",
                     "amount_total": 2000,
-                    "livemode": false)" + payment_intent_field + R"(,
+                    "livemode": false)" +
+                              payment_intent_field + R"(,
                     "metadata": {}
                 })");
                 callback(resp);
-            }, {::drogon::Post});
+            },
+            { ::drogon::Post });
 
         // GET /v1/subscriptions/{subscription_id}
         ::drogon::app().registerHandler(
@@ -467,7 +470,8 @@ private:
                     auto resp = ::drogon::HttpResponse::newHttpResponse();
                     resp->setStatusCode(::drogon::k401Unauthorized);
                     resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
-                    resp->setBody(R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
+                    resp->setBody(
+                        R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
                     callback(resp);
                     return;
                 }
@@ -477,7 +481,8 @@ private:
                 resp->setStatusCode(::drogon::k200OK);
                 resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
                 resp->setBody(R"({
-                    "id": ")" + subscription_id + R"(",
+                    "id": ")" +
+                              subscription_id + R"(",
                     "object": "subscription",
                     "customer": "cus_drogon_123",
                     "status": "active",
@@ -488,7 +493,8 @@ private:
                     "metadata": {}
                 })");
                 callback(resp);
-            }, {::drogon::Get});
+            },
+            { ::drogon::Get });
 
         // DELETE /v1/subscriptions/{subscription_id}
         ::drogon::app().registerHandler(
@@ -500,7 +506,8 @@ private:
                     auto resp = ::drogon::HttpResponse::newHttpResponse();
                     resp->setStatusCode(::drogon::k401Unauthorized);
                     resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
-                    resp->setBody(R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
+                    resp->setBody(
+                        R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
                     callback(resp);
                     return;
                 }
@@ -510,7 +517,8 @@ private:
                 resp->setStatusCode(::drogon::k200OK);
                 resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
                 resp->setBody(R"({
-                    "id": ")" + subscription_id + R"(",
+                    "id": ")" +
+                              subscription_id + R"(",
                     "object": "subscription",
                     "customer": "cus_drogon_123",
                     "status": "canceled",
@@ -521,7 +529,8 @@ private:
                     "metadata": {}
                 })");
                 callback(resp);
-            }, {::drogon::Delete});
+            },
+            { ::drogon::Delete });
 
         // POST /v1/billing_portal/sessions
         ::drogon::app().registerHandler(
@@ -532,7 +541,8 @@ private:
                     auto resp = ::drogon::HttpResponse::newHttpResponse();
                     resp->setStatusCode(::drogon::k401Unauthorized);
                     resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
-                    resp->setBody(R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
+                    resp->setBody(
+                        R"({"error":{"type":"authentication_error","message":"Invalid API Key"}})");
                     callback(resp);
                     return;
                 }
@@ -551,7 +561,8 @@ private:
                     "livemode": false
                 })");
                 callback(resp);
-            }, {::drogon::Post});
+            },
+            { ::drogon::Post });
     }
 
     void register_fault_injection_handlers() {
@@ -564,9 +575,11 @@ private:
                 resp->setStatusCode(::drogon::k400BadRequest);
                 resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
                 resp->addHeader("request-id", "req_fault_400");
-                resp->setBody(R"({"error":{"type":"invalid_request_error","message":"Missing required param: email"}})");
+                resp->setBody(
+                    R"({"error":{"type":"invalid_request_error","message":"Missing required param: email"}})");
                 callback(resp);
-            }, {::drogon::Get, ::drogon::Post});
+            },
+            { ::drogon::Get, ::drogon::Post });
 
         // 402 Card Error
         ::drogon::app().registerHandler(
@@ -577,9 +590,11 @@ private:
                 resp->setStatusCode(static_cast<::drogon::HttpStatusCode>(402));
                 resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
                 resp->addHeader("request-id", "req_fault_402");
-                resp->setBody(R"({"error":{"type":"card_error","code":"card_declined","message":"Card declined"}})");
+                resp->setBody(
+                    R"({"error":{"type":"card_error","code":"card_declined","message":"Card declined"}})");
                 callback(resp);
-            }, {::drogon::Get, ::drogon::Post});
+            },
+            { ::drogon::Get, ::drogon::Post });
 
         // 429 Rate Limit
         ::drogon::app().registerHandler(
@@ -590,9 +605,11 @@ private:
                 resp->setStatusCode(static_cast<::drogon::HttpStatusCode>(429));
                 resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
                 resp->addHeader("request-id", "req_fault_429");
-                resp->setBody(R"({"error":{"type":"rate_limit_error","message":"Too many requests"}})");
+                resp->setBody(
+                    R"({"error":{"type":"rate_limit_error","message":"Too many requests"}})");
                 callback(resp);
-            }, {::drogon::Get, ::drogon::Post});
+            },
+            { ::drogon::Get, ::drogon::Post });
 
         // 500 Internal Server Error
         ::drogon::app().registerHandler(
@@ -603,9 +620,11 @@ private:
                 resp->setStatusCode(::drogon::k500InternalServerError);
                 resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
                 resp->addHeader("request-id", "req_fault_500");
-                resp->setBody(R"({"error":{"type":"api_error","message":"Internal error in payment processing"}})");
+                resp->setBody(
+                    R"({"error":{"type":"api_error","message":"Internal error in payment processing"}})");
                 callback(resp);
-            }, {::drogon::Get, ::drogon::Post});
+            },
+            { ::drogon::Get, ::drogon::Post });
 
         // 503 Service Unavailable
         ::drogon::app().registerHandler(
@@ -616,9 +635,11 @@ private:
                 resp->setStatusCode(::drogon::k503ServiceUnavailable);
                 resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
                 resp->addHeader("request-id", "req_fault_503");
-                resp->setBody(R"({"error":{"type":"api_connection_error","message":"Payment service temporarily down"}})");
+                resp->setBody(
+                    R"({"error":{"type":"api_connection_error","message":"Payment service temporarily down"}})");
                 callback(resp);
-            }, {::drogon::Get, ::drogon::Post});
+            },
+            { ::drogon::Get, ::drogon::Post });
 
         // Malformed non-JSON response
         ::drogon::app().registerHandler(
@@ -630,7 +651,8 @@ private:
                 resp->setContentTypeCode(::drogon::CT_TEXT_PLAIN);
                 resp->setBody("This is raw unformatted text, definitely not JSON!");
                 callback(resp);
-            }, {::drogon::Get, ::drogon::Post});
+            },
+            { ::drogon::Get, ::drogon::Post });
 
         // Slow response to trigger client timeout
         ::drogon::app().registerHandler(
@@ -643,84 +665,79 @@ private:
                 resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
                 resp->setBody(R"({"status":"completed_after_delay"})");
                 callback(resp);
-            }, {::drogon::Get, ::drogon::Post});
+            },
+            { ::drogon::Get, ::drogon::Post });
     }
 
     void register_webhook_handlers() {
         // Standard webhook handler registered via Drogon adapter
-        stripekit::drogon::register_webhook_handler({
-            .path = "/test/webhook/standard",
-            .endpoint_secret = webhook_secret,
-            .dedup_store = dedup_store,
-            .handler = [this](const stripekit::webhooks::Event& event)
-                -> stripekit::Task<stripekit::webhooks::ProcessResult> {
-                telemetry.record_event(event.id);
-                if (event.type == "customer.created") {
-                    telemetry.ignored_events_count++;
-                    co_return stripekit::webhooks::ProcessResult::Ignored;
-                }
-                telemetry.handled_events_count++;
-                co_return stripekit::webhooks::ProcessResult::Handled;
-            }
-        });
+        stripekit::drogon::register_webhook_handler(
+            { .path = "/test/webhook/standard",
+              .endpoint_secret = webhook_secret,
+              .dedup_store = dedup_store,
+              .handler = [this](const stripekit::webhooks::Event& event)
+                  -> stripekit::Task<stripekit::webhooks::ProcessResult> {
+                  telemetry.record_event(event.id);
+                  if (event.type == "customer.created") {
+                      telemetry.ignored_events_count++;
+                      co_return stripekit::webhooks::ProcessResult::Ignored;
+                  }
+                  telemetry.handled_events_count++;
+                  co_return stripekit::webhooks::ProcessResult::Handled;
+              } });
 
         // Webhook with retryable failure
-        stripekit::drogon::register_webhook_handler({
-            .path = "/test/webhook/retryable",
-            .endpoint_secret = webhook_secret,
-            .dedup_store = dedup_store,
-            .handler = [](const stripekit::webhooks::Event&)
-                -> stripekit::Task<stripekit::webhooks::ProcessResult> {
-                co_return stripekit::webhooks::ProcessResult::RetryableFailure;
-            }
-        });
+        stripekit::drogon::register_webhook_handler(
+            { .path = "/test/webhook/retryable",
+              .endpoint_secret = webhook_secret,
+              .dedup_store = dedup_store,
+              .handler = [](const stripekit::webhooks::Event&)
+                  -> stripekit::Task<stripekit::webhooks::ProcessResult> {
+                  co_return stripekit::webhooks::ProcessResult::RetryableFailure;
+              } });
 
         // Webhook with fatal failure
-        stripekit::drogon::register_webhook_handler({
-            .path = "/test/webhook/fatal",
-            .endpoint_secret = webhook_secret,
-            .dedup_store = dedup_store,
-            .handler = [](const stripekit::webhooks::Event&)
-                -> stripekit::Task<stripekit::webhooks::ProcessResult> {
-                co_return stripekit::webhooks::ProcessResult::FatalFailure;
-            }
-        });
+        stripekit::drogon::register_webhook_handler(
+            { .path = "/test/webhook/fatal",
+              .endpoint_secret = webhook_secret,
+              .dedup_store = dedup_store,
+              .handler = [](const stripekit::webhooks::Event&)
+                  -> stripekit::Task<stripekit::webhooks::ProcessResult> {
+                  co_return stripekit::webhooks::ProcessResult::FatalFailure;
+              } });
 
         // Webhook with throwing exception
-        stripekit::drogon::register_webhook_handler({
-            .path = "/test/webhook/throwing",
-            .endpoint_secret = webhook_secret,
-            .dedup_store = dedup_store,
-            .handler = [](const stripekit::webhooks::Event&)
-                -> stripekit::Task<stripekit::webhooks::ProcessResult> {
-                throw std::runtime_error("Unexpected database deadlock during webhook handling");
-                co_return stripekit::webhooks::ProcessResult::Handled;
-            }
-        });
+        stripekit::drogon::register_webhook_handler(
+            { .path = "/test/webhook/throwing",
+              .endpoint_secret = webhook_secret,
+              .dedup_store = dedup_store,
+              .handler = [](const stripekit::webhooks::Event&)
+                  -> stripekit::Task<stripekit::webhooks::ProcessResult> {
+                  throw std::runtime_error("Unexpected database deadlock during webhook handling");
+                  co_return stripekit::webhooks::ProcessResult::Handled;
+              } });
 
         // Webhook with a secret-bearing handler error, used to verify that core
         // webhook logging redacts exception text before it reaches custom loggers.
-        stripekit::drogon::register_webhook_handler({
-            .path = "/test/webhook/throwing-secret",
-            .endpoint_secret = webhook_secret,
-            .dedup_store = logged_dedup_store,
-            .handler = [](const stripekit::webhooks::Event&)
-                -> stripekit::Task<stripekit::webhooks::ProcessResult> {
-                throw std::runtime_error(
-                    "backend error with whsec_handler_secret sk_test_handler_key Authorization: Bearer handler-token");
-                co_return stripekit::webhooks::ProcessResult::Handled;
-            },
-            .logger = &webhook_logger
-        });
+        stripekit::drogon::register_webhook_handler(
+            { .path = "/test/webhook/throwing-secret",
+              .endpoint_secret = webhook_secret,
+              .dedup_store = logged_dedup_store,
+              .handler = [](const stripekit::webhooks::Event&)
+                  -> stripekit::Task<stripekit::webhooks::ProcessResult> {
+                  throw std::runtime_error(
+                      "backend error with whsec_handler_secret sk_test_handler_key Authorization: "
+                      "Bearer handler-token");
+                  co_return stripekit::webhooks::ProcessResult::Handled;
+              },
+              .logger = &webhook_logger });
 
         // Webhook registered via WebhookEndpoint class wrapper
         class_endpoint_dispatcher = std::make_unique<MockEventDispatcher>();
-        class_endpoint_processor = std::make_unique<WebhookProcessor>(
-            dedup_store,
-            *class_endpoint_dispatcher);
+        class_endpoint_processor =
+            std::make_unique<WebhookProcessor>(dedup_store, *class_endpoint_dispatcher);
         class_endpoint = std::make_unique<stripekit::drogon::WebhookEndpoint>(
-            *class_endpoint_processor,
-            webhook_secret);
+            *class_endpoint_processor, webhook_secret);
         class_endpoint->register_handler("/test/webhook/class-endpoint");
     }
 

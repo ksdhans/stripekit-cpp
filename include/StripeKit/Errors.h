@@ -1,9 +1,9 @@
 /** Errors.h
- * 
+ *
  * Exception and error payload types for StripeKit public APIs.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 

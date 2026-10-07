@@ -1,13 +1,13 @@
 /** TestVersionAndErrors.cpp
- * 
+ *
  * Unit tests for version helpers, exception types, callbacks, and coroutine tasks.
  */
 
-#include "TestFramework.h"
 #include "StripeKit/Async.h"
 #include "StripeKit/Callback.h"
 #include "StripeKit/Errors.h"
 #include "StripeKit/StripeKit.h"
+#include "TestFramework.h"
 
 #include <string>
 
@@ -38,14 +38,12 @@ TEST(VersionAndErrorsTest, ExceptionHierarchy) {
     EXPECT_NE(dynamic_cast<const StripeKitException*>(&conf_ex), nullptr);
 
     // API exception
-    StripeErrorPayload payload{
-        .type = StripeErrorType::RateLimit,
-        .code = "rate_limit",
-        .message = "Too many requests",
-        .http_status = 429,
-        .request_id = "req_123",
-        .retryable = true
-    };
+    StripeErrorPayload payload{ .type = StripeErrorType::RateLimit,
+                                .code = "rate_limit",
+                                .message = "Too many requests",
+                                .http_status = 429,
+                                .request_id = "req_123",
+                                .retryable = true };
     StripeApiException api_ex(payload);
     EXPECT_STREQ(api_ex.what(), "Too many requests");
     EXPECT_EQ(api_ex.payload().type, StripeErrorType::RateLimit);
@@ -57,9 +55,7 @@ TEST(VersionAndErrorsTest, ExceptionHierarchy) {
 
 TEST(AsyncAndCallbackTest, OnceCallbackGuaranteesExactlyOnceExecution) {
     int count = 0;
-    OnceCallback<int> once_cb([&](int value) {
-        count += value;
-    });
+    OnceCallback<int> once_cb([&](int value) { count += value; });
 
     EXPECT_FALSE(once_cb.was_invoked());
 
@@ -100,9 +96,7 @@ TEST(AsyncAndCallbackTest, TaskCompositionWithCoAwait) {
 
 TEST(AsyncAndCallbackTest, TaskExceptionPropagation) {
     auto task = make_failing_task();
-    EXPECT_THROW({
-        task.result();
-    }, std::runtime_error);
+    EXPECT_THROW({ task.result(); }, std::runtime_error);
 }
 
 TEST(AsyncAndCallbackTest, ReadyStateIsFalseBeforeResultAndTrueAfter) {

@@ -1,5 +1,5 @@
 /** StripeKit.cpp
- * 
+ *
  * See header file for details.
  */
 

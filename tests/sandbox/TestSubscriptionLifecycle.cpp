@@ -24,8 +24,7 @@ namespace {
  * depending on data that happens to exist in the account.
  */
 const std::string& shared_monthly_price() {
-    static const std::string price_id =
-        create_monthly_price(SandboxEnvironment::get(), 1500);
+    static const std::string price_id = create_monthly_price(SandboxEnvironment::get(), 1500);
     return price_id;
 }
 
@@ -44,13 +43,12 @@ TEST_F(SandboxSubscriptionTest, CheckoutSessionIsCreatedForSubscriptionMode) {
     const std::string customer_id =
         create_customer_with_card(*environment, "pm_card_visa", "checkout");
 
-    const CreateCheckoutSessionRequest request{
-        .customer_id = customer_id,
-        .price_id = shared_monthly_price(),
-        .success_url = "https://example.com/success",
-        .cancel_url = "https://example.com/cancel",
-        .metadata = {{"stripekit_run_id", environment->run_id()}}
-    };
+    const CreateCheckoutSessionRequest request{ .customer_id = customer_id,
+                                                .price_id = shared_monthly_price(),
+                                                .success_url = "https://example.com/success",
+                                                .cancel_url = "https://example.com/cancel",
+                                                .metadata = { { "stripekit_run_id",
+                                                                environment->run_id() } } };
 
     const CheckoutSession session =
         environment->stripe_client().checkout().sessions().create_async(request).result();
@@ -68,16 +66,15 @@ TEST_F(SandboxSubscriptionTest, CheckoutSessionIsCreatedForPaymentMode) {
     const std::string customer_id =
         create_customer_with_card(*environment, "pm_card_visa", "checkout_payment");
 
-    const CreateCheckoutSessionRequest request{
-        .customer_id = customer_id,
-        .mode = "payment",
-        .product_name = "One-Time Product",
-        .currency = "usd",
-        .unit_amount = 2500,
-        .success_url = "https://example.com/success",
-        .cancel_url = "https://example.com/cancel",
-        .metadata = {{"stripekit_run_id", environment->run_id()}}
-    };
+    const CreateCheckoutSessionRequest request{ .customer_id = customer_id,
+                                                .mode = "payment",
+                                                .product_name = "One-Time Product",
+                                                .currency = "usd",
+                                                .unit_amount = 2500,
+                                                .success_url = "https://example.com/success",
+                                                .cancel_url = "https://example.com/cancel",
+                                                .metadata = { { "stripekit_run_id",
+                                                                environment->run_id() } } };
 
     const CheckoutSession session =
         environment->stripe_client().checkout().sessions().create_async(request).result();
@@ -92,15 +89,14 @@ TEST_F(SandboxSubscriptionTest, CheckoutSessionIsCreatedForPaymentMode) {
 }
 
 TEST_F(SandboxSubscriptionTest, PaidSubscriptionEmitsInvoicePaid) {
-    const std::string customer_id =
-        create_customer_with_card(*environment, "pm_card_visa", "paid");
+    const std::string customer_id = create_customer_with_card(*environment, "pm_card_visa", "paid");
 
-    const StripeApiResult created = environment->stripe_api().require_post("/v1/subscriptions", {
-        {"customer", customer_id},
-        {"items[0][price]", shared_monthly_price()},
-        {"payment_behavior", "allow_incomplete"},
-        {"metadata[stripekit_run_id]", environment->run_id()}
-    });
+    const StripeApiResult created = environment->stripe_api().require_post(
+        "/v1/subscriptions",
+        { { "customer", customer_id },
+          { "items[0][price]", shared_monthly_price() },
+          { "payment_behavior", "allow_incomplete" },
+          { "metadata[stripekit_run_id]", environment->run_id() } });
 
     const std::string subscription_id = created.id();
     EXPECT_FALSE(subscription_id.empty());
@@ -127,19 +123,19 @@ TEST_F(SandboxSubscriptionTest, PaidSubscriptionEmitsInvoicePaid) {
 }
 
 TEST_F(SandboxSubscriptionTest, DeclinedCardEmitsInvoicePaymentFailed) {
-    const StripeApiResult customer = environment->stripe_api().require_post("/v1/customers", {
-        {"email", sandbox_email(*environment, "declined")},
-        {"name", "StripeKit E2E declined"},
-        {"source", "tok_chargeCustomerFail"},
-        {"metadata[stripekit_run_id]", environment->run_id()}
-    });
+    const StripeApiResult customer = environment->stripe_api().require_post(
+        "/v1/customers",
+        { { "email", sandbox_email(*environment, "declined") },
+          { "name", "StripeKit E2E declined" },
+          { "source", "tok_chargeCustomerFail" },
+          { "metadata[stripekit_run_id]", environment->run_id() } });
     const std::string customer_id = customer.id();
 
-    const StripeApiResult created = environment->stripe_api().require_post("/v1/subscriptions", {
-        {"customer", customer_id},
-        {"items[0][price]", shared_monthly_price()},
-        {"metadata[stripekit_run_id]", environment->run_id()}
-    });
+    const StripeApiResult created = environment->stripe_api().require_post(
+        "/v1/subscriptions",
+        { { "customer", customer_id },
+          { "items[0][price]", shared_monthly_price() },
+          { "metadata[stripekit_run_id]", environment->run_id() } });
 
     EXPECT_EQ(created.body["status"].asString(), "incomplete");
 

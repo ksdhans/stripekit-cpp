@@ -1,5 +1,5 @@
 /** Logging.cpp
- * 
+ *
  * See header file for details.
  */
 
@@ -84,7 +84,8 @@ static void redact_prefixed_tokens(std::string& text, std::string_view prefix) {
 
         const std::string matched_prefix = text.substr(value_start, prefix.size());
         text.replace(value_start, end - value_start, matched_prefix + "...");
-        lowercase_text.replace(value_start, end - value_start, std::string(lowercase_prefix) + "...");
+        lowercase_text.replace(
+            value_start, end - value_start, std::string(lowercase_prefix) + "...");
         position = value_start + prefix.size() + 3;
     }
 }
@@ -120,9 +121,7 @@ void NullLogger::log(LogLevel level, std::string_view message, const LogContext&
     (void)context;
 }
 
-ConsoleLogger::ConsoleLogger(LogLevel threshold)
-    : threshold_level(threshold) {
-}
+ConsoleLogger::ConsoleLogger(LogLevel threshold) : threshold_level(threshold) {}
 
 bool ConsoleLogger::should_log(LogLevel level) const {
     return log_level_rank(level) >= log_level_rank(threshold_level) &&
@@ -165,11 +164,9 @@ void ConsoleLogger::log(LogLevel level, std::string_view message, const LogConte
 bool is_sensitive_field_name(std::string_view field_name) {
     const std::string name = lowercase_ascii(field_name);
 
-    return name.find("secret") != std::string::npos ||
-           name.find("api_key") != std::string::npos ||
+    return name.find("secret") != std::string::npos || name.find("api_key") != std::string::npos ||
            name.find("authorization") != std::string::npos ||
-           name.find("card") != std::string::npos ||
-           name.find("bank") != std::string::npos ||
+           name.find("card") != std::string::npos || name.find("bank") != std::string::npos ||
            name.find("token") != std::string::npos;
 }
 

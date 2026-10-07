@@ -1,9 +1,9 @@
 /** RequestOptions.h
- * 
+ *
  * Shared per-request options for outbound Stripe API calls.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 

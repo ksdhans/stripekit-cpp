@@ -1,10 +1,10 @@
 /** TestLogging.cpp
- * 
+ *
  * Unit tests for StripeKit logging utilities and sensitive data redaction.
  */
 
-#include "TestFramework.h"
 #include "StripeKit/Logging.h"
+#include "TestFramework.h"
 
 #include <sstream>
 
@@ -20,7 +20,7 @@ TEST(LoggingTest, NullLoggerIgnoresAllLevels) {
     EXPECT_FALSE(logger.should_log(LogLevel::Off));
 
     // Must not throw or crash
-    logger.log(LogLevel::Error, "Test message", LogContext{.event_id = "evt_123"});
+    logger.log(LogLevel::Error, "Test message", LogContext{ .event_id = "evt_123" });
 }
 
 TEST(LoggingTest, ConsoleLoggerRespectsThreshold) {
@@ -61,9 +61,8 @@ TEST(LoggingTest, SensitiveValueRedaction) {
 }
 
 TEST(LoggingTest, SensitiveTextRedaction) {
-    const std::string text =
-        "failed with sk_test_abc123, whsec_secret456, rk_live_restricted, "
-        "pk_test_publishable, and Authorization: Bearer secret-token";
+    const std::string text = "failed with sk_test_abc123, whsec_secret456, rk_live_restricted, "
+                             "pk_test_publishable, and Authorization: Bearer secret-token";
 
     EXPECT_EQ(redact_sensitive_text(text),
               "failed with sk_test_..., whsec_..., rk_live_..., "
@@ -71,9 +70,8 @@ TEST(LoggingTest, SensitiveTextRedaction) {
 }
 
 TEST(LoggingTest, SensitiveTextRedactionIsCaseInsensitive) {
-    const std::string text =
-        "failed with SK_TEST_abc123, WHSEC_secret456, rk_live_restricted, "
-        "pk_test_publishable and authorization: bearer secret-token";
+    const std::string text = "failed with SK_TEST_abc123, WHSEC_secret456, rk_live_restricted, "
+                             "pk_test_publishable and authorization: bearer secret-token";
 
     EXPECT_EQ(redact_sensitive_text(text),
               "failed with SK_TEST_..., WHSEC_..., rk_live_..., "

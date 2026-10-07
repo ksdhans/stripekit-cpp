@@ -1,9 +1,9 @@
 /** Main.cpp
- * 
+ *
  * Unit test executable entry point for CTest.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 

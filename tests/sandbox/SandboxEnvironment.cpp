@@ -44,15 +44,14 @@ namespace stripekit::testing {
 namespace {
 
 /** Stripe event types the CLI listener forwards to the local endpoint. */
-constexpr const char* forwarded_event_types =
-    "customer.created,"
-    "customer.subscription.created,"
-    "customer.subscription.updated,"
-    "invoice.paid,"
-    "invoice.payment_failed,"
-    "charge.refunded,"
-    "charge.dispute.created,"
-    "charge.dispute.closed";
+constexpr const char* forwarded_event_types = "customer.created,"
+                                              "customer.subscription.created,"
+                                              "customer.subscription.updated,"
+                                              "invoice.paid,"
+                                              "invoice.payment_failed,"
+                                              "charge.refunded,"
+                                              "charge.dispute.created,"
+                                              "charge.dispute.closed";
 
 /** Stripe API version used by sandbox REST calls for stable E2E semantics. */
 constexpr const char* sandbox_stripe_api_version = "2024-06-20";
@@ -69,8 +68,9 @@ std::string env_or(const char* name, std::string fallback) {
 /** Interprets an environment variable as a boolean opt-in flag. */
 bool env_flag(const char* name) {
     std::string value = env_or(name, "");
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
     return value == "1" || value == "true" || value == "yes" || value == "on";
 }
 
@@ -261,7 +261,8 @@ std::string find_webhook_secret(const std::string& text) {
     }
 
     auto end = start;
-    while (end < text.size() && (std::isalnum(static_cast<unsigned char>(text[end])) != 0 || text[end] == '_')) {
+    while (end < text.size() &&
+           (std::isalnum(static_cast<unsigned char>(text[end])) != 0 || text[end] == '_')) {
         ++end;
     }
     return text.substr(start, end - start);
@@ -300,7 +301,7 @@ public:
 
     /** Starts the listener and blocks until it reports readiness. */
     void start(const SandboxConfig& config, const std::string& forward_url) {
-        int pipe_fds[2] = {-1, -1};
+        int pipe_fds[2] = { -1, -1 };
         if (::pipe(pipe_fds) != 0) {
             throw std::runtime_error("Could not create a pipe for the Stripe CLI listener");
         }
@@ -330,19 +331,17 @@ public:
             const std::string cli = config.cli_path;
             const std::string events = forwarded_event_types;
             std::vector<char*> args{
-                const_cast<char*>(cli.c_str()),
-                const_cast<char*>("listen"),
-                const_cast<char*>("--forward-to"),
-                const_cast<char*>(forward_url.c_str()),
-                const_cast<char*>("--events"),
-                const_cast<char*>(events.c_str()),
-                const_cast<char*>("--latest"),
-                nullptr
+                const_cast<char*>(cli.c_str()),    const_cast<char*>("listen"),
+                const_cast<char*>("--forward-to"), const_cast<char*>(forward_url.c_str()),
+                const_cast<char*>("--events"),     const_cast<char*>(events.c_str()),
+                const_cast<char*>("--latest"),     nullptr
             };
 
             ::execvp(cli.c_str(), args.data());
-            const std::string failure = "Could not start the Stripe CLI: " + std::string(std::strerror(errno));
-            [[maybe_unused]] const ssize_t ignored = ::write(STDERR_FILENO, failure.c_str(), failure.size());
+            const std::string failure =
+                "Could not start the Stripe CLI: " + std::string(std::strerror(errno));
+            [[maybe_unused]] const ssize_t ignored =
+                ::write(STDERR_FILENO, failure.c_str(), failure.size());
             ::_exit(127);
         }
 
@@ -414,9 +413,10 @@ private:
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
-        throw std::runtime_error(
-            "The Stripe CLI listener did not become ready. Check that `stripe` is installed and that "
-            "STRIPE_API_KEY is a valid sandbox key. Output so far:\n" + output());
+        throw std::runtime_error("The Stripe CLI listener did not become ready. Check that "
+                                 "`stripe` is installed and that "
+                                 "STRIPE_API_KEY is a valid sandbox key. Output so far:\n" +
+                                 output());
     }
 
     pid_t pid = -1;
@@ -435,7 +435,8 @@ SandboxConfig SandboxConfig::from_environment() {
     config.required = env_flag("STRIPEKIT_SANDBOX_REQUIRED");
     config.api_key = env_or("STRIPE_API_KEY", "");
     config.cli_path = env_or("STRIPEKIT_SANDBOX_STRIPE_CLI", "stripe");
-    config.event_timeout = std::chrono::seconds(env_int("STRIPEKIT_SANDBOX_EVENT_TIMEOUT_SECONDS", 90));
+    config.event_timeout =
+        std::chrono::seconds(env_int("STRIPEKIT_SANDBOX_EVENT_TIMEOUT_SECONDS", 90));
     config.max_api_calls = env_int("STRIPEKIT_SANDBOX_MAX_API_CALLS", 400);
     return config;
 }
@@ -448,10 +449,12 @@ std::string SandboxConfig::unavailable_reason() const {
         return "STRIPE_API_KEY is not set; provide the sandbox secret API key (sk_test_...)";
     }
     if (api_key.rfind("pk_test", 0) == 0 || api_key.rfind("pk_live", 0) == 0) {
-        return "STRIPE_API_KEY is a publishable key; provide the sandbox secret API key (sk_test_...) instead";
+        return "STRIPE_API_KEY is a publishable key; provide the sandbox secret API key "
+               "(sk_test_...) instead";
     }
     if (is_unsafe()) {
-        return "STRIPE_API_KEY is a live-mode key; the sandbox suite refuses to run against live mode";
+        return "STRIPE_API_KEY is a live-mode key; the sandbox suite refuses to run against live "
+               "mode";
     }
     return {};
 }
@@ -496,7 +499,8 @@ StripeApiResult SandboxStripeApi::get(std::string_view path) {
 StripeApiResult SandboxStripeApi::require_post(std::string_view path, const FormParams& params) {
     StripeApiResult result = post(path, params);
     if (!result.ok()) {
-        throw std::runtime_error("Stripe rejected POST " + std::string(path) + " - " + result.describe());
+        throw std::runtime_error("Stripe rejected POST " + std::string(path) + " - " +
+                                 result.describe());
     }
     return result;
 }
@@ -505,9 +509,8 @@ int SandboxStripeApi::call_count() const {
     return calls.load();
 }
 
-StripeApiResult SandboxStripeApi::send(HttpMethod method,
-                                       std::string_view path,
-                                       const FormParams& params) {
+StripeApiResult
+SandboxStripeApi::send(HttpMethod method, std::string_view path, const FormParams& params) {
     const int call_number = calls.fetch_add(1) + 1;
     if (call_number > max_calls) {
         throw std::runtime_error(
@@ -569,10 +572,7 @@ struct SandboxEnvironment::State {
         {
             std::lock_guard<std::mutex> lock(mutex);
             events.push_back(ReceivedEvent{
-                .id = event.id,
-                .type = event.type,
-                .payload_json = event.payload_json
-            });
+                .id = event.id, .type = event.type, .payload_json = event.payload_json });
         }
         sandbox_progress("Received webhook " + event.type + " (" + event.id + ")");
         arrived.notify_all();
@@ -580,16 +580,17 @@ struct SandboxEnvironment::State {
 
     void capture_delivery(std::string payload, std::string signature_header) {
         const Json::Value parsed = try_parse_json(payload);
-        CapturedDelivery delivery{
-            .event_id = parsed.isObject() ? parsed.get("id", "").asString() : std::string(),
-            .payload = std::move(payload),
-            .signature_header = std::move(signature_header)
-        };
+        CapturedDelivery delivery{ .event_id = parsed.isObject() ? parsed.get("id", "").asString()
+                                                                 : std::string(),
+                                   .payload = std::move(payload),
+                                   .signature_header = std::move(signature_header) };
 
-        const std::string event_type = parsed.isObject() ? parsed.get("type", "").asString() : std::string();
-        sandbox_progress("Captured raw webhook delivery " +
-                         (event_type.empty() ? std::string("<unknown>") : event_type) +
-                         (delivery.event_id.empty() ? std::string() : " (" + delivery.event_id + ")"));
+        const std::string event_type =
+            parsed.isObject() ? parsed.get("type", "").asString() : std::string();
+        sandbox_progress(
+            "Captured raw webhook delivery " +
+            (event_type.empty() ? std::string("<unknown>") : event_type) +
+            (delivery.event_id.empty() ? std::string() : " (" + delivery.event_id + ")"));
 
         std::lock_guard<std::mutex> lock(mutex);
         deliveries.push_back(std::move(delivery));
@@ -633,52 +634,45 @@ bool SandboxEnvironment::start() {
 
     State* shared = state.get();
 
-    ::drogon::app().registerPreRoutingAdvice(
-        std::function<void(const ::drogon::HttpRequestPtr&)>(
-            [shared](const ::drogon::HttpRequestPtr& request) {
-                if (request->path() != std::string(main_webhook_path)) {
-                    return;
-                }
-                shared->capture_delivery(std::string(request->body()),
-                                         request->getHeader("stripe-signature"));
-            }));
+    ::drogon::app().registerPreRoutingAdvice(std::function<void(const ::drogon::HttpRequestPtr&)>(
+        [shared](const ::drogon::HttpRequestPtr& request) {
+            if (request->path() != std::string(main_webhook_path)) {
+                return;
+            }
+            shared->capture_delivery(std::string(request->body()),
+                                     request->getHeader("stripe-signature"));
+        }));
 
     state->listener = std::make_unique<StripeCliListener>();
     state->listener->start(state->config, state->base_url + main_webhook_path);
 
-    stripekit::drogon::register_webhook_handler({
-        .path = main_webhook_path,
-        .endpoint_secret = state->listener->webhook_secret(),
-        .dedup_store = state->main_dedup_store,
-        .handler = [shared](const webhooks::Event& event)
-            -> Task<webhooks::ProcessResult> {
-            shared->record_event(event);
-            co_return webhooks::ProcessResult::Handled;
-        },
-        .logger = &state->progress_logger
-    });
+    stripekit::drogon::register_webhook_handler(
+        { .path = main_webhook_path,
+          .endpoint_secret = state->listener->webhook_secret(),
+          .dedup_store = state->main_dedup_store,
+          .handler = [shared](const webhooks::Event& event) -> Task<webhooks::ProcessResult> {
+              shared->record_event(event);
+              co_return webhooks::ProcessResult::Handled;
+          },
+          .logger = &state->progress_logger });
 
     // Zero timeout so a replayed delivery can reclaim the in-flight record
     // immediately, instead of waiting out the production reclaim window.
-    stripekit::drogon::register_webhook_handler({
-        .path = retry_webhook_path,
-        .endpoint_secret = state->listener->webhook_secret(),
-        .dedup_store = state->retry_dedup_store,
-        .handler = [shared](const webhooks::Event& event)
-            -> Task<webhooks::ProcessResult> {
-            if (shared->note_retry_attempt(event.id) == 1) {
-                co_return webhooks::ProcessResult::RetryableFailure;
-            }
-            co_return webhooks::ProcessResult::Handled;
-        },
-        .logger = &state->progress_logger,
-        .stale_inflight_timeout = std::chrono::minutes(0)
-    });
+    stripekit::drogon::register_webhook_handler(
+        { .path = retry_webhook_path,
+          .endpoint_secret = state->listener->webhook_secret(),
+          .dedup_store = state->retry_dedup_store,
+          .handler = [shared](const webhooks::Event& event) -> Task<webhooks::ProcessResult> {
+              if (shared->note_retry_attempt(event.id) == 1) {
+                  co_return webhooks::ProcessResult::RetryableFailure;
+              }
+              co_return webhooks::ProcessResult::Handled;
+          },
+          .logger = &state->progress_logger,
+          .stale_inflight_timeout = std::chrono::minutes(0) });
 
     ::drogon::app().addListener("127.0.0.1", state->port);
-    state->server_thread = std::thread([]() {
-        ::drogon::app().run();
-    });
+    state->server_thread = std::thread([]() { ::drogon::app().run(); });
 
     for (int i = 0; i < 300 && !::drogon::app().isRunning(); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -690,12 +684,13 @@ bool SandboxEnvironment::start() {
         return false;
     }
 
-    state->api = std::make_unique<SandboxStripeApi>(state->config.api_key, state->config.max_api_calls);
-    state->client = stripekit::drogon::make_stripe_client({.api_key = state->config.api_key});
+    state->api =
+        std::make_unique<SandboxStripeApi>(state->config.api_key, state->config.max_api_calls);
+    state->client = stripekit::drogon::make_stripe_client({ .api_key = state->config.api_key });
 
     state->running = true;
-    std::cout << "Stripe sandbox run " << state->run_id
-              << " listening on " << state->base_url << main_webhook_path << std::endl;
+    std::cout << "Stripe sandbox run " << state->run_id << " listening on " << state->base_url
+              << main_webhook_path << std::endl;
     return true;
 }
 
@@ -745,7 +740,8 @@ std::optional<ReceivedEvent> SandboxEnvironment::wait_for_event(std::string_view
             if (event.type != type) {
                 continue;
             }
-            if (!must_contain.empty() && event.payload_json.find(must_contain) == std::string::npos) {
+            if (!must_contain.empty() &&
+                event.payload_json.find(must_contain) == std::string::npos) {
                 continue;
             }
             return event;
@@ -758,7 +754,8 @@ std::optional<ReceivedEvent> SandboxEnvironment::wait_for_event(std::string_view
     const auto timeout_seconds = state->config.event_timeout.count();
     const std::string event_type(type);
     const std::string match_value = progress_value(must_contain);
-    sandbox_progress("Waiting up to " + std::to_string(timeout_seconds) + "s for webhook " + event_type +
+    sandbox_progress("Waiting up to " + std::to_string(timeout_seconds) + "s for webhook " +
+                     event_type +
                      (match_value.empty() ? std::string() : " matching " + match_value));
     while (true) {
         if (auto found = matches()) {
@@ -770,8 +767,9 @@ std::optional<ReceivedEvent> SandboxEnvironment::wait_for_event(std::string_view
         if (now >= deadline) {
             auto final_match = matches();
             if (!final_match) {
-                sandbox_progress("Timed out waiting for webhook " + event_type +
-                                 (match_value.empty() ? std::string() : " matching " + match_value));
+                sandbox_progress(
+                    "Timed out waiting for webhook " + event_type +
+                    (match_value.empty() ? std::string() : " matching " + match_value));
                 if (state->listener) {
                     const std::string cli_output = progress_tail(state->listener->output());
                     sandbox_progress(cli_output.empty()
@@ -784,7 +782,8 @@ std::optional<ReceivedEvent> SandboxEnvironment::wait_for_event(std::string_view
 
         const auto next_progress = std::min(deadline, now + std::chrono::seconds(5));
         if (state->arrived.wait_until(lock, next_progress) == std::cv_status::timeout) {
-            const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(deadline - next_progress).count();
+            const auto remaining =
+                std::chrono::duration_cast<std::chrono::seconds>(deadline - next_progress).count();
             sandbox_progress("Still waiting for webhook " + event_type + "; " +
                              std::to_string(remaining) + "s remaining");
         }
@@ -841,7 +840,8 @@ Json::Value json_path(const Json::Value& root, std::string_view dotted_path) {
     while (start <= dotted_path.size()) {
         const std::size_t separator = dotted_path.find('.', start);
         const std::string_view segment = dotted_path.substr(
-            start, separator == std::string_view::npos ? std::string_view::npos : separator - start);
+            start,
+            separator == std::string_view::npos ? std::string_view::npos : separator - start);
 
         if (!current.isObject() || !current.isMember(std::string(segment))) {
             return Json::Value();
@@ -863,44 +863,44 @@ std::string sandbox_email(const SandboxEnvironment& environment, std::string_vie
 std::string create_customer_with_card(SandboxEnvironment& environment,
                                       std::string_view test_payment_method,
                                       std::string_view label) {
-    const StripeApiResult result = environment.stripe_api().require_post("/v1/customers", {
-        {"email", sandbox_email(environment, label)},
-        {"name", "StripeKit E2E " + std::string(label)},
-        {"payment_method", std::string(test_payment_method)},
-        {"invoice_settings[default_payment_method]", std::string(test_payment_method)},
-        {"metadata[stripekit_run_id]", environment.run_id()}
-    });
+    const StripeApiResult result = environment.stripe_api().require_post(
+        "/v1/customers",
+        { { "email", sandbox_email(environment, label) },
+          { "name", "StripeKit E2E " + std::string(label) },
+          { "payment_method", std::string(test_payment_method) },
+          { "invoice_settings[default_payment_method]", std::string(test_payment_method) },
+          { "metadata[stripekit_run_id]", environment.run_id() } });
     return result.id();
 }
 
 std::string create_monthly_price(SandboxEnvironment& environment, std::int64_t amount_cents) {
-    const StripeApiResult product = environment.stripe_api().require_post("/v1/products", {
-        {"name", "StripeKit E2E Plan " + environment.run_id()},
-        {"metadata[stripekit_run_id]", environment.run_id()}
-    });
+    const StripeApiResult product = environment.stripe_api().require_post(
+        "/v1/products",
+        { { "name", "StripeKit E2E Plan " + environment.run_id() },
+          { "metadata[stripekit_run_id]", environment.run_id() } });
 
-    const StripeApiResult price = environment.stripe_api().require_post("/v1/prices", {
-        {"product", product.id()},
-        {"currency", "usd"},
-        {"unit_amount", std::to_string(amount_cents)},
-        {"recurring[interval]", "month"},
-        {"metadata[stripekit_run_id]", environment.run_id()}
-    });
+    const StripeApiResult price = environment.stripe_api().require_post(
+        "/v1/prices",
+        { { "product", product.id() },
+          { "currency", "usd" },
+          { "unit_amount", std::to_string(amount_cents) },
+          { "recurring[interval]", "month" },
+          { "metadata[stripekit_run_id]", environment.run_id() } });
     return price.id();
 }
 
 std::string create_confirmed_charge(SandboxEnvironment& environment,
                                     std::string_view test_payment_method,
                                     std::int64_t amount_cents) {
-    const StripeApiResult intent = environment.stripe_api().require_post("/v1/payment_intents", {
-        {"amount", std::to_string(amount_cents)},
-        {"currency", "usd"},
-        {"payment_method", std::string(test_payment_method)},
-        {"confirm", "true"},
-        {"automatic_payment_methods[enabled]", "true"},
-        {"automatic_payment_methods[allow_redirects]", "never"},
-        {"metadata[stripekit_run_id]", environment.run_id()}
-    });
+    const StripeApiResult intent = environment.stripe_api().require_post(
+        "/v1/payment_intents",
+        { { "amount", std::to_string(amount_cents) },
+          { "currency", "usd" },
+          { "payment_method", std::string(test_payment_method) },
+          { "confirm", "true" },
+          { "automatic_payment_methods[enabled]", "true" },
+          { "automatic_payment_methods[allow_redirects]", "never" },
+          { "metadata[stripekit_run_id]", environment.run_id() } });
 
     const Json::Value charge = json_path(intent.body, "latest_charge");
     if (!charge.isString() || charge.asString().empty()) {

@@ -1,5 +1,5 @@
 /** WebhookDedupStore.cpp
- * 
+ *
  * See header file for details.
  */
 
@@ -21,42 +21,30 @@ ClaimResult InMemoryWebhookDedupStore::claim(const ClaimRequest& request) {
     auto it = records.find(request.event_id);
     if (it == records.end()) {
         records.emplace(request.event_id,
-                        Entry{
-                            .processed = false,
-                            .claimed_at = request.now,
-                            .processed_at = std::chrono::system_clock::time_point{}
-                        });
-        return ClaimResult{
-            .outcome = ClaimOutcome::Claimed,
-            .detail = "first-seen"
-        };
+                        Entry{ .processed = false,
+                               .claimed_at = request.now,
+                               .processed_at = std::chrono::system_clock::time_point{} });
+        return ClaimResult{ .outcome = ClaimOutcome::Claimed, .detail = "first-seen" };
     }
 
     if (it->second.processed) {
-        return ClaimResult{
-            .outcome = ClaimOutcome::DuplicateProcessed,
-            .detail = "already-processed"
-        };
+        return ClaimResult{ .outcome = ClaimOutcome::DuplicateProcessed,
+                            .detail = "already-processed" };
     }
 
     const auto age = request.now - it->second.claimed_at;
     if (age >= request.stale_inflight_timeout) {
         it->second.claimed_at = request.now;
-        return ClaimResult{
-            .outcome = ClaimOutcome::Claimed,
-            .detail = "reclaimed-stale-inflight"
-        };
+        return ClaimResult{ .outcome = ClaimOutcome::Claimed,
+                            .detail = "reclaimed-stale-inflight" };
     }
 
-    return ClaimResult{
-        .outcome = ClaimOutcome::DuplicateInflight,
-        .detail = "already-claimed-inflight"
-    };
+    return ClaimResult{ .outcome = ClaimOutcome::DuplicateInflight,
+                        .detail = "already-claimed-inflight" };
 }
 
-bool InMemoryWebhookDedupStore::mark_processed(
-    std::string_view event_id,
-    std::chrono::system_clock::time_point processed_at) {
+bool InMemoryWebhookDedupStore::mark_processed(std::string_view event_id,
+                                               std::chrono::system_clock::time_point processed_at) {
     std::lock_guard<std::mutex> lock(mutex);
 
     auto it = records.find(std::string(event_id));
@@ -74,7 +62,8 @@ void InMemoryWebhookDedupStore::erase_expired(std::chrono::system_clock::time_po
     std::lock_guard<std::mutex> lock(mutex);
 
     for (auto it = records.begin(); it != records.end();) {
-        const auto reference_time = it->second.processed ? it->second.processed_at : it->second.claimed_at;
+        const auto reference_time =
+            it->second.processed ? it->second.processed_at : it->second.claimed_at;
         if (reference_time.time_since_epoch().count() > 0 && (now - reference_time) >= retention) {
             it = records.erase(it);
             continue;

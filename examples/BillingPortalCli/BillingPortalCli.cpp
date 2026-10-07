@@ -47,11 +47,11 @@ int main() {
             throw std::runtime_error("STRIPE_SECRET_KEY must begin with sk_test_.");
         }
 
-        auto client = stripekit::drogon::make_stripe_client({.api_key = api_key});
+        auto client = stripekit::drogon::make_stripe_client({ .api_key = api_key });
         auto task = client->billing_portal().sessions().create_async(
             stripekit::CreateBillingPortalSessionRequest{
                 .customer_id = require_env("STRIPE_CUSTOMER_ID"),
-                .return_url = require_env("STRIPE_RETURN_URL")
+                .return_url = require_env("STRIPE_RETURN_URL"),
             },
             options());
 

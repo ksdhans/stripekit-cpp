@@ -28,11 +28,14 @@ before_script:
   # Drogon's bundled FindJsoncpp.cmake module only searches the system, not FetchContent output.
   - apt-get install -y --no-install-recommends libjsoncpp-dev
 
-verify:format-and-lint-placeholder:
+verify:format:
   stage: verify
   cache: []
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends clang-format-14
   script:
-    - 'echo "Phase 1 placeholder: add formatting/lint checks in later phases"'
+    - find include src tests examples -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0 | xargs -0 clang-format-14 --dry-run --Werror
 
 build:cmake:
   stage: build

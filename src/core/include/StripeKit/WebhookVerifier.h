@@ -1,9 +1,9 @@
 /** WebhookVerifier.h
- * 
+ *
  * Stripe webhook signature verification interfaces and default verifier.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 

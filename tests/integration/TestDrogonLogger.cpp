@@ -1,5 +1,5 @@
 /** TestDrogonLogger.cpp
- * 
+ *
  * Integration tests for Drogon logger bridge and log level threshold filtering.
  */
 
@@ -30,13 +30,11 @@ TEST(DrogonLoggerTest, LogBridgeRespectsThresholdLevels) {
 TEST(DrogonLoggerTest, LogBridgeEmitsFormattedLogEntriesWithoutCrashing) {
     stripekit::drogon::LogBridge logger(LogLevel::Trace);
 
-    LogContext context{
-        .request_id = "req_log_test_1",
-        .event_id = "evt_log_test_2",
-        .webhook_type = "invoice.paid",
-        .retry_attempt = 1,
-        .adapter_name = "drogon"
-    };
+    LogContext context{ .request_id = "req_log_test_1",
+                        .event_id = "evt_log_test_2",
+                        .webhook_type = "invoice.paid",
+                        .retry_attempt = 1,
+                        .adapter_name = "drogon" };
 
     EXPECT_NO_THROW({
         logger.log(LogLevel::Info, "Testing integration log message", context);

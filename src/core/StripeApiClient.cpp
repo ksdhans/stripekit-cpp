@@ -113,8 +113,8 @@ std::string url_encode(std::string_view value) {
     output << std::hex << std::uppercase;
 
     for (const unsigned char character : value) {
-        if (std::isalnum(character) || character == '-' || character == '_' ||
-            character == '.' || character == '~') {
+        if (std::isalnum(character) || character == '-' || character == '_' || character == '.' ||
+            character == '~') {
             output << character;
         } else {
             output << '%' << std::setw(2) << static_cast<int>(character);
@@ -132,21 +132,17 @@ void append_form_value(std::string& body, std::string_view name, std::string_vie
     body += url_encode(value);
 }
 
-void append_metadata(std::string& body, const std::unordered_map<std::string, std::string>& metadata) {
+void append_metadata(std::string& body,
+                     const std::unordered_map<std::string, std::string>& metadata) {
     for (const auto& [key, value] : metadata) {
         append_form_value(body, "metadata[" + key + "]", value);
     }
 }
 
-HttpRequest make_request(HttpMethod method,
-                         std::string path,
-                         std::string body,
-                         const RequestOptions& options) {
+HttpRequest
+make_request(HttpMethod method, std::string path, std::string body, const RequestOptions& options) {
     HttpRequest request{
-        .method = method,
-        .path = std::move(path),
-        .body = std::move(body),
-        .options = options
+        .method = method, .path = std::move(path), .body = std::move(body), .options = options
     };
 
     request.headers.emplace("Accept", "application/json");
@@ -177,11 +173,14 @@ std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
         append_form_value(body, "line_items[0][price]", request.price_id);
     } else {
         append_form_value(body, "line_items[0][price_data][currency]", request.currency);
-        append_form_value(body, "line_items[0][price_data][unit_amount]", std::to_string(request.unit_amount));
+        append_form_value(
+            body, "line_items[0][price_data][unit_amount]", std::to_string(request.unit_amount));
         if (session_mode == "subscription" && !request.recurring_interval.empty()) {
-            append_form_value(body, "line_items[0][price_data][recurring][interval]", request.recurring_interval);
+            append_form_value(
+                body, "line_items[0][price_data][recurring][interval]", request.recurring_interval);
         }
-        append_form_value(body, "line_items[0][price_data][product_data][name]", request.product_name);
+        append_form_value(
+            body, "line_items[0][price_data][product_data][name]", request.product_name);
     }
     append_form_value(body, "line_items[0][quantity]", std::to_string(request.quantity));
     append_form_value(body, "success_url", request.success_url);
@@ -216,40 +215,42 @@ void send_and_parse(HTTPClient& http_client,
                     HttpRequest request,
                     TParser parser,
                     TCompletion completion) {
-    auto once_completion = std::make_shared<OnceCallback<CallbackResult<TResult>>>(std::move(completion));
+    auto once_completion =
+        std::make_shared<OnceCallback<CallbackResult<TResult>>>(std::move(completion));
     if (!callback_lifetime->acquire()) {
-        once_completion->invoke(std::make_exception_ptr(
-            StripeKitException("Stripe API client is shutting down")));
+        once_completion->invoke(
+            std::make_exception_ptr(StripeKitException("Stripe API client is shutting down")));
         return;
     }
 
     try {
-        http_client.send(request, [callback_lifetime, once_completion, &response_parser,
-                                   parser = std::move(parser)](
-                                      std::variant<HttpResponse, std::exception_ptr> result) mutable {
-            CallbackLifetimeLease lease(callback_lifetime);
-            try {
-                if (const auto* error = std::get_if<std::exception_ptr>(&result)) {
+        http_client.send(
+            request,
+            [callback_lifetime, once_completion, &response_parser, parser = std::move(parser)](
+                std::variant<HttpResponse, std::exception_ptr> result) mutable {
+                CallbackLifetimeLease lease(callback_lifetime);
+                try {
+                    if (const auto* error = std::get_if<std::exception_ptr>(&result)) {
+                        lease.release();
+                        once_completion->invoke(*error);
+                        return;
+                    }
+                    const auto& response = std::get<HttpResponse>(result);
+                    if (!is_success(response)) {
+                        auto error = std::make_exception_ptr(
+                            StripeApiException(response_parser.parse_error(response)));
+                        lease.release();
+                        once_completion->invoke(error);
+                        return;
+                    }
+                    auto parsed = parser(response_parser, response);
                     lease.release();
-                    once_completion->invoke(*error);
-                    return;
-                }
-                const auto& response = std::get<HttpResponse>(result);
-                if (!is_success(response)) {
-                    auto error = std::make_exception_ptr(
-                        StripeApiException(response_parser.parse_error(response)));
+                    once_completion->invoke(std::move(parsed));
+                } catch (...) {
                     lease.release();
-                    once_completion->invoke(error);
-                    return;
+                    once_completion->invoke(std::current_exception());
                 }
-                auto parsed = parser(response_parser, response);
-                lease.release();
-                once_completion->invoke(std::move(parsed));
-            } catch (...) {
-                lease.release();
-                once_completion->invoke(std::current_exception());
-            }
-        });
+            });
     } catch (...) {
         callback_lifetime->release();
         once_completion->invoke(std::current_exception());
@@ -260,12 +261,15 @@ void send_and_parse(HTTPClient& http_client,
 
 Customer JsonStripeResponseParser::parse_customer(const HttpResponse& response) const {
     const auto object = json_value::parse(response.body);
-    return Customer{.id = json_value::string(object, "id"), .email = json_value::string(object, "email"),
-                    .name = json_value::string(object, "name"), .livemode = json_value::boolean(object, "livemode"),
-                    .metadata = metadata_value(object)};
+    return Customer{ .id = json_value::string(object, "id"),
+                     .email = json_value::string(object, "email"),
+                     .name = json_value::string(object, "name"),
+                     .livemode = json_value::boolean(object, "livemode"),
+                     .metadata = metadata_value(object) };
 }
 
-CheckoutSession JsonStripeResponseParser::parse_checkout_session(const HttpResponse& response) const {
+CheckoutSession
+JsonStripeResponseParser::parse_checkout_session(const HttpResponse& response) const {
     const auto object = json_value::parse(response.body);
     const auto string_or_object_id = [](const Json::Value& obj, const char* name) -> std::string {
         if (!obj.isObject() || !obj.isMember(name)) {
@@ -281,43 +285,52 @@ CheckoutSession JsonStripeResponseParser::parse_checkout_session(const HttpRespo
         return {};
     };
 
-    return CheckoutSession{
+    return CheckoutSession{ .id = json_value::string(object, "id"),
+                            .customer_id = string_or_object_id(object, "customer"),
+                            .subscription_id = string_or_object_id(object, "subscription"),
+                            .payment_intent_id = string_or_object_id(object, "payment_intent"),
+                            .status = json_value::string(object, "status"),
+                            .mode = json_value::string(object, "mode"),
+                            .url = json_value::string(object, "url"),
+                            .currency = json_value::string(object, "currency"),
+                            .amount_total = json_value::integer(object, "amount_total"),
+                            .livemode = json_value::boolean(object, "livemode"),
+                            .metadata = metadata_value(object) };
+}
+
+Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& response) const {
+    const auto object = json_value::parse(response.body);
+    return Subscription{
         .id = json_value::string(object, "id"),
-        .customer_id = string_or_object_id(object, "customer"),
-        .subscription_id = string_or_object_id(object, "subscription"),
-        .payment_intent_id = string_or_object_id(object, "payment_intent"),
+        .customer_id = json_value::string(object, "customer"),
         .status = json_value::string(object, "status"),
-        .mode = json_value::string(object, "mode"),
-        .url = json_value::string(object, "url"),
-        .currency = json_value::string(object, "currency"),
-        .amount_total = json_value::integer(object, "amount_total"),
+        .current_period_start_unix = json_value::integer(object, "current_period_start"),
+        .current_period_end_unix = json_value::integer(object, "current_period_end"),
+        .cancel_at_period_end = json_value::boolean(object, "cancel_at_period_end"),
         .livemode = json_value::boolean(object, "livemode"),
         .metadata = metadata_value(object)
     };
 }
 
-Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& response) const {
+BillingPortalSession
+JsonStripeResponseParser::parse_billing_portal_session(const HttpResponse& response) const {
     const auto object = json_value::parse(response.body);
-    return Subscription{.id = json_value::string(object, "id"), .customer_id = json_value::string(object, "customer"),
-        .status = json_value::string(object, "status"), .current_period_start_unix = json_value::integer(object, "current_period_start"),
-        .current_period_end_unix = json_value::integer(object, "current_period_end"),
-        .cancel_at_period_end = json_value::boolean(object, "cancel_at_period_end"),
-        .livemode = json_value::boolean(object, "livemode"), .metadata = metadata_value(object)};
-}
-
-BillingPortalSession JsonStripeResponseParser::parse_billing_portal_session(const HttpResponse& response) const {
-    const auto object = json_value::parse(response.body);
-    return BillingPortalSession{.id = json_value::string(object, "id"), .customer_id = json_value::string(object, "customer"),
-        .url = json_value::string(object, "url"), .return_url = json_value::string(object, "return_url"),
-        .created_unix = json_value::integer(object, "created"), .livemode = json_value::boolean(object, "livemode")};
+    return BillingPortalSession{ .id = json_value::string(object, "id"),
+                                 .customer_id = json_value::string(object, "customer"),
+                                 .url = json_value::string(object, "url"),
+                                 .return_url = json_value::string(object, "return_url"),
+                                 .created_unix = json_value::integer(object, "created"),
+                                 .livemode = json_value::boolean(object, "livemode") };
 }
 
 StripeErrorPayload JsonStripeResponseParser::parse_error(const HttpResponse& response) const {
     const auto root = json_value::parse(response.body);
     const auto& error = root["error"];
-    StripeErrorPayload payload{.type = error_type(json_value::string(error, "type")), .code = json_value::string(error, "code"),
-        .message = json_value::string(error, "message"), .http_status = response.status_code,
-        .retryable = retryable_status(response.status_code)};
+    StripeErrorPayload payload{ .type = error_type(json_value::string(error, "type")),
+                                .code = json_value::string(error, "code"),
+                                .message = json_value::string(error, "message"),
+                                .http_status = response.status_code,
+                                .retryable = retryable_status(response.status_code) };
     const auto request_id = response.headers.find("request-id");
     if (request_id != response.headers.end()) {
         payload.request_id = request_id->second;
@@ -330,13 +343,16 @@ StripeErrorPayload JsonStripeResponseParser::parse_error(const HttpResponse& res
 
 StripeApiClient::CustomerOperations::CustomerOperations(StripeApiClient& owner) : owner(owner) {}
 
-Task<Customer> StripeApiClient::CustomerOperations::create_async(const CreateCustomerRequest& request,
-                                                                 const RequestOptions& options) {
+Task<Customer>
+StripeApiClient::CustomerOperations::create_async(const CreateCustomerRequest& request,
+                                                  const RequestOptions& options) {
     std::string body;
     append_form_value(body, "email", request.email);
     append_form_value(body, "name", request.name);
     append_metadata(body, request.metadata);
-    return send_and_parse_async<Customer>(owner.http_client, owner.response_parser,
+    return send_and_parse_async<Customer>(
+        owner.http_client,
+        owner.response_parser,
         make_request(HttpMethod::Post, "/v1/customers", std::move(body), options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_customer(response);
@@ -350,16 +366,22 @@ void StripeApiClient::CustomerOperations::create(const CreateCustomerRequest& re
     append_form_value(body, "email", request.email);
     append_form_value(body, "name", request.name);
     append_metadata(body, request.metadata);
-    send_and_parse<Customer>(owner.http_client, owner.response_parser, owner.callback_lifetime,
+    send_and_parse<Customer>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
         make_request(HttpMethod::Post, "/v1/customers", std::move(body), options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_customer(response);
-        }, std::move(completion));
+        },
+        std::move(completion));
 }
 
 Task<Customer> StripeApiClient::CustomerOperations::retrieve_async(std::string customer_id,
                                                                    const RequestOptions& options) {
-    return send_and_parse_async<Customer>(owner.http_client, owner.response_parser,
+    return send_and_parse_async<Customer>(
+        owner.http_client,
+        owner.response_parser,
         make_request(HttpMethod::Get, "/v1/customers/" + url_encode(customer_id), {}, options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_customer(response);
@@ -369,20 +391,27 @@ Task<Customer> StripeApiClient::CustomerOperations::retrieve_async(std::string c
 void StripeApiClient::CustomerOperations::retrieve(std::string customer_id,
                                                    const RequestOptions& options,
                                                    RetrieveCompletion completion) {
-    send_and_parse<Customer>(owner.http_client, owner.response_parser, owner.callback_lifetime,
+    send_and_parse<Customer>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
         make_request(HttpMethod::Get, "/v1/customers/" + url_encode(customer_id), {}, options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_customer(response);
-        }, std::move(completion));
+        },
+        std::move(completion));
 }
 
-StripeApiClient::CheckoutSessionOperations::CheckoutSessionOperations(StripeApiClient& owner) : owner(owner) {}
+StripeApiClient::CheckoutSessionOperations::CheckoutSessionOperations(StripeApiClient& owner)
+    : owner(owner) {}
 
 Task<CheckoutSession> StripeApiClient::CheckoutSessionOperations::create_async(
-    const CreateCheckoutSessionRequest& request,
-    const RequestOptions& options) {
-    return send_and_parse_async<CheckoutSession>(owner.http_client, owner.response_parser,
-        make_request(HttpMethod::Post, "/v1/checkout/sessions", checkout_session_body(request), options),
+    const CreateCheckoutSessionRequest& request, const RequestOptions& options) {
+    return send_and_parse_async<CheckoutSession>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(
+            HttpMethod::Post, "/v1/checkout/sessions", checkout_session_body(request), options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_checkout_session(response);
         });
@@ -391,11 +420,16 @@ Task<CheckoutSession> StripeApiClient::CheckoutSessionOperations::create_async(
 void StripeApiClient::CheckoutSessionOperations::create(const CreateCheckoutSessionRequest& request,
                                                         const RequestOptions& options,
                                                         CreateCompletion completion) {
-    send_and_parse<CheckoutSession>(owner.http_client, owner.response_parser, owner.callback_lifetime,
-        make_request(HttpMethod::Post, "/v1/checkout/sessions", checkout_session_body(request), options),
+    send_and_parse<CheckoutSession>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        make_request(
+            HttpMethod::Post, "/v1/checkout/sessions", checkout_session_body(request), options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_checkout_session(response);
-        }, std::move(completion));
+        },
+        std::move(completion));
 }
 
 StripeApiClient::CheckoutOperations::CheckoutOperations(StripeApiClient& owner) : owner(owner) {}
@@ -404,12 +438,17 @@ CheckoutSessions& StripeApiClient::CheckoutOperations::sessions() {
     return owner.checkout_session_operations;
 }
 
-StripeApiClient::SubscriptionOperations::SubscriptionOperations(StripeApiClient& owner) : owner(owner) {}
+StripeApiClient::SubscriptionOperations::SubscriptionOperations(StripeApiClient& owner)
+    : owner(owner) {}
 
-Task<Subscription> StripeApiClient::SubscriptionOperations::retrieve_async(std::string subscription_id,
-                                                                           const RequestOptions& options) {
-    return send_and_parse_async<Subscription>(owner.http_client, owner.response_parser,
-        make_request(HttpMethod::Get, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
+Task<Subscription>
+StripeApiClient::SubscriptionOperations::retrieve_async(std::string subscription_id,
+                                                        const RequestOptions& options) {
+    return send_and_parse_async<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(
+            HttpMethod::Get, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_subscription(response);
         });
@@ -418,17 +457,26 @@ Task<Subscription> StripeApiClient::SubscriptionOperations::retrieve_async(std::
 void StripeApiClient::SubscriptionOperations::retrieve(std::string subscription_id,
                                                        const RequestOptions& options,
                                                        RetrieveCompletion completion) {
-    send_and_parse<Subscription>(owner.http_client, owner.response_parser, owner.callback_lifetime,
-        make_request(HttpMethod::Get, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
+    send_and_parse<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        make_request(
+            HttpMethod::Get, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_subscription(response);
-        }, std::move(completion));
+        },
+        std::move(completion));
 }
 
-Task<Subscription> StripeApiClient::SubscriptionOperations::cancel_async(std::string subscription_id,
-                                                                         const RequestOptions& options) {
-    return send_and_parse_async<Subscription>(owner.http_client, owner.response_parser,
-        make_request(HttpMethod::Delete, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
+Task<Subscription>
+StripeApiClient::SubscriptionOperations::cancel_async(std::string subscription_id,
+                                                      const RequestOptions& options) {
+    return send_and_parse_async<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(
+            HttpMethod::Delete, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_subscription(response);
         });
@@ -437,21 +485,31 @@ Task<Subscription> StripeApiClient::SubscriptionOperations::cancel_async(std::st
 void StripeApiClient::SubscriptionOperations::cancel(std::string subscription_id,
                                                      const RequestOptions& options,
                                                      CancelCompletion completion) {
-    send_and_parse<Subscription>(owner.http_client, owner.response_parser, owner.callback_lifetime,
-        make_request(HttpMethod::Delete, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
+    send_and_parse<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        make_request(
+            HttpMethod::Delete, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_subscription(response);
-        }, std::move(completion));
+        },
+        std::move(completion));
 }
 
-StripeApiClient::BillingPortalSessionOperations::BillingPortalSessionOperations(StripeApiClient& owner)
+StripeApiClient::BillingPortalSessionOperations::BillingPortalSessionOperations(
+    StripeApiClient& owner)
     : owner(owner) {}
 
 Task<BillingPortalSession> StripeApiClient::BillingPortalSessionOperations::create_async(
-    const CreateBillingPortalSessionRequest& request,
-    const RequestOptions& options) {
-    return send_and_parse_async<BillingPortalSession>(owner.http_client, owner.response_parser,
-        make_request(HttpMethod::Post, "/v1/billing_portal/sessions", billing_portal_session_body(request), options),
+    const CreateBillingPortalSessionRequest& request, const RequestOptions& options) {
+    return send_and_parse_async<BillingPortalSession>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post,
+                     "/v1/billing_portal/sessions",
+                     billing_portal_session_body(request),
+                     options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_billing_portal_session(response);
         });
@@ -461,41 +519,40 @@ void StripeApiClient::BillingPortalSessionOperations::create(
     const CreateBillingPortalSessionRequest& request,
     const RequestOptions& options,
     CreateCompletion completion) {
-    send_and_parse<BillingPortalSession>(owner.http_client, owner.response_parser, owner.callback_lifetime,
-        make_request(HttpMethod::Post, "/v1/billing_portal/sessions", billing_portal_session_body(request), options),
+    send_and_parse<BillingPortalSession>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        make_request(HttpMethod::Post,
+                     "/v1/billing_portal/sessions",
+                     billing_portal_session_body(request),
+                     options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_billing_portal_session(response);
-        }, std::move(completion));
+        },
+        std::move(completion));
 }
 
-StripeApiClient::BillingPortalOperations::BillingPortalOperations(StripeApiClient& owner) : owner(owner) {}
+StripeApiClient::BillingPortalOperations::BillingPortalOperations(StripeApiClient& owner)
+    : owner(owner) {}
 
 BillingPortalSessions& StripeApiClient::BillingPortalOperations::sessions() {
     return owner.billing_portal_session_operations;
 }
 
 StripeApiClient::StripeApiClient(HTTPClient& http_client)
-    : http_client(http_client),
-      default_response_parser(),
-      response_parser(default_response_parser),
-    callback_lifetime(std::make_shared<CallbackLifetime>()),
-      customer_operations(*this),
-      checkout_session_operations(*this),
-      checkout_operations(*this),
-      subscription_operations(*this),
-      billing_portal_session_operations(*this),
+    : http_client(http_client), default_response_parser(), response_parser(default_response_parser),
+      callback_lifetime(std::make_shared<CallbackLifetime>()), customer_operations(*this),
+      checkout_session_operations(*this), checkout_operations(*this),
+      subscription_operations(*this), billing_portal_session_operations(*this),
       billing_portal_operations(*this) {}
 
-StripeApiClient::StripeApiClient(HTTPClient& http_client, const StripeResponseParser& response_parser)
-    : http_client(http_client),
-      default_response_parser(),
-      response_parser(response_parser),
-    callback_lifetime(std::make_shared<CallbackLifetime>()),
-      customer_operations(*this),
-      checkout_session_operations(*this),
-      checkout_operations(*this),
-      subscription_operations(*this),
-      billing_portal_session_operations(*this),
+StripeApiClient::StripeApiClient(HTTPClient& http_client,
+                                 const StripeResponseParser& response_parser)
+    : http_client(http_client), default_response_parser(), response_parser(response_parser),
+      callback_lifetime(std::make_shared<CallbackLifetime>()), customer_operations(*this),
+      checkout_session_operations(*this), checkout_operations(*this),
+      subscription_operations(*this), billing_portal_session_operations(*this),
       billing_portal_operations(*this) {}
 
 StripeApiClient::~StripeApiClient() {

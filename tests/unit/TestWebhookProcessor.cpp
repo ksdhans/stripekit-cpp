@@ -1,5 +1,5 @@
 /** TestWebhookProcessor.cpp
- * 
+ *
  * Unit tests for webhook processor orchestration and event dispatching.
  */
 
@@ -52,12 +52,10 @@ TEST_F(WebhookProcessorTest, ProcessValidDeliveryHandled) {
 
     WebhookProcessor processor(store, dispatcher, &logger);
 
-    const WebhookVerificationInput input{
-        .payload = payload,
-        .stripe_signature_header = valid_header,
-        .endpoint_secret = secret,
-        .now = now
-    };
+    const WebhookVerificationInput input{ .payload = payload,
+                                          .stripe_signature_header = valid_header,
+                                          .endpoint_secret = secret,
+                                          .now = now };
 
     const WebhookResponseAction action = processor.process(input, "deliv_123");
     EXPECT_EQ(action, WebhookResponseAction::AcknowledgeSuccess);
@@ -77,12 +75,10 @@ TEST_F(WebhookProcessorTest, ProcessValidDeliveryIgnored) {
 
     WebhookProcessor processor(store, dispatcher);
 
-    const WebhookVerificationInput input{
-        .payload = payload,
-        .stripe_signature_header = valid_header,
-        .endpoint_secret = secret,
-        .now = now
-    };
+    const WebhookVerificationInput input{ .payload = payload,
+                                          .stripe_signature_header = valid_header,
+                                          .endpoint_secret = secret,
+                                          .now = now };
 
     const WebhookResponseAction action = processor.process(input);
     EXPECT_EQ(action, WebhookResponseAction::AcknowledgeSuccess);
@@ -96,12 +92,10 @@ TEST_F(WebhookProcessorTest, ProcessValidDeliveryRetryableFailure) {
 
     WebhookProcessor processor(store, dispatcher);
 
-    const WebhookVerificationInput input{
-        .payload = payload,
-        .stripe_signature_header = valid_header,
-        .endpoint_secret = secret,
-        .now = now
-    };
+    const WebhookVerificationInput input{ .payload = payload,
+                                          .stripe_signature_header = valid_header,
+                                          .endpoint_secret = secret,
+                                          .now = now };
 
     const WebhookResponseAction action = processor.process(input);
     EXPECT_EQ(action, WebhookResponseAction::RetryLater);
@@ -114,12 +108,10 @@ TEST_F(WebhookProcessorTest, ProcessValidDeliveryFatalFailure) {
 
     WebhookProcessor processor(store, dispatcher);
 
-    const WebhookVerificationInput input{
-        .payload = payload,
-        .stripe_signature_header = valid_header,
-        .endpoint_secret = secret,
-        .now = now
-    };
+    const WebhookVerificationInput input{ .payload = payload,
+                                          .stripe_signature_header = valid_header,
+                                          .endpoint_secret = secret,
+                                          .now = now };
 
     const WebhookResponseAction action = processor.process(input);
     EXPECT_EQ(action, WebhookResponseAction::RetryLater);
@@ -132,12 +124,10 @@ TEST_F(WebhookProcessorTest, ProcessDuplicateDeliveryDoesNotDispatch) {
 
     WebhookProcessor processor(store, dispatcher);
 
-    const WebhookVerificationInput input{
-        .payload = payload,
-        .stripe_signature_header = valid_header,
-        .endpoint_secret = secret,
-        .now = now
-    };
+    const WebhookVerificationInput input{ .payload = payload,
+                                          .stripe_signature_header = valid_header,
+                                          .endpoint_secret = secret,
+                                          .now = now };
 
     // First call: handled and marked processed
     EXPECT_EQ(processor.process(input), WebhookResponseAction::AcknowledgeSuccess);
@@ -154,16 +144,13 @@ TEST_F(WebhookProcessorTest, ProcessInvalidSignatureThrows) {
 
     WebhookProcessor processor(store, dispatcher);
 
-    const WebhookVerificationInput input{
-        .payload = payload,
-        .stripe_signature_header = "t=1700000000,v1=invalid_signature",
-        .endpoint_secret = secret,
-        .now = now
-    };
+    const WebhookVerificationInput input{ .payload = payload,
+                                          .stripe_signature_header =
+                                              "t=1700000000,v1=invalid_signature",
+                                          .endpoint_secret = secret,
+                                          .now = now };
 
-    EXPECT_THROW({
-        processor.process(input);
-    }, SignatureVerificationException);
+    EXPECT_THROW({ processor.process(input); }, SignatureVerificationException);
 
     EXPECT_TRUE(dispatcher.get_recorded_signals().empty());
 }

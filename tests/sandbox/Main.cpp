@@ -29,8 +29,8 @@ int main(int argc, char* argv[]) {
 
     try {
         if (!environment.start()) {
-            const std::string skip_message = "[  SKIPPED ] Stripe sandbox E2E tests: " +
-                                             environment.unavailable_reason();
+            const std::string skip_message =
+                "[  SKIPPED ] Stripe sandbox E2E tests: " + environment.unavailable_reason();
             std::cout << skip_message << std::endl;
             stripekit::testing::append_test_progress(skip_message);
             std::cout << "See tests/sandbox/README.md for setup instructions." << std::endl;
@@ -39,8 +39,8 @@ int main(int argc, char* argv[]) {
             return (config.required || config.is_unsafe()) ? 1 : 0;
         }
     } catch (const std::exception& error) {
-        const std::string failure_message = "Could not start the Stripe sandbox environment: " +
-                                            std::string(error.what());
+        const std::string failure_message =
+            "Could not start the Stripe sandbox environment: " + std::string(error.what());
         std::cerr << failure_message << std::endl;
         stripekit::testing::append_test_progress(failure_message);
         return 1;

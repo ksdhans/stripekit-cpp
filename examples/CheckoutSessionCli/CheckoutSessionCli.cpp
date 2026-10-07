@@ -29,7 +29,8 @@ std::string require_env(const char* name) {
 /** Returns an environment variable, or a fallback when it is not set. */
 std::string env_or(const char* name, std::string fallback) {
     const char* value = std::getenv(name);
-    return value == nullptr || std::string_view(value).empty() ? std::move(fallback) : std::string(value);
+    return value == nullptr || std::string_view(value).empty() ? std::move(fallback)
+                                                               : std::string(value);
 }
 
 /** Builds request options shared by this example's Stripe API call. */
@@ -55,12 +56,13 @@ int main() {
 
         const std::string customer_id = require_env("STRIPE_CUSTOMER_ID");
         const std::string price_id = require_env("STRIPE_PRICE_ID");
-        const std::string return_base_url = env_or("STRIPE_RETURN_BASE_URL", env_or("STRIPE_RETURN_DOMAIN", ""));
+        const std::string return_base_url =
+            env_or("STRIPE_RETURN_BASE_URL", env_or("STRIPE_RETURN_DOMAIN", ""));
         if (return_base_url.empty()) {
             throw std::runtime_error("Set STRIPE_RETURN_BASE_URL");
         }
 
-        auto client = stripekit::drogon::make_stripe_client({.api_key = api_key});
+        auto client = stripekit::drogon::make_stripe_client({ .api_key = api_key });
         auto task = client->checkout().sessions().create_async(
             stripekit::CreateCheckoutSessionRequest{
                 .customer_id = customer_id,
@@ -68,8 +70,7 @@ int main() {
                 .success_url = return_base_url + "/success?session_id={CHECKOUT_SESSION_ID}",
                 .cancel_url = return_base_url + "/cancel",
                 .quantity = 1,
-                .metadata = {{"example", "checkout-session-cli"}}
-            },
+                .metadata = { { "example", "checkout-session-cli" } } },
             options());
 
         const stripekit::CheckoutSession session = task.result();

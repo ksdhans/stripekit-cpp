@@ -1,11 +1,11 @@
 /** TestSqliteWebhookDedupStore.cpp
- * 
+ *
  * Unit tests for SQLite-backed webhook de-duplication store.
  */
 
-#include "TestFramework.h"
 #include "StripeKit/Errors.h"
 #include "StripeKit/SqliteWebhookDedupStore.h"
+#include "TestFramework.h"
 
 #include <chrono>
 #include <string>
@@ -33,11 +33,9 @@ TEST_F(SqliteWebhookDedupStoreTest, AvailabilityCheck) {
 TEST_F(SqliteWebhookDedupStoreTest, InMemoryClaimAndDedupFlow) {
     SqliteWebhookDedupStore store(":memory:");
 
-    const ClaimRequest request{
-        .event_id = "evt_sqlite_1",
-        .now = now,
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest request{ .event_id = "evt_sqlite_1",
+                                .now = now,
+                                .stale_inflight_timeout = std::chrono::minutes(15) };
 
     // First claim
     const ClaimResult first_result = store.claim(request);
@@ -69,28 +67,22 @@ TEST_F(SqliteWebhookDedupStoreTest, MarkProcessedUnknownEventReturnsFalse) {
 TEST_F(SqliteWebhookDedupStoreTest, StaleInflightIsReclaimed) {
     SqliteWebhookDedupStore store(":memory:");
 
-    const ClaimRequest initial_request{
-        .event_id = "evt_sqlite_stale",
-        .now = now,
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest initial_request{ .event_id = "evt_sqlite_stale",
+                                        .now = now,
+                                        .stale_inflight_timeout = std::chrono::minutes(15) };
 
     EXPECT_EQ(store.claim(initial_request).outcome, ClaimOutcome::Claimed);
 
     // 14 min later: still in-flight
-    const ClaimRequest check_inflight{
-        .event_id = "evt_sqlite_stale",
-        .now = now + std::chrono::minutes(14),
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest check_inflight{ .event_id = "evt_sqlite_stale",
+                                       .now = now + std::chrono::minutes(14),
+                                       .stale_inflight_timeout = std::chrono::minutes(15) };
     EXPECT_EQ(store.claim(check_inflight).outcome, ClaimOutcome::DuplicateInflight);
 
     // 15 min later: reclaimed
-    const ClaimRequest check_reclaimed{
-        .event_id = "evt_sqlite_stale",
-        .now = now + std::chrono::minutes(15),
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest check_reclaimed{ .event_id = "evt_sqlite_stale",
+                                        .now = now + std::chrono::minutes(15),
+                                        .stale_inflight_timeout = std::chrono::minutes(15) };
     const ClaimResult reclaimed = store.claim(check_reclaimed);
     EXPECT_EQ(reclaimed.outcome, ClaimOutcome::Claimed);
     EXPECT_TRUE(reclaimed.should_process());
@@ -100,19 +92,15 @@ TEST_F(SqliteWebhookDedupStoreTest, StaleInflightIsReclaimed) {
 TEST_F(SqliteWebhookDedupStoreTest, EraseExpiredPurgesOldEntries) {
     SqliteWebhookDedupStore store(":memory:");
 
-    const ClaimRequest old_req{
-        .event_id = "evt_old",
-        .now = now,
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest old_req{ .event_id = "evt_old",
+                                .now = now,
+                                .stale_inflight_timeout = std::chrono::minutes(15) };
     store.claim(old_req);
     store.mark_processed("evt_old", now);
 
-    const ClaimRequest fresh_req{
-        .event_id = "evt_fresh",
-        .now = now + std::chrono::hours(20),
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest fresh_req{ .event_id = "evt_fresh",
+                                  .now = now + std::chrono::hours(20),
+                                  .stale_inflight_timeout = std::chrono::minutes(15) };
     store.claim(fresh_req);
     store.mark_processed("evt_fresh", now + std::chrono::hours(20));
 
@@ -120,26 +108,24 @@ TEST_F(SqliteWebhookDedupStoreTest, EraseExpiredPurgesOldEntries) {
     store.erase_expired(now + std::chrono::hours(25), std::chrono::hours(24));
 
     // Old event is deleted, so claiming succeeds as first-seen
-    const ClaimResult reclaim_old = store.claim(ClaimRequest{
-        .event_id = "evt_old",
-        .now = now + std::chrono::hours(25),
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    });
+    const ClaimResult reclaim_old =
+        store.claim(ClaimRequest{ .event_id = "evt_old",
+                                  .now = now + std::chrono::hours(25),
+                                  .stale_inflight_timeout = std::chrono::minutes(15) });
     EXPECT_EQ(reclaim_old.outcome, ClaimOutcome::Claimed);
     EXPECT_EQ(reclaim_old.detail, "first-seen");
 
     // Fresh event is kept
-    const ClaimResult check_fresh = store.claim(ClaimRequest{
-        .event_id = "evt_fresh",
-        .now = now + std::chrono::hours(25),
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    });
+    const ClaimResult check_fresh =
+        store.claim(ClaimRequest{ .event_id = "evt_fresh",
+                                  .now = now + std::chrono::hours(25),
+                                  .stale_inflight_timeout = std::chrono::minutes(15) });
     EXPECT_EQ(check_fresh.outcome, ClaimOutcome::DuplicateProcessed);
 }
 
 TEST_F(SqliteWebhookDedupStoreTest, InvalidPathThrowsConfigurationException) {
-    EXPECT_THROW({
-        SqliteWebhookDedupStore store("/nonexistent_directory_for_test/database.sqlite3");
-    }, ConfigurationException);
+    EXPECT_THROW(
+        { SqliteWebhookDedupStore store("/nonexistent_directory_for_test/database.sqlite3"); },
+        ConfigurationException);
 }
 #endif

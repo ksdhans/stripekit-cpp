@@ -1,9 +1,9 @@
 /** Callback.h
- * 
+ *
  * Callback compatibility helpers for exactly-once completion semantics.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 
@@ -48,9 +48,7 @@ public:
      * @param callback The callback to guard. May be empty, in which case
      *        invoke() still reports the first call but does nothing.
      */
-    explicit OnceCallback(Callback callback)
-        : callback_fn(std::move(callback)) {
-    }
+    explicit OnceCallback(Callback callback) : callback_fn(std::move(callback)) {}
 
     /**
      * Calls the wrapped callback, unless it has already been called.

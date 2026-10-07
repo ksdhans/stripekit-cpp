@@ -1,10 +1,10 @@
 /** SqliteWebhookDedupStore.h
- * 
+ *
  * Optional SQLite-backed implementation of webhook event-id tracking.
  * It stores claim and processed state in a SQLite database.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 

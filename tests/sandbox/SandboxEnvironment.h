@@ -53,7 +53,7 @@ struct SandboxConfig {
     std::string cli_path;
 
     /** How long to wait for an expected webhook event to arrive. */
-    std::chrono::seconds event_timeout{90};
+    std::chrono::seconds event_timeout{ 90 };
 
     /** Upper bound on Stripe API calls per run, guarding against runaway loops. */
     int max_api_calls = 400;
@@ -121,7 +121,7 @@ private:
 
     stripekit::drogon::HTTPClient http_client;
     int max_calls;
-    std::atomic<int> calls{0};
+    std::atomic<int> calls{ 0 };
 };
 
 /** A raw webhook delivery captured exactly as Stripe signed and sent it. */
@@ -195,7 +195,8 @@ public:
      * Matching on an id created by the calling test keeps concurrent runs that
      * share a sandbox from consuming each other's events.
      */
-    std::optional<ReceivedEvent> wait_for_event(std::string_view type, std::string_view must_contain);
+    std::optional<ReceivedEvent> wait_for_event(std::string_view type,
+                                                std::string_view must_contain);
 
     /** Returns the raw delivery captured for an event id, when one arrived. */
     std::optional<CapturedDelivery> delivery_for(std::string_view event_id) const;

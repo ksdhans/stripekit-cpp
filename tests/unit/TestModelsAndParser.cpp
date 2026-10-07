@@ -1,13 +1,13 @@
 /** TestModelsAndParser.cpp
- * 
+ *
  * Unit tests for Stripe data models and JSON response parsing.
  */
 
-#include "TestFramework.h"
 #include "StripeKit/Errors.h"
 #include "StripeKit/HTTPClient.h"
 #include "StripeKit/Models.h"
 #include "StripeKit/StripeApiClient.h"
+#include "TestFramework.h"
 
 using namespace stripekit;
 
@@ -17,10 +17,7 @@ protected:
 };
 
 TEST_F(ModelsAndParserTest, ParseCustomerSuccess) {
-    const HttpResponse response{
-        .status_code = 200,
-        .headers = {},
-        .body = R"({
+    const HttpResponse response{ .status_code = 200, .headers = {}, .body = R"({
             "id": "cus_123456",
             "object": "customer",
             "email": "user@example.com",
@@ -30,8 +27,7 @@ TEST_F(ModelsAndParserTest, ParseCustomerSuccess) {
                 "user_id": "usr_789",
                 "tier": "pro"
             }
-        })"
-    };
+        })" };
 
     const Customer customer = parser.parse_customer(response);
     EXPECT_EQ(customer.id, "cus_123456");
@@ -44,11 +40,9 @@ TEST_F(ModelsAndParserTest, ParseCustomerSuccess) {
 }
 
 TEST_F(ModelsAndParserTest, ParseCustomerDefaultsOnMissingFields) {
-    const HttpResponse response{
-        .status_code = 200,
-        .headers = {},
-        .body = R"({ "id": "cus_minimal" })"
-    };
+    const HttpResponse response{ .status_code = 200,
+                                 .headers = {},
+                                 .body = R"({ "id": "cus_minimal" })" };
 
     const Customer customer = parser.parse_customer(response);
     EXPECT_EQ(customer.id, "cus_minimal");
@@ -59,10 +53,7 @@ TEST_F(ModelsAndParserTest, ParseCustomerDefaultsOnMissingFields) {
 }
 
 TEST_F(ModelsAndParserTest, ParseCheckoutSessionSuccess) {
-    const HttpResponse response{
-        .status_code = 200,
-        .headers = {},
-        .body = R"({
+    const HttpResponse response{ .status_code = 200, .headers = {}, .body = R"({
             "id": "cs_test_123",
             "object": "checkout.session",
             "customer": "cus_456",
@@ -76,8 +67,7 @@ TEST_F(ModelsAndParserTest, ParseCheckoutSessionSuccess) {
             "metadata": {
                 "order_ref": "ord_999"
             }
-        })"
-    };
+        })" };
 
     const CheckoutSession session = parser.parse_checkout_session(response);
     EXPECT_EQ(session.id, "cs_test_123");
@@ -93,10 +83,7 @@ TEST_F(ModelsAndParserTest, ParseCheckoutSessionSuccess) {
 }
 
 TEST_F(ModelsAndParserTest, ParseSubscriptionSuccess) {
-    const HttpResponse response{
-        .status_code = 200,
-        .headers = {},
-        .body = R"({
+    const HttpResponse response{ .status_code = 200, .headers = {}, .body = R"({
             "id": "sub_123",
             "object": "subscription",
             "customer": "cus_456",
@@ -108,8 +95,7 @@ TEST_F(ModelsAndParserTest, ParseSubscriptionSuccess) {
             "metadata": {
                 "plan": "yearly"
             }
-        })"
-    };
+        })" };
 
     const Subscription sub = parser.parse_subscription(response);
     EXPECT_EQ(sub.id, "sub_123");
@@ -123,10 +109,7 @@ TEST_F(ModelsAndParserTest, ParseSubscriptionSuccess) {
 }
 
 TEST_F(ModelsAndParserTest, ParseBillingPortalSessionSuccess) {
-    const HttpResponse response{
-        .status_code = 200,
-        .headers = {},
-        .body = R"({
+    const HttpResponse response{ .status_code = 200, .headers = {}, .body = R"({
             "id": "bps_123",
             "object": "billing_portal.session",
             "customer": "cus_456",
@@ -134,8 +117,7 @@ TEST_F(ModelsAndParserTest, ParseBillingPortalSessionSuccess) {
             "return_url": "https://example.com/account",
             "created": 1700000000,
             "livemode": false
-        })"
-    };
+        })" };
 
     const BillingPortalSession session = parser.parse_billing_portal_session(response);
     EXPECT_EQ(session.id, "bps_123");
@@ -147,17 +129,15 @@ TEST_F(ModelsAndParserTest, ParseBillingPortalSessionSuccess) {
 }
 
 TEST_F(ModelsAndParserTest, InvoiceStructModelInstantiation) {
-    Invoice invoice{
-        .id = "in_123456",
-        .customer_id = "cus_abc",
-        .subscription_id = "sub_xyz",
-        .status = "paid",
-        .currency = "usd",
-        .amount_due = 1500,
-        .amount_paid = 1500,
-        .paid = true,
-        .livemode = false
-    };
+    Invoice invoice{ .id = "in_123456",
+                     .customer_id = "cus_abc",
+                     .subscription_id = "sub_xyz",
+                     .status = "paid",
+                     .currency = "usd",
+                     .amount_due = 1500,
+                     .amount_paid = 1500,
+                     .paid = true,
+                     .livemode = false };
 
     EXPECT_EQ(invoice.id, "in_123456");
     EXPECT_EQ(invoice.customer_id, "cus_abc");
@@ -171,16 +151,14 @@ TEST_F(ModelsAndParserTest, InvoiceStructModelInstantiation) {
 }
 
 TEST_F(ModelsAndParserTest, EventEnvelopeModelInstantiation) {
-    EventEnvelope envelope{
-        .id = "evt_999",
-        .type = "invoice.payment_failed",
-        .api_version = "2024-06-20",
-        .created_unix = 1700000000,
-        .livemode = false,
-        .request_id = "req_test",
-        .account = "acct_test",
-        .payload_json = "{}"
-    };
+    EventEnvelope envelope{ .id = "evt_999",
+                            .type = "invoice.payment_failed",
+                            .api_version = "2024-06-20",
+                            .created_unix = 1700000000,
+                            .livemode = false,
+                            .request_id = "req_test",
+                            .account = "acct_test",
+                            .payload_json = "{}" };
 
     EXPECT_EQ(envelope.id, "evt_999");
     EXPECT_EQ(envelope.type, "invoice.payment_failed");
@@ -193,17 +171,15 @@ TEST_F(ModelsAndParserTest, EventEnvelopeModelInstantiation) {
 }
 
 TEST_F(ModelsAndParserTest, ParseErrorDetails) {
-    const HttpResponse response{
-        .status_code = 400,
-        .headers = {{"request-id", "req_err_123"}},
-        .body = R"({
+    const HttpResponse response{ .status_code = 400,
+                                 .headers = { { "request-id", "req_err_123" } },
+                                 .body = R"({
             "error": {
                 "type": "invalid_request_error",
                 "code": "parameter_missing",
                 "message": "Missing required param: customer"
             }
-        })"
-    };
+        })" };
 
     const StripeErrorPayload error = parser.parse_error(response);
     EXPECT_EQ(error.type, StripeErrorType::InvalidRequest);
@@ -215,12 +191,14 @@ TEST_F(ModelsAndParserTest, ParseErrorDetails) {
 }
 
 TEST_F(ModelsAndParserTest, ParseErrorTypesAndRetryability) {
-    auto test_error_type = [this](int status, const std::string& type_str, StripeErrorType expected_type, bool expected_retryable) {
-        const HttpResponse resp{
-            .status_code = status,
-            .headers = {},
-            .body = R"({ "error": { "type": ")" + type_str + R"(", "message": "error msg" } })"
-        };
+    auto test_error_type = [this](int status,
+                                  const std::string& type_str,
+                                  StripeErrorType expected_type,
+                                  bool expected_retryable) {
+        const HttpResponse resp{ .status_code = status,
+                                 .headers = {},
+                                 .body = R"({ "error": { "type": ")" + type_str +
+                                         R"(", "message": "error msg" } })" };
         const auto payload = parser.parse_error(resp);
         EXPECT_EQ(payload.type, expected_type);
         EXPECT_EQ(payload.retryable, expected_retryable);
@@ -237,29 +215,15 @@ TEST_F(ModelsAndParserTest, ParseErrorTypesAndRetryability) {
 }
 
 TEST_F(ModelsAndParserTest, ParseInvalidJsonThrowsConfigurationException) {
-    const HttpResponse bad_resp{
-        .status_code = 200,
-        .headers = {},
-        .body = "{ invalid json..."
-    };
+    const HttpResponse bad_resp{ .status_code = 200, .headers = {}, .body = "{ invalid json..." };
 
-    EXPECT_THROW({
-        parser.parse_customer(bad_resp);
-    }, ConfigurationException);
+    EXPECT_THROW({ parser.parse_customer(bad_resp); }, ConfigurationException);
 
-    EXPECT_THROW({
-        parser.parse_checkout_session(bad_resp);
-    }, ConfigurationException);
+    EXPECT_THROW({ parser.parse_checkout_session(bad_resp); }, ConfigurationException);
 
-    EXPECT_THROW({
-        parser.parse_subscription(bad_resp);
-    }, ConfigurationException);
+    EXPECT_THROW({ parser.parse_subscription(bad_resp); }, ConfigurationException);
 
-    EXPECT_THROW({
-        parser.parse_billing_portal_session(bad_resp);
-    }, ConfigurationException);
+    EXPECT_THROW({ parser.parse_billing_portal_session(bad_resp); }, ConfigurationException);
 
-    EXPECT_THROW({
-        parser.parse_error(bad_resp);
-    }, ConfigurationException);
+    EXPECT_THROW({ parser.parse_error(bad_resp); }, ConfigurationException);
 }

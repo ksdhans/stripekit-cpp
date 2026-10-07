@@ -1,9 +1,9 @@
 /** Events.h
- * 
+ *
  * Verified webhook signal structures and dispatch interfaces.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 

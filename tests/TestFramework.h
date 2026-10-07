@@ -1,9 +1,9 @@
 /** TestFramework.h
- * 
+ *
  * Lightweight, zero-dependency test runner macros for CTest.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 
@@ -47,11 +47,9 @@ public:
     }
 
     void add_test(std::string suite_name, std::string test_name, std::function<void()> fn) {
-        tests.push_back(TestCase{
-            .suite_name = std::move(suite_name),
-            .test_name = std::move(test_name),
-            .test_fn = std::move(fn)
-        });
+        tests.push_back(TestCase{ .suite_name = std::move(suite_name),
+                                  .test_name = std::move(test_name),
+                                  .test_fn = std::move(fn) });
     }
 
     void list_tests() const {
@@ -77,12 +75,14 @@ public:
             try {
                 test.test_fn();
             } catch (const std::exception& ex) {
-                const std::string failure_message = "[  FAILED  ] " + full_name + " threw exception: " + ex.what();
+                const std::string failure_message =
+                    "[  FAILED  ] " + full_name + " threw exception: " + ex.what();
                 std::cerr << failure_message << std::endl;
                 append_test_progress(failure_message);
                 success = false;
             } catch (...) {
-                const std::string failure_message = "[  FAILED  ] " + full_name + " threw unknown exception";
+                const std::string failure_message =
+                    "[  FAILED  ] " + full_name + " threw unknown exception";
                 std::cerr << failure_message << std::endl;
                 append_test_progress(failure_message);
                 success = false;
@@ -98,7 +98,8 @@ public:
             }
         }
 
-        std::cout << "\nTest Summary: " << passed << " passed, " << failed << " failed." << std::endl;
+        std::cout << "\nTest Summary: " << passed << " passed, " << failed << " failed."
+                  << std::endl;
         return failed == 0 ? 0 : 1;
     }
 
@@ -138,131 +139,147 @@ std::string format_val(const T& val) {
 #define TEST_CONCAT_INNER(a, b) a##b
 #define TEST_CONCAT(a, b) TEST_CONCAT_INNER(a, b)
 
-#define TEST(suite_name, test_name) \
-    void TEST_CONCAT(test_fn_, TEST_CONCAT(suite_name, TEST_CONCAT(_, test_name)))(); \
-    static ::stripekit::testing::TestRegistrar TEST_CONCAT(reg_, TEST_CONCAT(suite_name, TEST_CONCAT(_, test_name)))( \
-        #suite_name, #test_name, TEST_CONCAT(test_fn_, TEST_CONCAT(suite_name, TEST_CONCAT(_, test_name)))); \
+#define TEST(suite_name, test_name)                                                                \
+    void TEST_CONCAT(test_fn_, TEST_CONCAT(suite_name, TEST_CONCAT(_, test_name)))();              \
+    static ::stripekit::testing::TestRegistrar TEST_CONCAT(                                        \
+        reg_, TEST_CONCAT(suite_name, TEST_CONCAT(_, test_name)))(                                 \
+        #suite_name,                                                                               \
+        #test_name,                                                                                \
+        TEST_CONCAT(test_fn_, TEST_CONCAT(suite_name, TEST_CONCAT(_, test_name))));                \
     void TEST_CONCAT(test_fn_, TEST_CONCAT(suite_name, TEST_CONCAT(_, test_name)))()
 
-#define TEST_F(fixture_class, test_name) \
-    struct TEST_CONCAT(FixtureTest_, TEST_CONCAT(fixture_class, TEST_CONCAT(_, test_name))) : public fixture_class { \
-        void run(); \
-        void execute() { \
-            SetUp(); \
-            try { \
-                run(); \
-                TearDown(); \
-            } catch (...) { \
-                TearDown(); \
-                throw; \
-            } \
-        } \
-    }; \
-    static ::stripekit::testing::TestRegistrar TEST_CONCAT(reg_fixture_, TEST_CONCAT(fixture_class, TEST_CONCAT(_, test_name)))( \
-        #fixture_class, #test_name, []() { \
-            TEST_CONCAT(FixtureTest_, TEST_CONCAT(fixture_class, TEST_CONCAT(_, test_name))) test_inst; \
-            test_inst.execute(); \
-        }); \
+#define TEST_F(fixture_class, test_name)                                                           \
+    struct TEST_CONCAT(FixtureTest_, TEST_CONCAT(fixture_class, TEST_CONCAT(_, test_name)))        \
+        : public fixture_class {                                                                   \
+        void run();                                                                                \
+        void execute() {                                                                           \
+            SetUp();                                                                               \
+            try {                                                                                  \
+                run();                                                                             \
+                TearDown();                                                                        \
+            } catch (...) {                                                                        \
+                TearDown();                                                                        \
+                throw;                                                                             \
+            }                                                                                      \
+        }                                                                                          \
+    };                                                                                             \
+    static ::stripekit::testing::TestRegistrar TEST_CONCAT(                                        \
+        reg_fixture_,                                                                              \
+        TEST_CONCAT(fixture_class, TEST_CONCAT(_, test_name)))(#fixture_class, #test_name, []() {  \
+        TEST_CONCAT(FixtureTest_, TEST_CONCAT(fixture_class, TEST_CONCAT(_, test_name)))           \
+        test_inst;                                                                                 \
+        test_inst.execute();                                                                       \
+    });                                                                                            \
     void TEST_CONCAT(FixtureTest_, TEST_CONCAT(fixture_class, TEST_CONCAT(_, test_name)))::run()
 
-#define EXPECT_TRUE(expr) \
-    do { \
-        if (!(expr)) { \
-            std::ostringstream ss; \
-            ss << __FILE__ << ":" << __LINE__ << " Check failed: EXPECT_TRUE(" #expr ")"; \
-            std::cerr << ss.str() << std::endl; \
-            throw ::stripekit::testing::TestFailureException(ss.str()); \
-        } \
+#define EXPECT_TRUE(expr)                                                                          \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            std::ostringstream ss;                                                                 \
+            ss << __FILE__ << ":" << __LINE__ << " Check failed: EXPECT_TRUE(" #expr ")";          \
+            std::cerr << ss.str() << std::endl;                                                    \
+            throw ::stripekit::testing::TestFailureException(ss.str());                            \
+        }                                                                                          \
     } while (0)
 
-#define EXPECT_FALSE(expr) \
-    do { \
-        if (expr) { \
-            std::ostringstream ss; \
-            ss << __FILE__ << ":" << __LINE__ << " Check failed: EXPECT_FALSE(" #expr ")"; \
-            std::cerr << ss.str() << std::endl; \
-            throw ::stripekit::testing::TestFailureException(ss.str()); \
-        } \
+#define EXPECT_FALSE(expr)                                                                         \
+    do {                                                                                           \
+        if (expr) {                                                                                \
+            std::ostringstream ss;                                                                 \
+            ss << __FILE__ << ":" << __LINE__ << " Check failed: EXPECT_FALSE(" #expr ")";         \
+            std::cerr << ss.str() << std::endl;                                                    \
+            throw ::stripekit::testing::TestFailureException(ss.str());                            \
+        }                                                                                          \
     } while (0)
 
-#define EXPECT_EQ(val1, val2) \
-    do { \
-        if (!((val1) == (val2))) { \
-            std::ostringstream ss; \
-            ss << __FILE__ << ":" << __LINE__ << " Check failed: EXPECT_EQ(" #val1 ", " #val2 ") [" \
-               << ::stripekit::testing::format_val(val1) << " vs " << ::stripekit::testing::format_val(val2) << "]"; \
-            std::cerr << ss.str() << std::endl; \
-            throw ::stripekit::testing::TestFailureException(ss.str()); \
-        } \
+#define EXPECT_EQ(val1, val2)                                                                      \
+    do {                                                                                           \
+        if (!((val1) == (val2))) {                                                                 \
+            std::ostringstream ss;                                                                 \
+            ss << __FILE__ << ":" << __LINE__                                                      \
+               << " Check failed: EXPECT_EQ(" #val1 ", " #val2 ") ["                               \
+               << ::stripekit::testing::format_val(val1) << " vs "                                 \
+               << ::stripekit::testing::format_val(val2) << "]";                                   \
+            std::cerr << ss.str() << std::endl;                                                    \
+            throw ::stripekit::testing::TestFailureException(ss.str());                            \
+        }                                                                                          \
     } while (0)
 
-#define EXPECT_NE(val1, val2) \
-    do { \
-        if (!((val1) != (val2))) { \
-            std::ostringstream ss; \
+#define EXPECT_NE(val1, val2)                                                                      \
+    do {                                                                                           \
+        if (!((val1) != (val2))) {                                                                 \
+            std::ostringstream ss;                                                                 \
             ss << __FILE__ << ":" << __LINE__ << " Check failed: EXPECT_NE(" #val1 ", " #val2 ")"; \
-            std::cerr << ss.str() << std::endl; \
-            throw ::stripekit::testing::TestFailureException(ss.str()); \
-        } \
+            std::cerr << ss.str() << std::endl;                                                    \
+            throw ::stripekit::testing::TestFailureException(ss.str());                            \
+        }                                                                                          \
     } while (0)
 
-#define EXPECT_GE(val1, val2) \
-    do { \
-        if (!((val1) >= (val2))) { \
-            std::ostringstream ss; \
-            ss << __FILE__ << ":" << __LINE__ << " Check failed: EXPECT_GE(" #val1 ", " #val2 ") [" \
-               << ::stripekit::testing::format_val(val1) << " vs " << ::stripekit::testing::format_val(val2) << "]"; \
-            std::cerr << ss.str() << std::endl; \
-            throw ::stripekit::testing::TestFailureException(ss.str()); \
-        } \
+#define EXPECT_GE(val1, val2)                                                                      \
+    do {                                                                                           \
+        if (!((val1) >= (val2))) {                                                                 \
+            std::ostringstream ss;                                                                 \
+            ss << __FILE__ << ":" << __LINE__                                                      \
+               << " Check failed: EXPECT_GE(" #val1 ", " #val2 ") ["                               \
+               << ::stripekit::testing::format_val(val1) << " vs "                                 \
+               << ::stripekit::testing::format_val(val2) << "]";                                   \
+            std::cerr << ss.str() << std::endl;                                                    \
+            throw ::stripekit::testing::TestFailureException(ss.str());                            \
+        }                                                                                          \
     } while (0)
 
-#define EXPECT_STREQ(s1, s2) \
-    do { \
-        if (std::string(s1) != std::string(s2)) { \
-            std::ostringstream ss; \
-            ss << __FILE__ << ":" << __LINE__ << " Check failed: EXPECT_STREQ(\"" << (s1) << "\", \"" << (s2) << "\")"; \
-            std::cerr << ss.str() << std::endl; \
-            throw ::stripekit::testing::TestFailureException(ss.str()); \
-        } \
+#define EXPECT_STREQ(s1, s2)                                                                       \
+    do {                                                                                           \
+        if (std::string(s1) != std::string(s2)) {                                                  \
+            std::ostringstream ss;                                                                 \
+            ss << __FILE__ << ":" << __LINE__ << " Check failed: EXPECT_STREQ(\"" << (s1)          \
+               << "\", \"" << (s2) << "\")";                                                       \
+            std::cerr << ss.str() << std::endl;                                                    \
+            throw ::stripekit::testing::TestFailureException(ss.str());                            \
+        }                                                                                          \
     } while (0)
 
-#define EXPECT_THROW(statement, expected_exception) \
-    do { \
-        bool caught = false; \
-        try { \
-            statement; \
-        } catch (const expected_exception&) { \
-            caught = true; \
-        } catch (...) { \
-            std::ostringstream ss; \
-            ss << __FILE__ << ":" << __LINE__ << " EXPECT_THROW(" #statement ", " #expected_exception ") caught different exception"; \
-            std::cerr << ss.str() << std::endl; \
-            throw ::stripekit::testing::TestFailureException(ss.str()); \
-        } \
-        if (!caught) { \
-            std::ostringstream ss; \
-            ss << __FILE__ << ":" << __LINE__ << " Expected exception " #expected_exception " not thrown by " #statement; \
-            std::cerr << ss.str() << std::endl; \
-            throw ::stripekit::testing::TestFailureException(ss.str()); \
-        } \
+#define EXPECT_THROW(statement, expected_exception)                                                \
+    do {                                                                                           \
+        bool caught = false;                                                                       \
+        try {                                                                                      \
+            statement;                                                                             \
+        } catch (const expected_exception&) {                                                      \
+            caught = true;                                                                         \
+        } catch (...) {                                                                            \
+            std::ostringstream ss;                                                                 \
+            ss << __FILE__ << ":" << __LINE__                                                      \
+               << " EXPECT_THROW(" #statement ", " #expected_exception                             \
+                  ") caught different exception";                                                  \
+            std::cerr << ss.str() << std::endl;                                                    \
+            throw ::stripekit::testing::TestFailureException(ss.str());                            \
+        }                                                                                          \
+        if (!caught) {                                                                             \
+            std::ostringstream ss;                                                                 \
+            ss << __FILE__ << ":" << __LINE__                                                      \
+               << " Expected exception " #expected_exception " not thrown by " #statement;         \
+            std::cerr << ss.str() << std::endl;                                                    \
+            throw ::stripekit::testing::TestFailureException(ss.str());                            \
+        }                                                                                          \
     } while (0)
 
-#define EXPECT_NO_THROW(statement) \
-    do { \
-        try { \
-            statement; \
-        } catch (const std::exception& ex) { \
-            std::ostringstream ss; \
-            ss << __FILE__ << ":" << __LINE__ << " Statement " #statement " threw exception: " << ex.what(); \
-            std::cerr << ss.str() << std::endl; \
-            throw ::stripekit::testing::TestFailureException(ss.str()); \
-        } catch (...) { \
-            std::ostringstream ss; \
-            ss << __FILE__ << ":" << __LINE__ << " Statement " #statement " threw unknown exception"; \
-            std::cerr << ss.str() << std::endl; \
-            throw ::stripekit::testing::TestFailureException(ss.str()); \
-        } \
+#define EXPECT_NO_THROW(statement)                                                                 \
+    do {                                                                                           \
+        try {                                                                                      \
+            statement;                                                                             \
+        } catch (const std::exception& ex) {                                                       \
+            std::ostringstream ss;                                                                 \
+            ss << __FILE__ << ":" << __LINE__                                                      \
+               << " Statement " #statement " threw exception: " << ex.what();                      \
+            std::cerr << ss.str() << std::endl;                                                    \
+            throw ::stripekit::testing::TestFailureException(ss.str());                            \
+        } catch (...) {                                                                            \
+            std::ostringstream ss;                                                                 \
+            ss << __FILE__ << ":" << __LINE__                                                      \
+               << " Statement " #statement " threw unknown exception";                             \
+            std::cerr << ss.str() << std::endl;                                                    \
+            throw ::stripekit::testing::TestFailureException(ss.str());                            \
+        }                                                                                          \
     } while (0)
 
 #define ASSERT_TRUE(expr) EXPECT_TRUE(expr)

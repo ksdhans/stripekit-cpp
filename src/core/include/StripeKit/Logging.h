@@ -1,9 +1,9 @@
 /** Logging.h
- * 
+ *
  * System for StripeKit logging..
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 
@@ -96,9 +96,8 @@ public:
      * @param message The text to record.
      * @param context Identifiers to attach. Fields that do not apply are empty.
      */
-    virtual void log(LogLevel level,
-                     std::string_view message,
-                     const LogContext& context = LogContext{}) = 0;
+    virtual void
+    log(LogLevel level, std::string_view message, const LogContext& context = LogContext{}) = 0;
 };
 
 /**

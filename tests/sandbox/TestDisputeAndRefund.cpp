@@ -22,13 +22,11 @@ protected:
 };
 
 TEST_F(SandboxDisputeAndRefundTest, RefundedChargeEmitsChargeRefunded) {
-    const std::string charge_id =
-        create_confirmed_charge(*environment, "pm_card_visa", 2500);
+    const std::string charge_id = create_confirmed_charge(*environment, "pm_card_visa", 2500);
 
-    environment->stripe_api().require_post("/v1/refunds", {
-        {"charge", charge_id},
-        {"metadata[stripekit_run_id]", environment->run_id()}
-    });
+    environment->stripe_api().require_post(
+        "/v1/refunds",
+        { { "charge", charge_id }, { "metadata[stripekit_run_id]", environment->run_id() } });
 
     const auto event = environment->wait_for_event("charge.refunded", charge_id);
     if (!event) {
@@ -55,10 +53,9 @@ TEST_F(SandboxDisputeAndRefundTest, DisputeLifecycleEmitsCreatedAndClosed) {
     EXPECT_EQ(json_path(opened->json(), "data.object.charge").asString(), charge_id);
 
     // In a sandbox, this evidence text resolves the dispute in the merchant's favour.
-    environment->stripe_api().require_post("/v1/disputes/" + dispute_id, {
-        {"evidence[uncategorized_text]", "winning_evidence"},
-        {"submit", "true"}
-    });
+    environment->stripe_api().require_post(
+        "/v1/disputes/" + dispute_id,
+        { { "evidence[uncategorized_text]", "winning_evidence" }, { "submit", "true" } });
 
     const auto closed = environment->wait_for_event("charge.dispute.closed", dispute_id);
     if (!closed) {

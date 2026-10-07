@@ -1,9 +1,9 @@
 /** TestHelpers.h
- * 
+ *
  * Test utilities and mock objects for StripeKit unit tests.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 
@@ -57,15 +57,11 @@ inline std::string compute_hmac_sha256(std::string_view payload, std::string_vie
     }
     crypto_auth_hmacsha256_state state;
     crypto_auth_hmacsha256_init(
-        &state,
-        reinterpret_cast<const unsigned char*>(secret.data()),
-        secret.size());
+        &state, reinterpret_cast<const unsigned char*>(secret.data()), secret.size());
     crypto_auth_hmacsha256_update(
-        &state,
-        reinterpret_cast<const unsigned char*>(payload.data()),
-        payload.size());
+        &state, reinterpret_cast<const unsigned char*>(payload.data()), payload.size());
 
-    unsigned char digest[crypto_auth_hmacsha256_BYTES] = {0};
+    unsigned char digest[crypto_auth_hmacsha256_BYTES] = { 0 };
     crypto_auth_hmacsha256_final(&state, digest);
     return hex_encode(digest, crypto_auth_hmacsha256_BYTES);
 }
@@ -147,7 +143,7 @@ public:
         }
 
         lock.unlock();
-        co_return HttpResponse{.status_code = 200, .headers = {}, .body = "{}"};
+        co_return HttpResponse{ .status_code = 200, .headers = {}, .body = "{}" };
     }
 
     void send(const HttpRequest& request, Completion completion) override {
@@ -175,7 +171,7 @@ public:
         }
 
         lock.unlock();
-        completion(HttpResponse{.status_code = 200, .headers = {}, .body = "{}"});
+        completion(HttpResponse{ .status_code = 200, .headers = {}, .body = "{}" });
     }
 
 private:
@@ -243,18 +239,23 @@ public:
         LogContext context;
     };
 
-    explicit TestLogger(LogLevel threshold = LogLevel::Trace)
-        : threshold_level(threshold) {}
+    explicit TestLogger(LogLevel threshold = LogLevel::Trace) : threshold_level(threshold) {}
 
     bool should_log(LogLevel level) const override {
         auto rank = [](LogLevel lvl) {
             switch (lvl) {
-            case LogLevel::Trace: return 0;
-            case LogLevel::Debug: return 1;
-            case LogLevel::Info: return 2;
-            case LogLevel::Warn: return 3;
-            case LogLevel::Error: return 4;
-            case LogLevel::Off: return 5;
+            case LogLevel::Trace:
+                return 0;
+            case LogLevel::Debug:
+                return 1;
+            case LogLevel::Info:
+                return 2;
+            case LogLevel::Warn:
+                return 3;
+            case LogLevel::Error:
+                return 4;
+            case LogLevel::Off:
+                return 5;
             }
             return 5;
         };
@@ -266,11 +267,8 @@ public:
             return;
         }
         std::lock_guard<std::mutex> lock(mutex);
-        entries.push_back(Entry{
-            .level = level,
-            .message = std::string(message),
-            .context = context
-        });
+        entries.push_back(
+            Entry{ .level = level, .message = std::string(message), .context = context });
     }
 
     std::vector<Entry> get_entries() const {

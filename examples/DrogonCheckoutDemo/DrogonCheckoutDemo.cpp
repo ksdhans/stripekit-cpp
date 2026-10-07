@@ -12,8 +12,8 @@
 
 #include <drogon/drogon.h>
 
-#include <chrono>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -55,7 +55,8 @@ struct AppState {
 /** Returns an environment variable, or a fallback when it is not set. */
 std::string env_or(std::string_view name, std::string fallback) {
     const char* value = std::getenv(std::string(name).c_str());
-    return value == nullptr || std::string_view(value).empty() ? std::move(fallback) : std::string(value);
+    return value == nullptr || std::string_view(value).empty() ? std::move(fallback)
+                                                               : std::string(value);
 }
 
 /** Reads the demo port from --port, STRIPEKIT_DEMO_PORT, or the default. */
@@ -95,7 +96,7 @@ std::string extract_webhook_secret(std::string_view text) {
 
 /** Reads a small text file and returns an empty string when it is unavailable. */
 std::string read_file(std::string_view path) {
-    std::ifstream input{std::string(path)};
+    std::ifstream input{ std::string(path) };
     if (!input) {
         return {};
     }
@@ -152,7 +153,8 @@ CheckoutDemoViewData make_home_view_data(const std::shared_ptr<AppState>& state,
         data.cli_started = state->cli_started;
         data.events = state->events;
     }
-    data.configured_summary = configured_summary(data.has_api_key ? "sk_test_" : "", data.has_webhook_secret ? "whsec_" : "");
+    data.configured_summary = configured_summary(data.has_api_key ? "sk_test_" : "",
+                                                 data.has_webhook_secret ? "whsec_" : "");
     data.can_start_checkout = data.has_api_key;
     return data;
 }
@@ -197,20 +199,20 @@ stripekit::RequestOptions api_options(std::string idempotency_key = {}) {
 /** Generates a unique idempotency key with the supplied prefix. */
 std::string idempotency_key(std::string_view prefix) {
     const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count();
     return std::string(prefix) + "_" + std::to_string(now);
 }
 
 /** Creates a short-lived Stripe client for requests handled by the Drogon app. */
 std::shared_ptr<stripekit::StripeClient> make_client(std::string api_key) {
-    std::unique_ptr<stripekit::StripeClient> client = stripekit::drogon::make_stripe_client({
-        .api_key = std::move(api_key),
-        .api_base_url = "https://api.stripe.com",
-        // This demo is already running inside Drogon, so StripeKit sends
-        // outbound API requests through the Drogon framework's event loop instead
-        // of creating a separate StripeKit-owned event loop thread.
-        .event_loop = stripekit::drogon::EventLoopOptions::drogon_framework()
-    });
+    std::unique_ptr<stripekit::StripeClient> client = stripekit::drogon::make_stripe_client(
+        { .api_key = std::move(api_key),
+          .api_base_url = "https://api.stripe.com",
+          // This demo is already running inside Drogon, so StripeKit sends
+          // outbound API requests through the Drogon framework's event loop instead
+          // of creating a separate StripeKit-owned event loop thread.
+          .event_loop = stripekit::drogon::EventLoopOptions::drogon_framework() });
     return std::shared_ptr<stripekit::StripeClient>(std::move(client));
 }
 
@@ -240,23 +242,32 @@ int main(int argc, char** argv) {
     }
 
     // Handler to show the current setup, checkout form, and recent verified webhook events.
-    ::drogon::app().registerHandler("/",
+    ::drogon::app().registerHandler(
+        "/",
         [state, port](const ::drogon::HttpRequestPtr&,
                       std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
             callback(home_response(state, port));
-        }, {::drogon::Get});
+        },
+        { ::drogon::Get });
 
     // Handler to save test-mode Stripe settings submitted from the setup form.
-    ::drogon::app().registerHandler("/setup",
+    ::drogon::app().registerHandler(
+        "/setup",
         [state, port](const ::drogon::HttpRequestPtr& request,
                       std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
             const std::string api_key = parameter_or(request, "api_key");
             if (api_key.starts_with("sk_live_")) {
-                callback(home_response(state, port, "Live keys are rejected by this example.", ::drogon::k400BadRequest));
+                callback(home_response(state,
+                                       port,
+                                       "Live keys are rejected by this example.",
+                                       ::drogon::k400BadRequest));
                 return;
             }
             if (!api_key.empty() && !api_key.starts_with("sk_test_")) {
-                callback(home_response(state, port, "Use a Stripe test-mode secret key beginning with sk_test_.", ::drogon::k400BadRequest));
+                callback(home_response(state,
+                                       port,
+                                       "Use a Stripe test-mode secret key beginning with sk_test_.",
+                                       ::drogon::k400BadRequest));
                 return;
             }
 
@@ -277,8 +288,10 @@ int main(int argc, char** argv) {
                     }
                     state->unit_amount = parsed_amount;
                 } catch (const std::exception&) {
-                    callback(home_response(state, port,
-                        "Unit amount must be a positive integer.", ::drogon::k400BadRequest));
+                    callback(home_response(state,
+                                           port,
+                                           "Unit amount must be a positive integer.",
+                                           ::drogon::k400BadRequest));
                     return;
                 }
             }
@@ -287,14 +300,19 @@ int main(int argc, char** argv) {
                 state->webhook_secret = webhook_secret;
             }
             callback(home_response(state, port, "Setup saved."));
-        }, {::drogon::Post});
+        },
+        { ::drogon::Post });
 
     // Starts stripe listen in the background and captures the webhook secret it prints.
-    ::drogon::app().registerHandler("/stripe-cli/start",
+    ::drogon::app().registerHandler(
+        "/stripe-cli/start",
         [state, port](const ::drogon::HttpRequestPtr&,
                       std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
             if (!stripe_cli_installed()) {
-                callback(home_response(state, port, "Stripe CLI is not installed or not on PATH.", ::drogon::k400BadRequest));
+                callback(home_response(state,
+                                       port,
+                                       "Stripe CLI is not installed or not on PATH.",
+                                       ::drogon::k400BadRequest));
                 return;
             }
             std::ostringstream command;
@@ -302,7 +320,8 @@ int main(int argc, char** argv) {
             command << "nohup stripe listen --latest --forward-to http://127.0.0.1:" << port
                     << "/webhook > " << listener_log_filename << " 2>&1 &";
             const int result = std::system(command.str().c_str());
-            const auto captured_secret = result == 0 ? wait_for_webhook_secret(listener_log_filename) : std::string();
+            const auto captured_secret =
+                result == 0 ? wait_for_webhook_secret(listener_log_filename) : std::string();
             {
                 std::lock_guard<std::mutex> lock(state->mutex);
                 state->cli_started = result == 0;
@@ -310,16 +329,22 @@ int main(int argc, char** argv) {
                     state->webhook_secret = captured_secret;
                 }
             }
-            callback(home_response(state, port,
-                result != 0 ? "Could not start Stripe CLI listener."
-                            : captured_secret.empty()
-                                ? "Stripe CLI listener start requested. Could not capture the webhook secret yet; check stripe-listener.log."
-                                : "Stripe CLI listener started and webhook secret captured."));
-        }, {::drogon::Post});
+            callback(
+                home_response(state,
+                              port,
+                              result != 0 ? "Could not start Stripe CLI listener."
+                              : captured_secret.empty()
+                                  ? "Stripe CLI listener start requested. Could not capture the "
+                                    "webhook secret yet; check stripe-listener.log."
+                                  : "Stripe CLI listener started and webhook secret captured."));
+        },
+        { ::drogon::Post });
 
     // Creates the Stripe customer and Checkout Session, then redirects the browser to Stripe.
-    ::drogon::app().registerHandler("/checkout",
-        [state, port](::drogon::HttpRequestPtr request) -> ::drogon::Task<::drogon::HttpResponsePtr> {
+    ::drogon::app().registerHandler(
+        "/checkout",
+        [state,
+         port](::drogon::HttpRequestPtr request) -> ::drogon::Task<::drogon::HttpResponsePtr> {
             // This route is a Drogon coroutine. Because the Stripe client uses
             // Drogon's framework event loop, the handler must co_await async
             // StripeKit operations instead of blocking with Task::result().
@@ -337,7 +362,8 @@ int main(int argc, char** argv) {
                 unit_amount = state->unit_amount;
             }
             if (api_key.empty()) {
-                co_return home_response(state, port, "Configure the secret key first.", ::drogon::k400BadRequest);
+                co_return home_response(
+                    state, port, "Configure the secret key first.", ::drogon::k400BadRequest);
             }
 
             const std::string email = parameter_or(request, "email");
@@ -346,12 +372,10 @@ int main(int argc, char** argv) {
                 // Create a test Customer first, then create a subscription-mode
                 // Checkout Session for that Customer and redirect to Stripe.
                 stripekit::CreateCustomerRequest customer_request = {
-                    .email = email,
-                    .name = "StripeKit demo customer"
+                    .email = email, .name = "StripeKit demo customer"
                 };
                 const auto customer = co_await client->customers().create_async(
-                    customer_request,
-                    api_options(idempotency_key("customer")));
+                    customer_request, api_options(idempotency_key("customer")));
 
                 const std::string domain = "http://127.0.0.1:" + std::to_string(port);
                 stripekit::CreateCheckoutSessionRequest session_request = {
@@ -364,11 +388,10 @@ int main(int argc, char** argv) {
                     .success_url = domain + "/return?session_id={CHECKOUT_SESSION_ID}",
                     .cancel_url = domain + "/",
                     .quantity = 1,
-                    .metadata = {{"example", "drogon-checkout-demo"}}
+                    .metadata = { { "example", "drogon-checkout-demo" } }
                 };
                 const auto session = co_await client->checkout().sessions().create_async(
-                    session_request,
-                    api_options(idempotency_key("checkout")));
+                    session_request, api_options(idempotency_key("checkout")));
 
                 auto response = ::drogon::HttpResponse::newHttpResponse();
                 response->setStatusCode(::drogon::k303SeeOther);
@@ -377,19 +400,24 @@ int main(int argc, char** argv) {
             } catch (const std::exception& exception) {
                 co_return error_response("Could not create Checkout Session", exception);
             }
-        }, {::drogon::Post});
+        },
+        { ::drogon::Post });
 
     // Displays the session id that Stripe places in the success redirect URL.
-    ::drogon::app().registerHandler("/return",
+    ::drogon::app().registerHandler(
+        "/return",
         [](const ::drogon::HttpRequestPtr& request,
            std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
             ::drogon::HttpViewData view_data;
-            view_data.insert("data", ReturnPageViewData{.session_id = request->getParameter("session_id")});
+            view_data.insert(
+                "data", ReturnPageViewData{ .session_id = request->getParameter("session_id") });
             callback(::drogon::HttpResponse::newHttpViewResponse("ReturnPage", view_data));
-        }, {::drogon::Get});
+        },
+        { ::drogon::Get });
 
     // Verifies webhook signatures, records fresh events, and acknowledges Stripe.
-    ::drogon::app().registerHandler("/webhook",
+    ::drogon::app().registerHandler(
+        "/webhook",
         [state](const ::drogon::HttpRequestPtr& request,
                 std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
             std::string webhook_secret;
@@ -413,32 +441,36 @@ int main(int argc, char** argv) {
                     state->dedup_store,
                     // This handler runs only after StripeKit verifies the signature
                     // and claims the event id in the de-duplication store.
-                    [state](const stripekit::webhooks::Event& event) -> stripekit::Task<stripekit::webhooks::ProcessResult> {
+                    [state](const stripekit::webhooks::Event& event)
+                        -> stripekit::Task<stripekit::webhooks::ProcessResult> {
                         {
                             std::lock_guard<std::mutex> lock(state->mutex);
-                            state->events.push_back(EventRecord{
-                                .id = event.id,
-                                .type = event.type,
-                                .api_version = event.api_version,
-                                .livemode = event.livemode
-                            });
+                            state->events.push_back(EventRecord{ .id = event.id,
+                                                                 .type = event.type,
+                                                                 .api_version = event.api_version,
+                                                                 .livemode = event.livemode });
                             if (state->events.size() > 20) {
-                                state->events.erase(state->events.begin(),
-                                    state->events.begin() + static_cast<std::ptrdiff_t>(state->events.size() - 20));
+                                state->events.erase(
+                                    state->events.begin(),
+                                    state->events.begin() +
+                                        static_cast<std::ptrdiff_t>(state->events.size() - 20));
                             }
                         }
                         co_return stripekit::webhooks::ProcessResult::Handled;
                     });
                 const auto result = task.result();
-                response->setStatusCode(result.response_action == stripekit::WebhookResponseAction::AcknowledgeSuccess
-                    ? ::drogon::k200OK : ::drogon::k500InternalServerError);
+                response->setStatusCode(result.response_action ==
+                                                stripekit::WebhookResponseAction::AcknowledgeSuccess
+                                            ? ::drogon::k200OK
+                                            : ::drogon::k500InternalServerError);
             } catch (const stripekit::SignatureVerificationException&) {
                 response->setStatusCode(::drogon::k400BadRequest);
             } catch (const std::exception&) {
                 response->setStatusCode(::drogon::k400BadRequest);
             }
             callback(response);
-        }, {::drogon::Post});
+        },
+        { ::drogon::Post });
 
     std::cout << "StripeKit Drogon Checkout demo available at http://127.0.0.1:" << port << '\n';
     // addListener() binds the HTTP server, and run() starts Drogon's event

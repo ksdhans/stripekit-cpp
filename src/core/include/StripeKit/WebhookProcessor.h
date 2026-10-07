@@ -38,7 +38,7 @@ struct WebhookProcessorOptions {
 };
 
 /**
- * Handles incoming webhook deliveries through an EventDispatcher. Webhooks 
+ * Handles incoming webhook deliveries through an EventDispatcher. Webhooks
  * are HTTP requests sent by Stripe to notify about events.
  *
  * Does the same work as stripekit::webhooks::process_event_once() — verify,

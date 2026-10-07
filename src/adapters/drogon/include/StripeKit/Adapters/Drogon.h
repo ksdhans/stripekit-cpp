@@ -24,7 +24,7 @@
 namespace trantor {
 class EventLoop;
 class EventLoopThread;
-}
+} // namespace trantor
 
 namespace stripekit::drogon {
 
@@ -147,8 +147,8 @@ public:
      *
      * @param api_key Stripe secret key. Sent as the bearer token on every
      *        request; never logged.
-    * @param api_base_url Stripe API base URL. HTTPS is required except for a
-    *        loopback mock server.
+     * @param api_base_url Stripe API base URL. HTTPS is required except for a
+     *        loopback mock server.
      * @param event_loop Which event loop requests run on. Inside a Drogon
      *        server, pass EventLoopOptions::drogon_framework().
      */

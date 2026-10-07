@@ -33,10 +33,10 @@ namespace {
  */
 std::pair<ReceivedEvent, CapturedDelivery> deliver_customer_created(SandboxEnvironment& environment,
                                                                     std::string_view label) {
-    const StripeApiResult customer = environment.stripe_api().require_post("/v1/customers", {
-        {"email", sandbox_email(environment, label)},
-        {"metadata[stripekit_run_id]", environment.run_id()}
-    });
+    const StripeApiResult customer = environment.stripe_api().require_post(
+        "/v1/customers",
+        { { "email", sandbox_email(environment, label) },
+          { "metadata[stripekit_run_id]", environment.run_id() } });
 
     const auto event = environment.wait_for_event("customer.created", customer.id());
     if (!event) {
@@ -48,7 +48,7 @@ std::pair<ReceivedEvent, CapturedDelivery> deliver_customer_created(SandboxEnvir
         FAIL() << "The local endpoint did not capture a raw delivery for event " << event->id;
     }
 
-    return {*event, *delivery};
+    return { *event, *delivery };
 }
 
 } // namespace
@@ -76,9 +76,8 @@ TEST_F(SandboxWebhookDeliveryTest, ReplayedDeliveryIsAcknowledgedWithoutReproces
 
     EXPECT_EQ(environment->dispatch_count(event.id), 1);
 
-    const int status = environment->post_webhook(SandboxEnvironment::main_webhook_path,
-                                                 delivery.payload,
-                                                 delivery.signature_header);
+    const int status = environment->post_webhook(
+        SandboxEnvironment::main_webhook_path, delivery.payload, delivery.signature_header);
 
     EXPECT_EQ(status, 200);
     EXPECT_EQ(environment->dispatch_count(event.id), 1);
@@ -87,21 +86,18 @@ TEST_F(SandboxWebhookDeliveryTest, ReplayedDeliveryIsAcknowledgedWithoutReproces
 TEST_F(SandboxWebhookDeliveryTest, RetryableFailureIsRetriedAndThenRecovers) {
     const auto [event, delivery] = deliver_customer_created(*environment, "retry");
 
-    const int first = environment->post_webhook(SandboxEnvironment::retry_webhook_path,
-                                                delivery.payload,
-                                                delivery.signature_header);
+    const int first = environment->post_webhook(
+        SandboxEnvironment::retry_webhook_path, delivery.payload, delivery.signature_header);
     EXPECT_EQ(first, 500);
     EXPECT_EQ(environment->retry_route_attempts(event.id), 1);
 
-    const int second = environment->post_webhook(SandboxEnvironment::retry_webhook_path,
-                                                 delivery.payload,
-                                                 delivery.signature_header);
+    const int second = environment->post_webhook(
+        SandboxEnvironment::retry_webhook_path, delivery.payload, delivery.signature_header);
     EXPECT_EQ(second, 200);
     EXPECT_EQ(environment->retry_route_attempts(event.id), 2);
 
-    const int third = environment->post_webhook(SandboxEnvironment::retry_webhook_path,
-                                                delivery.payload,
-                                                delivery.signature_header);
+    const int third = environment->post_webhook(
+        SandboxEnvironment::retry_webhook_path, delivery.payload, delivery.signature_header);
     EXPECT_EQ(third, 200);
     EXPECT_EQ(environment->retry_route_attempts(event.id), 2);
 }
@@ -109,9 +105,8 @@ TEST_F(SandboxWebhookDeliveryTest, RetryableFailureIsRetriedAndThenRecovers) {
 TEST_F(SandboxWebhookDeliveryTest, TamperedPayloadIsRejected) {
     const auto [event, delivery] = deliver_customer_created(*environment, "tampered");
 
-    const int status = environment->post_webhook(SandboxEnvironment::main_webhook_path,
-                                                 delivery.payload + " ",
-                                                 delivery.signature_header);
+    const int status = environment->post_webhook(
+        SandboxEnvironment::main_webhook_path, delivery.payload + " ", delivery.signature_header);
 
     EXPECT_EQ(status, 400);
     EXPECT_EQ(environment->dispatch_count(event.id), 1);

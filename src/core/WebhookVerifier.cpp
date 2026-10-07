@@ -1,5 +1,5 @@
 /** WebhookVerifier.cpp
- * 
+ *
  * See header file for details.
  */
 
@@ -8,8 +8,8 @@
 #include "StripeKit/Errors.h"
 
 #include <algorithm>
-#include <charconv>
 #include <cctype>
+#include <charconv>
 #include <cstdint>
 #include <sstream>
 #include <string>
@@ -73,10 +73,11 @@ static void parse_signature_header(std::string_view header,
         const std::string value = trim_copy(std::string_view(part).substr(eq + 1));
 
         if (key == "t") {
-            const auto parsed = std::from_chars(
-                value.data(), value.data() + value.size(), timestamp_out);
+            const auto parsed =
+                std::from_chars(value.data(), value.data() + value.size(), timestamp_out);
             if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) {
-                throw SignatureVerificationException("Stripe-Signature header contains invalid timestamp");
+                throw SignatureVerificationException(
+                    "Stripe-Signature header contains invalid timestamp");
             }
             has_timestamp = true;
             continue;
@@ -92,7 +93,8 @@ static void parse_signature_header(std::string_view header,
     }
 
     if (v1_signatures_out.empty()) {
-        throw SignatureVerificationException("Stripe-Signature header is missing v1 signature fields");
+        throw SignatureVerificationException(
+            "Stripe-Signature header is missing v1 signature fields");
     }
 }
 
@@ -128,7 +130,8 @@ static bool secure_equals(std::string_view left, std::string_view right) {
 #endif
 }
 
-VerificationMetadata DefaultWebhookSignatureVerifier::verify(const WebhookVerificationInput& input) const {
+VerificationMetadata
+DefaultWebhookSignatureVerifier::verify(const WebhookVerificationInput& input) const {
 #if !defined(STRIPEKIT_WITH_LIBSODIUM)
     (void)input;
     throw ConfigurationException("StripeKit was built without libsodium support");
@@ -149,14 +152,16 @@ VerificationMetadata DefaultWebhookSignatureVerifier::verify(const WebhookVerifi
     std::vector<std::string> signatures;
     parse_signature_header(input.stripe_signature_header, timestamp, signatures);
 
-    const auto now_unix = std::chrono::duration_cast<std::chrono::seconds>(
-        input.now.time_since_epoch()).count();
-    const auto age_seconds = timestamp >= now_unix
-        ? static_cast<std::uint64_t>(timestamp) - static_cast<std::uint64_t>(now_unix)
-        : static_cast<std::uint64_t>(now_unix) - static_cast<std::uint64_t>(timestamp);
+    const auto now_unix =
+        std::chrono::duration_cast<std::chrono::seconds>(input.now.time_since_epoch()).count();
+    const auto age_seconds =
+        timestamp >= now_unix
+            ? static_cast<std::uint64_t>(timestamp) - static_cast<std::uint64_t>(now_unix)
+            : static_cast<std::uint64_t>(now_unix) - static_cast<std::uint64_t>(timestamp);
     const auto tolerance_seconds = input.tolerance.count();
     if (tolerance_seconds < 0 || age_seconds > static_cast<std::uint64_t>(tolerance_seconds)) {
-        throw SignatureVerificationException("Webhook signature timestamp is outside allowed tolerance");
+        throw SignatureVerificationException(
+            "Webhook signature timestamp is outside allowed tolerance");
     }
 
     std::ostringstream signed_payload_stream;
@@ -168,20 +173,17 @@ VerificationMetadata DefaultWebhookSignatureVerifier::verify(const WebhookVerifi
         &state,
         reinterpret_cast<const unsigned char*>(input.endpoint_secret.data()),
         input.endpoint_secret.size());
-    crypto_auth_hmacsha256_update(
-        &state,
-        reinterpret_cast<const unsigned char*>(signed_payload.data()),
-        signed_payload.size());
+    crypto_auth_hmacsha256_update(&state,
+                                  reinterpret_cast<const unsigned char*>(signed_payload.data()),
+                                  signed_payload.size());
 
-    unsigned char digest[crypto_auth_hmacsha256_BYTES] = {0};
+    unsigned char digest[crypto_auth_hmacsha256_BYTES] = { 0 };
     crypto_auth_hmacsha256_final(&state, digest);
 
     const std::string expected_signature = hex_encode(digest, crypto_auth_hmacsha256_BYTES);
 
     const bool matched = std::any_of(
-        signatures.begin(),
-        signatures.end(),
-        [&expected_signature](const std::string& candidate) {
+        signatures.begin(), signatures.end(), [&expected_signature](const std::string& candidate) {
             return secure_equals(candidate, expected_signature);
         });
 
@@ -189,10 +191,7 @@ VerificationMetadata DefaultWebhookSignatureVerifier::verify(const WebhookVerifi
         throw SignatureVerificationException("Webhook signature does not match");
     }
 
-    return VerificationMetadata{
-        .timestamp_unix = timestamp,
-        .signed_payload = signed_payload
-    };
+    return VerificationMetadata{ .timestamp_unix = timestamp, .signed_payload = signed_payload };
 #endif
 }
 

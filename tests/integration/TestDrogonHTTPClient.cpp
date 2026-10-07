@@ -1,5 +1,5 @@
 /** TestDrogonHTTPClient.cpp
- * 
+ *
  * Integration tests for the Drogon HTTP client adapter and Stripe API client operations.
  */
 
@@ -26,10 +26,8 @@ protected:
         base_url = DrogonIntegrationEnvironment::get().base_url;
         api_key = DrogonIntegrationEnvironment::get().api_key;
 
-        client = stripekit::drogon::make_stripe_client({
-            .api_key = api_key,
-            .api_base_url = base_url
-        });
+        client =
+            stripekit::drogon::make_stripe_client({ .api_key = api_key, .api_base_url = base_url });
     }
 
     std::string base_url;
@@ -38,16 +36,12 @@ protected:
 };
 
 TEST_F(DrogonHTTPClientIntegrationTest, CustomerCreateAsyncSuccess) {
-    const CreateCustomerRequest request{
-        .email = "integration@example.com",
-        .name = "Integration User",
-        .metadata = {{"source", "integration_test"}}
-    };
+    const CreateCustomerRequest request{ .email = "integration@example.com",
+                                         .name = "Integration User",
+                                         .metadata = { { "source", "integration_test" } } };
 
-    const RequestOptions options{
-        .idempotency_key = "idem_int_123",
-        .headers = {{"X-Custom-Client-Header", "integration_val"}}
-    };
+    const RequestOptions options{ .idempotency_key = "idem_int_123",
+                                  .headers = { { "X-Custom-Client-Header", "integration_val" } } };
 
     auto task = client->customers().create_async(request, options);
     const Customer customer = task.result();
@@ -60,28 +54,23 @@ TEST_F(DrogonHTTPClientIntegrationTest, CustomerCreateAsyncSuccess) {
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, CustomerCreateSendsStripeVersionHeaderWhenRequested) {
-    const CreateCustomerRequest request{
-        .email = "integration@example.com",
-        .name = "Integration User"
-    };
+    const CreateCustomerRequest request{ .email = "integration@example.com",
+                                         .name = "Integration User" };
 
-    const RequestOptions options{
-        .headers = {{"Stripe-Version", "2024-06-20"}}
-    };
+    const RequestOptions options{ .headers = { { "Stripe-Version", "2024-06-20" } } };
 
     auto task = client->customers().create_async(request, options);
     const Customer customer = task.result();
 
     EXPECT_EQ(customer.id, "cus_drogon_123");
-    EXPECT_EQ(DrogonIntegrationEnvironment::get().telemetry.latest_api_request_header("stripe-version"),
-              "2024-06-20");
+    EXPECT_EQ(
+        DrogonIntegrationEnvironment::get().telemetry.latest_api_request_header("stripe-version"),
+        "2024-06-20");
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, CustomerCreateCallbackSuccess) {
-    const CreateCustomerRequest request{
-        .email = "integration@example.com",
-        .name = "Integration User"
-    };
+    const CreateCustomerRequest request{ .email = "integration@example.com",
+                                         .name = "Integration User" };
 
     std::promise<CallbackResult<Customer>> promise;
     auto future = promise.get_future();
@@ -121,13 +110,12 @@ TEST_F(DrogonHTTPClientIntegrationTest, CustomerRetrieveCallbackSuccess) {
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, CheckoutSessionCreateAsyncSuccess) {
-    const CreateCheckoutSessionRequest request{
-        .customer_id = "cus_drogon_123",
-        .price_id = "price_starter_monthly",
-        .success_url = "https://example.com/checkout/success",
-        .cancel_url = "https://example.com/checkout/cancel",
-        .quantity = 1
-    };
+    const CreateCheckoutSessionRequest request{ .customer_id = "cus_drogon_123",
+                                                .price_id = "price_starter_monthly",
+                                                .success_url =
+                                                    "https://example.com/checkout/success",
+                                                .cancel_url = "https://example.com/checkout/cancel",
+                                                .quantity = 1 };
 
     auto task = client->checkout().sessions().create_async(request);
     const CheckoutSession session = task.result();
@@ -141,16 +129,15 @@ TEST_F(DrogonHTTPClientIntegrationTest, CheckoutSessionCreateAsyncSuccess) {
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, CheckoutSessionCreateOneTimePurchaseAsyncSuccess) {
-    const CreateCheckoutSessionRequest request{
-        .customer_id = "cus_drogon_123",
-        .mode = "payment",
-        .product_name = "Lifetime License",
-        .currency = "usd",
-        .unit_amount = 9900,
-        .success_url = "https://example.com/checkout/success",
-        .cancel_url = "https://example.com/cancel",
-        .quantity = 1
-    };
+    const CreateCheckoutSessionRequest request{ .customer_id = "cus_drogon_123",
+                                                .mode = "payment",
+                                                .product_name = "Lifetime License",
+                                                .currency = "usd",
+                                                .unit_amount = 9900,
+                                                .success_url =
+                                                    "https://example.com/checkout/success",
+                                                .cancel_url = "https://example.com/cancel",
+                                                .quantity = 1 };
 
     auto task = client->checkout().sessions().create_async(request);
     const CheckoutSession session = task.result();
@@ -165,18 +152,16 @@ TEST_F(DrogonHTTPClientIntegrationTest, CheckoutSessionCreateOneTimePurchaseAsyn
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, CheckoutSessionCreateAsyncUsesDrogonFrameworkLoop) {
-    auto app_loop_client = stripekit::drogon::make_stripe_client({
-        .api_key = api_key,
-        .api_base_url = base_url,
-        .event_loop = stripekit::drogon::EventLoopOptions::drogon_framework()
-    });
-    const CreateCheckoutSessionRequest request{
-        .customer_id = "cus_drogon_123",
-        .price_id = "price_starter_monthly",
-        .success_url = "https://example.com/checkout/success",
-        .cancel_url = "https://example.com/checkout/cancel",
-        .quantity = 1
-    };
+    auto app_loop_client = stripekit::drogon::make_stripe_client(
+        { .api_key = api_key,
+          .api_base_url = base_url,
+          .event_loop = stripekit::drogon::EventLoopOptions::drogon_framework() });
+    const CreateCheckoutSessionRequest request{ .customer_id = "cus_drogon_123",
+                                                .price_id = "price_starter_monthly",
+                                                .success_url =
+                                                    "https://example.com/checkout/success",
+                                                .cancel_url = "https://example.com/checkout/cancel",
+                                                .quantity = 1 };
 
     auto task = app_loop_client->checkout().sessions().create_async(request);
     const CheckoutSession session = task.result();
@@ -206,10 +191,8 @@ TEST_F(DrogonHTTPClientIntegrationTest, SubscriptionRetrieveAndCancelAsyncSucces
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, BillingPortalSessionCreateAsyncSuccess) {
-    const CreateBillingPortalSessionRequest request{
-        .customer_id = "cus_drogon_123",
-        .return_url = "https://example.com/account"
-    };
+    const CreateBillingPortalSessionRequest request{ .customer_id = "cus_drogon_123",
+                                                     .return_url = "https://example.com/account" };
 
     auto task = client->billing_portal().sessions().create_async(request);
     const BillingPortalSession session = task.result();
@@ -223,10 +206,7 @@ TEST_F(DrogonHTTPClientIntegrationTest, BillingPortalSessionCreateAsyncSuccess) 
 
 TEST_F(DrogonHTTPClientIntegrationTest, ServerFault400BadRequestThrowsStripeApiException) {
     stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
-    const HttpRequest req{
-        .method = HttpMethod::Get,
-        .path = "/fault/400-bad-request"
-    };
+    const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/400-bad-request" };
 
     auto task = http_adapter.send_async(req);
     const HttpResponse resp = task.result();
@@ -242,10 +222,8 @@ TEST_F(DrogonHTTPClientIntegrationTest, ServerFault400BadRequestThrowsStripeApiE
 
 TEST_F(DrogonHTTPClientIntegrationTest, ServerFault401UnauthorizedThrowsStripeApiException) {
     // Client configured with wrong API key hitting authenticated endpoint
-    auto bad_client = stripekit::drogon::make_stripe_client({
-        .api_key = "sk_test_wrong_key",
-        .api_base_url = base_url
-    });
+    auto bad_client = stripekit::drogon::make_stripe_client(
+        { .api_key = "sk_test_wrong_key", .api_base_url = base_url });
 
     try {
         auto task = bad_client->customers().retrieve_async("cus_123");
@@ -260,10 +238,7 @@ TEST_F(DrogonHTTPClientIntegrationTest, ServerFault401UnauthorizedThrowsStripeAp
 
 TEST_F(DrogonHTTPClientIntegrationTest, ServerFault402CardDeclinedThrowsStripeApiException) {
     stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
-    const HttpRequest req{
-        .method = HttpMethod::Get,
-        .path = "/fault/402-card-declined"
-    };
+    const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/402-card-declined" };
 
     auto task = http_adapter.send_async(req);
     const HttpResponse resp = task.result();
@@ -279,10 +254,7 @@ TEST_F(DrogonHTTPClientIntegrationTest, ServerFault402CardDeclinedThrowsStripeAp
 
 TEST_F(DrogonHTTPClientIntegrationTest, ServerFault429RateLimitThrowsRetryableStripeApiException) {
     stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
-    const HttpRequest req{
-        .method = HttpMethod::Get,
-        .path = "/fault/429-rate-limit"
-    };
+    const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/429-rate-limit" };
 
     auto task = http_adapter.send_async(req);
     const HttpResponse resp = task.result();
@@ -295,12 +267,10 @@ TEST_F(DrogonHTTPClientIntegrationTest, ServerFault429RateLimitThrowsRetryableSt
     EXPECT_TRUE(error.retryable);
 }
 
-TEST_F(DrogonHTTPClientIntegrationTest, ServerFault500InternalErrorThrowsRetryableStripeApiException) {
+TEST_F(DrogonHTTPClientIntegrationTest,
+       ServerFault500InternalErrorThrowsRetryableStripeApiException) {
     stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
-    const HttpRequest req{
-        .method = HttpMethod::Get,
-        .path = "/fault/500-server-error"
-    };
+    const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/500-server-error" };
 
     auto task = http_adapter.send_async(req);
     const HttpResponse resp = task.result();
@@ -313,12 +283,10 @@ TEST_F(DrogonHTTPClientIntegrationTest, ServerFault500InternalErrorThrowsRetryab
     EXPECT_TRUE(error.retryable);
 }
 
-TEST_F(DrogonHTTPClientIntegrationTest, ServerFault503UnavailableThrowsRetryableStripeApiException) {
+TEST_F(DrogonHTTPClientIntegrationTest,
+       ServerFault503UnavailableThrowsRetryableStripeApiException) {
     stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
-    const HttpRequest req{
-        .method = HttpMethod::Get,
-        .path = "/fault/503-unavailable"
-    };
+    const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/503-unavailable" };
 
     auto task = http_adapter.send_async(req);
     const HttpResponse resp = task.result();
@@ -333,59 +301,52 @@ TEST_F(DrogonHTTPClientIntegrationTest, ServerFault503UnavailableThrowsRetryable
 
 TEST_F(DrogonHTTPClientIntegrationTest, ServerFaultMalformedNonJsonThrowsConfigurationException) {
     stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
-    const HttpRequest req{
-        .method = HttpMethod::Get,
-        .path = "/fault/malformed-non-json"
-    };
+    const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/malformed-non-json" };
 
     auto task = http_adapter.send_async(req);
     const HttpResponse resp = task.result();
     EXPECT_EQ(resp.status_code, 200);
 
     JsonStripeResponseParser parser;
-    EXPECT_THROW({
-        parser.parse_customer(resp);
-    }, ConfigurationException);
+    EXPECT_THROW({ parser.parse_customer(resp); }, ConfigurationException);
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, RequestTimeoutOverrideThrowsStripeKitException) {
     stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
-    const HttpRequest req{
-        .method = HttpMethod::Get,
-        .path = "/fault/timeout-delay",
-        .options = RequestOptions{
-            .timeout = std::chrono::milliseconds(50) // 50ms timeout against 400ms endpoint delay
-        }
-    };
+    const HttpRequest req{ .method = HttpMethod::Get,
+                           .path = "/fault/timeout-delay",
+                           .options = RequestOptions{
+                               .timeout = std::chrono::milliseconds(
+                                   50) // 50ms timeout against 400ms endpoint delay
+                           } };
 
-    EXPECT_THROW({
-        auto task = http_adapter.send_async(req);
-        task.result();
-    }, StripeKitException);
+    EXPECT_THROW(
+        {
+            auto task = http_adapter.send_async(req);
+            task.result();
+        },
+        StripeKitException);
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, UnreachableHostThrowsStripeKitException) {
     // Port 1 is reserved and closed
     stripekit::drogon::HTTPClient unreachable_client(api_key, "http://127.0.0.1:1");
-    const HttpRequest req{
-        .method = HttpMethod::Get,
-        .path = "/v1/customers/cus_123"
-    };
+    const HttpRequest req{ .method = HttpMethod::Get, .path = "/v1/customers/cus_123" };
 
-    EXPECT_THROW({
-        auto task = unreachable_client.send_async(req);
-        task.result();
-    }, StripeKitException);
+    EXPECT_THROW(
+        {
+            auto task = unreachable_client.send_async(req);
+            task.result();
+        },
+        StripeKitException);
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, EmptyApiKeyThrowsConfigurationException) {
-    EXPECT_THROW({
-        stripekit::drogon::HTTPClient bad_client("", base_url);
-    }, ConfigurationException);
+    EXPECT_THROW({ stripekit::drogon::HTTPClient bad_client("", base_url); },
+                 ConfigurationException);
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, RemoteCleartextBaseUrlIsRejected) {
-    EXPECT_THROW({
-        stripekit::drogon::HTTPClient insecure_client(api_key, "http://example.com");
-    }, ConfigurationException);
+    EXPECT_THROW({ stripekit::drogon::HTTPClient insecure_client(api_key, "http://example.com"); },
+                 ConfigurationException);
 }

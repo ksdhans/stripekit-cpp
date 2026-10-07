@@ -1,9 +1,9 @@
 /** WebhookDedupStore.h
- * 
+ *
  * Webhook event-id tracking used to prevent processing the same event twice.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 
@@ -24,17 +24,17 @@ namespace stripekit {
  */
 
 /** How long an unfinished claim is honoured before another process may take it. */
-inline constexpr std::chrono::minutes defaultStaleInflightTimeout{15};
+inline constexpr std::chrono::minutes defaultStaleInflightTimeout{ 15 };
 
 /**
  * The result of trying to reserve an event for processing.
  */
 enum class ClaimOutcome {
-    Claimed, /**< This worker reserved the event id and should process it now. */
-    DuplicateProcessed, /**< A previous delivery already completed processing. */
-    DuplicateInflight, /**< Another worker is already processing the same event. */
+    Claimed,             /**< This worker reserved the event id and should process it now. */
+    DuplicateProcessed,  /**< A previous delivery already completed processing. */
+    DuplicateInflight,   /**< Another worker is already processing the same event. */
     RetryableStoreError, /**< The store failed temporarily and the caller should retry. */
-    FatalStoreError /**< The store failed in a non-recoverable way. */
+    FatalStoreError      /**< The store failed in a non-recoverable way. */
 };
 
 /**

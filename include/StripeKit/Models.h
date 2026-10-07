@@ -1,9 +1,9 @@
 /** Models.h
- * 
+ *
  * Core Stripe object models exposed by StripeKit.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 

@@ -14,8 +14,8 @@
 #include <trantor/net/EventLoopThread.h>
 #include <trantor/utils/Utilities.h>
 
-#include <coroutine>
 #include <condition_variable>
+#include <coroutine>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -29,8 +29,8 @@ namespace {
 void require_tls_for_https(std::string_view api_base_url) {
     if (api_base_url.starts_with("https://")) {
         if (trantor::utils::tlsBackend() == "None") {
-            throw ConfigurationException(
-                "The Drogon HTTP client requires a Trantor TLS backend for HTTPS Stripe API requests");
+            throw ConfigurationException("The Drogon HTTP client requires a Trantor TLS backend "
+                                         "for HTTPS Stripe API requests");
         }
         return;
     }
@@ -43,17 +43,14 @@ void require_tls_for_https(std::string_view api_base_url) {
     const std::string_view authority = api_base_url.substr(http_prefix.size());
     const std::size_t authority_end = authority.find_first_of("/?#");
     const std::string_view host = authority.substr(0, authority_end);
-    const bool local_test_host = authority.find('@') == std::string_view::npos
-        && (host == "localhost"
-        || host.starts_with("localhost:")
-        || host == "127.0.0.1"
-        || host.starts_with("127.0.0.1:")
-        || host == "[::1]"
-        || host.starts_with("[::1]:"));
+    const bool local_test_host =
+        authority.find('@') == std::string_view::npos &&
+        (host == "localhost" || host.starts_with("localhost:") || host == "127.0.0.1" ||
+         host.starts_with("127.0.0.1:") || host == "[::1]" || host.starts_with("[::1]:"));
     if (!local_test_host) {
-        throw ConfigurationException("The Drogon HTTP client requires HTTPS except for loopback test servers");
+        throw ConfigurationException(
+            "The Drogon HTTP client requires HTTPS except for loopback test servers");
     }
-
 }
 
 trantor::EventLoop* select_event_loop(EventLoopOptions options,
@@ -77,9 +74,9 @@ trantor::EventLoop* select_event_loop(EventLoopOptions options,
 class OwnedStripeClient final : public StripeClient {
 public:
     explicit OwnedStripeClient(ClientOptions options)
-        : http_client(std::move(options.api_key), std::move(options.api_base_url), options.event_loop),
-          client(http_client) {
-    }
+        : http_client(
+              std::move(options.api_key), std::move(options.api_base_url), options.event_loop),
+          client(http_client) {}
 
     Customers& customers() override {
         return client.customers();
@@ -109,22 +106,21 @@ EventLoopOptions EventLoopOptions::own() {
 }
 
 EventLoopOptions EventLoopOptions::drogon_framework() {
-    return EventLoopOptions{.mode = Mode::DrogonFramework};
+    return EventLoopOptions{ .mode = Mode::DrogonFramework };
 }
 
 EventLoopOptions EventLoopOptions::external(trantor::EventLoop& loop) {
-    return EventLoopOptions{.mode = Mode::External, .loop = &loop};
+    return EventLoopOptions{ .mode = Mode::External, .loop = &loop };
 }
 
-HTTPClient::HTTPClient(std::string api_key,
-                       std::string api_base_url,
-                       EventLoopOptions event_loop)
+HTTPClient::HTTPClient(std::string api_key, std::string api_base_url, EventLoopOptions event_loop)
     : api_key(std::move(api_key)) {
     if (this->api_key.empty()) {
         throw ConfigurationException("A Stripe API key is required for the Drogon HTTP client");
     }
     require_tls_for_https(api_base_url);
-    client = ::drogon::HttpClient::newHttpClient(api_base_url, select_event_loop(event_loop, event_loop_thread));
+    client = ::drogon::HttpClient::newHttpClient(api_base_url,
+                                                 select_event_loop(event_loop, event_loop_thread));
 }
 
 HTTPClient::~HTTPClient() = default;
@@ -134,7 +130,7 @@ Task<HttpResponse> HTTPClient::send_async(const HttpRequest& request) {
     struct State {
         std::mutex mutex;
         std::condition_variable callback_finished;
-        std::variant<HttpResponse, std::exception_ptr> result{HttpResponse{}};
+        std::variant<HttpResponse, std::exception_ptr> result{ HttpResponse{} };
         std::coroutine_handle<> handle;
         std::thread::id callback_thread;
         bool callback_running = false;
@@ -193,9 +189,11 @@ Task<HttpResponse> HTTPClient::send_async(const HttpRequest& request) {
                 state->handle = handle;
             }
             try {
-                http_client.send(request, [state = state](std::variant<HttpResponse, std::exception_ptr> value) mutable {
-                    state->complete(std::move(value));
-                });
+                http_client.send(
+                    request,
+                    [state = state](std::variant<HttpResponse, std::exception_ptr> value) mutable {
+                        state->complete(std::move(value));
+                    });
             } catch (...) {
                 state->complete(std::current_exception());
             }
@@ -212,14 +210,15 @@ Task<HttpResponse> HTTPClient::send_async(const HttpRequest& request) {
     // Awaiting through a named local instead of `co_return co_await Awaiter{...}`
     // directly: GCC 12 miscalculates the coroutine frame size for the combined
     // pattern, corrupting the heap once the network callback writes into it.
-    Awaiter awaiter{*this, request, std::make_shared<State>()};
+    Awaiter awaiter{ *this, request, std::make_shared<State>() };
     HttpResponse response = co_await awaiter;
     co_return response;
 }
 
 void HTTPClient::send(const HttpRequest& request, Completion completion) {
-    auto once_completion = std::make_shared<OnceCallback<std::variant<HttpResponse, std::exception_ptr>>>(
-        std::move(completion));
+    auto once_completion =
+        std::make_shared<OnceCallback<std::variant<HttpResponse, std::exception_ptr>>>(
+            std::move(completion));
     auto http_request = ::drogon::HttpRequest::newHttpRequest();
     switch (request.method) {
     case HttpMethod::Get:
@@ -246,10 +245,8 @@ void HTTPClient::send(const HttpRequest& request, Completion completion) {
                 StripeKitException("Drogon could not complete the Stripe API request")));
             return;
         }
-        HttpResponse converted{
-            .status_code = static_cast<int>(response->statusCode()),
-            .body = std::string(response->body())
-        };
+        HttpResponse converted{ .status_code = static_cast<int>(response->statusCode()),
+                                .body = std::string(response->body()) };
         for (const auto& [name, value] : response->headers()) {
             converted.headers.emplace(name, value);
         }
@@ -257,8 +254,8 @@ void HTTPClient::send(const HttpRequest& request, Completion completion) {
     };
 
     if (request.options.timeout.has_value()) {
-        client->sendRequest(http_request, callback,
-            static_cast<double>(request.options.timeout->count()) / 1000.0);
+        client->sendRequest(
+            http_request, callback, static_cast<double>(request.options.timeout->count()) / 1000.0);
     } else {
         client->sendRequest(http_request, callback);
     }

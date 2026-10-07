@@ -70,7 +70,8 @@ public:
      * @return The parsed session.
      * @throws ConfigurationException The body was not a valid session object.
      */
-    virtual BillingPortalSession parse_billing_portal_session(const HttpResponse& response) const = 0;
+    virtual BillingPortalSession
+    parse_billing_portal_session(const HttpResponse& response) const = 0;
 
     /**
      * Reads the error details out of a failed response.
@@ -163,7 +164,7 @@ public:
      *
      * @param http_client Transport to send requests through. Must outlive the client.
      */
-     explicit StripeApiClient(HTTPClient& http_client);
+    explicit StripeApiClient(HTTPClient& http_client);
 
     /**
      * Creates a client that decodes responses with a parser of your own.
@@ -269,9 +270,8 @@ private:
     class BillingPortalSessionOperations final : public BillingPortalSessions {
     public:
         explicit BillingPortalSessionOperations(StripeApiClient& owner);
-        Task<BillingPortalSession> create_async(
-            const CreateBillingPortalSessionRequest& request,
-            const RequestOptions& options = {}) override;
+        Task<BillingPortalSession> create_async(const CreateBillingPortalSessionRequest& request,
+                                                const RequestOptions& options = {}) override;
         void create(const CreateBillingPortalSessionRequest& request,
                     const RequestOptions& options,
                     CreateCompletion completion) override;

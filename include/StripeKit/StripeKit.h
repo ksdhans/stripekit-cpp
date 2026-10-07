@@ -1,13 +1,13 @@
 /** StripeKit.h
- * 
+ *
  * A library for interacting with the Stripe API.
  *
  * Umbrella header: including this pulls in the whole application API, and is
  * the simplest starting point. Individual headers can be included instead when
  * a translation unit only needs part of it.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 

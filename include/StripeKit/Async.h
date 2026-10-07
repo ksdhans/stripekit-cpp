@@ -1,9 +1,9 @@
 /** Async.h
- * 
+ *
  * Coroutine task primitives used by StripeKit async methods.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 
@@ -120,13 +120,13 @@ public:
             error = std::current_exception();
         }
 
-        std::optional<TResult> result; /**< The produced value, once available. */
-        std::exception_ptr error; /**< The exception that escaped, if one did. */
-        std::mutex mutex; /**< Guards the fields below. */
-        std::condition_variable ready; /**< Signalled when the coroutine finishes. */
+        std::optional<TResult> result;        /**< The produced value, once available. */
+        std::exception_ptr error;             /**< The exception that escaped, if one did. */
+        std::mutex mutex;                     /**< Guards the fields below. */
+        std::condition_variable ready;        /**< Signalled when the coroutine finishes. */
         std::coroutine_handle<> continuation; /**< Coroutine waiting on this task. */
-        bool started = false; /**< True once the coroutine has been resumed. */
-        bool completed = false; /**< True once the coroutine has finished. */
+        bool started = false;                 /**< True once the coroutine has been resumed. */
+        bool completed = false;               /**< True once the coroutine has finished. */
     };
 
     /**
@@ -150,9 +150,7 @@ public:
      *
      * @param coroutine The coroutine this task takes ownership of.
      */
-    explicit Task(std::coroutine_handle<promise_type> coroutine)
-        : handle(coroutine) {
-    }
+    explicit Task(std::coroutine_handle<promise_type> coroutine) : handle(coroutine) {}
 
     Task(const Task&) = delete;
     Task& operator=(const Task&) = delete;
@@ -162,9 +160,7 @@ public:
      *
      * @param other The task to move from.
      */
-    Task(Task&& other) noexcept
-        : handle(std::exchange(other.handle, {})) {
-    }
+    Task(Task&& other) noexcept : handle(std::exchange(other.handle, {})) {}
 
     /**
      * Takes over another task's coroutine, leaving it empty.
@@ -215,9 +211,7 @@ public:
 
         {
             std::unique_lock<std::mutex> lock(handle.promise().mutex);
-            handle.promise().ready.wait(lock, [this]() {
-                return handle.promise().completed;
-            });
+            handle.promise().ready.wait(lock, [this]() { return handle.promise().completed; });
         }
 
         if (handle.promise().error) {
@@ -281,7 +275,7 @@ public:
             }
         };
 
-        return Awaiter{handle};
+        return Awaiter{ handle };
     }
 
 private:

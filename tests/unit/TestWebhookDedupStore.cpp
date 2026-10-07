@@ -1,10 +1,10 @@
 /** TestWebhookDedupStore.cpp
- * 
+ *
  * Unit tests for in-memory webhook de-duplication store.
  */
 
-#include "TestFramework.h"
 #include "StripeKit/WebhookDedupStore.h"
+#include "TestFramework.h"
 
 #include <chrono>
 #include <string>
@@ -22,11 +22,9 @@ protected:
 };
 
 TEST_F(WebhookDedupStoreTest, FirstClaimSucceeds) {
-    const ClaimRequest request{
-        .event_id = "evt_test_1",
-        .now = now,
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest request{ .event_id = "evt_test_1",
+                                .now = now,
+                                .stale_inflight_timeout = std::chrono::minutes(15) };
 
     const ClaimResult result = store.claim(request);
     EXPECT_EQ(result.outcome, ClaimOutcome::Claimed);
@@ -35,11 +33,9 @@ TEST_F(WebhookDedupStoreTest, FirstClaimSucceeds) {
 }
 
 TEST_F(WebhookDedupStoreTest, DuplicateInflightReturnsDuplicateInflight) {
-    const ClaimRequest request{
-        .event_id = "evt_test_2",
-        .now = now,
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest request{ .event_id = "evt_test_2",
+                                .now = now,
+                                .stale_inflight_timeout = std::chrono::minutes(15) };
 
     EXPECT_EQ(store.claim(request).outcome, ClaimOutcome::Claimed);
 
@@ -51,11 +47,9 @@ TEST_F(WebhookDedupStoreTest, DuplicateInflightReturnsDuplicateInflight) {
 }
 
 TEST_F(WebhookDedupStoreTest, MarkProcessedAndSubsequentClaim) {
-    const ClaimRequest request{
-        .event_id = "evt_test_3",
-        .now = now,
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest request{ .event_id = "evt_test_3",
+                                .now = now,
+                                .stale_inflight_timeout = std::chrono::minutes(15) };
 
     EXPECT_EQ(store.claim(request).outcome, ClaimOutcome::Claimed);
 
@@ -74,28 +68,22 @@ TEST_F(WebhookDedupStoreTest, MarkProcessedUnknownEventReturnsFalse) {
 }
 
 TEST_F(WebhookDedupStoreTest, StaleInflightIsReclaimed) {
-    const ClaimRequest initial_request{
-        .event_id = "evt_test_4",
-        .now = now,
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest initial_request{ .event_id = "evt_test_4",
+                                        .now = now,
+                                        .stale_inflight_timeout = std::chrono::minutes(15) };
 
     EXPECT_EQ(store.claim(initial_request).outcome, ClaimOutcome::Claimed);
 
     // 14 minutes later - still in flight
-    const ClaimRequest inflight_request{
-        .event_id = "evt_test_4",
-        .now = now + std::chrono::minutes(14),
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest inflight_request{ .event_id = "evt_test_4",
+                                         .now = now + std::chrono::minutes(14),
+                                         .stale_inflight_timeout = std::chrono::minutes(15) };
     EXPECT_EQ(store.claim(inflight_request).outcome, ClaimOutcome::DuplicateInflight);
 
     // 15 minutes later - should be reclaimed
-    const ClaimRequest expired_request{
-        .event_id = "evt_test_4",
-        .now = now + std::chrono::minutes(15),
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest expired_request{ .event_id = "evt_test_4",
+                                        .now = now + std::chrono::minutes(15),
+                                        .stale_inflight_timeout = std::chrono::minutes(15) };
     const ClaimResult reclaimed = store.claim(expired_request);
     EXPECT_EQ(reclaimed.outcome, ClaimOutcome::Claimed);
     EXPECT_TRUE(reclaimed.should_process());
@@ -103,40 +91,35 @@ TEST_F(WebhookDedupStoreTest, StaleInflightIsReclaimed) {
 }
 
 TEST_F(WebhookDedupStoreTest, EraseExpiredRemovesOldRecords) {
-    const ClaimRequest request1{
-        .event_id = "evt_old_processed",
-        .now = now,
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest request1{ .event_id = "evt_old_processed",
+                                 .now = now,
+                                 .stale_inflight_timeout = std::chrono::minutes(15) };
     store.claim(request1);
     store.mark_processed("evt_old_processed", now);
 
-    const ClaimRequest request2{
-        .event_id = "evt_fresh_processed",
-        .now = now + std::chrono::hours(20),
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    };
+    const ClaimRequest request2{ .event_id = "evt_fresh_processed",
+                                 .now = now + std::chrono::hours(20),
+                                 .stale_inflight_timeout = std::chrono::minutes(15) };
     store.claim(request2);
     store.mark_processed("evt_fresh_processed", now + std::chrono::hours(20));
 
     // Erase records older than 24 hours relative to now + 25 hours
     store.erase_expired(now + std::chrono::hours(25), std::chrono::hours(24));
 
-    // request1 was processed at 'now', age is 25 hours >= 24h -> erased, so claiming succeeds as first-seen
-    const ClaimResult reclaim_old = store.claim(ClaimRequest{
-        .event_id = "evt_old_processed",
-        .now = now + std::chrono::hours(25),
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    });
+    // request1 was processed at 'now', age is 25 hours >= 24h -> erased, so claiming succeeds as
+    // first-seen
+    const ClaimResult reclaim_old =
+        store.claim(ClaimRequest{ .event_id = "evt_old_processed",
+                                  .now = now + std::chrono::hours(25),
+                                  .stale_inflight_timeout = std::chrono::minutes(15) });
     EXPECT_EQ(reclaim_old.outcome, ClaimOutcome::Claimed);
     EXPECT_EQ(reclaim_old.detail, "first-seen");
 
     // request2 was processed at 'now + 20h', age is 5 hours < 24h -> still DuplicateProcessed
-    const ClaimResult check_fresh = store.claim(ClaimRequest{
-        .event_id = "evt_fresh_processed",
-        .now = now + std::chrono::hours(25),
-        .stale_inflight_timeout = std::chrono::minutes(15)
-    });
+    const ClaimResult check_fresh =
+        store.claim(ClaimRequest{ .event_id = "evt_fresh_processed",
+                                  .now = now + std::chrono::hours(25),
+                                  .stale_inflight_timeout = std::chrono::minutes(15) });
     EXPECT_EQ(check_fresh.outcome, ClaimOutcome::DuplicateProcessed);
 }
 

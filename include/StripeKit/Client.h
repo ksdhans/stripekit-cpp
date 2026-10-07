@@ -1,10 +1,10 @@
 /** Client.h
- * 
+ *
  * The Stripe client for creating customers, checkout sessions, subscriptions,
  * and billing portal sessions.
- * 
+ *
  * @author Hans de Ruiter
- * 
+ *
  * @license See LICENSE.md for details.
  */
 
@@ -394,9 +394,9 @@ public:
      * @throws StripeApiException Stripe rejected the request. A common cause is
      *         the billing portal not yet being configured in the dashboard.
      */
-    virtual Task<BillingPortalSession> create_async(
-        const CreateBillingPortalSessionRequest& request,
-        const RequestOptions& options = {}) = 0;
+    virtual Task<BillingPortalSession>
+    create_async(const CreateBillingPortalSessionRequest& request,
+                 const RequestOptions& options = {}) = 0;
 
     /**
      * Creates a billing portal session, reporting the result through a callback.

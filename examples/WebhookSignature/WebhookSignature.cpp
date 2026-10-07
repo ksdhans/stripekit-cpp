@@ -17,7 +17,8 @@ namespace {
 /** Returns an environment variable, or a fallback when it is not set. */
 std::string env_or(const char* name, std::string fallback) {
     const char* value = std::getenv(name);
-    return value == nullptr || std::string(value).empty() ? std::move(fallback) : std::string(value);
+    return value == nullptr || std::string(value).empty() ? std::move(fallback)
+                                                          : std::string(value);
 }
 
 } // namespace
@@ -31,15 +32,14 @@ int main() {
 
     // The route receives raw Stripe webhook payloads and verifies the
     // Stripe-Signature header before acknowledging the delivery.
-    ::drogon::app().registerHandler("/webhook",
+    ::drogon::app().registerHandler(
+        "/webhook",
         [endpoint_secret](const ::drogon::HttpRequestPtr& request,
                           std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
             auto response = ::drogon::HttpResponse::newHttpResponse();
             try {
                 const auto event = stripekit::webhooks::construct_event(
-                    request->body(),
-                    request->getHeader("stripe-signature"),
-                    endpoint_secret);
+                    request->body(), request->getHeader("stripe-signature"), endpoint_secret);
                 std::cout << "Verified event " << event.id << " of type " << event.type << '\n';
                 response->setStatusCode(::drogon::k200OK);
                 response->setBody(R"({"received":true})");
@@ -52,10 +52,11 @@ int main() {
                 response->setStatusCode(::drogon::k400BadRequest);
             }
             callback(response);
-        }, {::drogon::Post});
+        },
+        { ::drogon::Post });
 
     std::cout << "Webhook endpoint available at http://127.0.0.1:4242/webhook\n";
-    
+
     // Starts Drogon's HTTP server and event loops for the webhook route.
     ::drogon::app().addListener("127.0.0.1", 4242).run();
     return 0;

@@ -1,5 +1,5 @@
 /** TestStripeApiClient.cpp
- * 
+ *
  * Unit tests for StripeApiClient operations and request formatting.
  */
 
@@ -79,29 +79,23 @@ TEST_F(StripeApiClientTest, CreateCustomerAsyncSuccess) {
         EXPECT_NE(req.body.find("name=Test%20User"), std::string::npos);
         EXPECT_NE(req.body.find("metadata%5Buser_id%5D=usr_999"), std::string::npos);
 
-        return HttpResponse{
-            .status_code = 200,
-            .headers = {{"request-id", "req_cust_1"}},
-            .body = R"({
+        return HttpResponse{ .status_code = 200,
+                             .headers = { { "request-id", "req_cust_1" } },
+                             .body = R"({
                 "id": "cus_new_1",
                 "email": "test@example.com",
                 "name": "Test User",
                 "livemode": false,
                 "metadata": {"user_id": "usr_999"}
-            })"
-        };
+            })" };
     });
 
-    const CreateCustomerRequest request{
-        .email = "test@example.com",
-        .name = "Test User",
-        .metadata = {{"user_id", "usr_999"}}
-    };
+    const CreateCustomerRequest request{ .email = "test@example.com",
+                                         .name = "Test User",
+                                         .metadata = { { "user_id", "usr_999" } } };
 
-    const RequestOptions options{
-        .idempotency_key = "idem_key_123",
-        .headers = {{"X-Custom-Header", "custom_val"}}
-    };
+    const RequestOptions options{ .idempotency_key = "idem_key_123",
+                                  .headers = { { "X-Custom-Header", "custom_val" } } };
 
     auto task = client->customers().create_async(request, options);
     const Customer customer = task.result();
@@ -113,21 +107,19 @@ TEST_F(StripeApiClientTest, CreateCustomerAsyncSuccess) {
 }
 
 TEST_F(StripeApiClientTest, CreateCustomerCallbackSuccess) {
-    http_client.set_response(HttpResponse{
-        .status_code = 200,
-        .headers = {},
-        .body = R"({ "id": "cus_cb_1", "email": "cb@example.com" })"
-    });
+    http_client.set_response(
+        HttpResponse{ .status_code = 200,
+                      .headers = {},
+                      .body = R"({ "id": "cus_cb_1", "email": "cb@example.com" })" });
 
     bool callback_invoked = false;
-    client->customers().create(
-        CreateCustomerRequest{.email = "cb@example.com"},
-        RequestOptions{},
-        [&](CallbackResult<Customer> result) {
-            callback_invoked = true;
-            ASSERT_TRUE(std::holds_alternative<Customer>(result));
-            EXPECT_EQ(std::get<Customer>(result).id, "cus_cb_1");
-        });
+    client->customers().create(CreateCustomerRequest{ .email = "cb@example.com" },
+                               RequestOptions{},
+                               [&](CallbackResult<Customer> result) {
+                                   callback_invoked = true;
+                                   ASSERT_TRUE(std::holds_alternative<Customer>(result));
+                                   EXPECT_EQ(std::get<Customer>(result).id, "cus_cb_1");
+                               });
 
     EXPECT_TRUE(callback_invoked);
 }
@@ -140,24 +132,22 @@ TEST(StripeApiClientLifetimeTest, WaitsForCallbackBeforeDestroyingParser) {
     std::thread destroyer([&]() {
         {
             StripeApiClient client(http_client);
-            client.customers().create(
-                CreateCustomerRequest{.email = "deferred@example.com"},
-                RequestOptions{},
-                [&](CallbackResult<Customer> result) {
-                    callback_invoked = true;
-                    ASSERT_TRUE(std::holds_alternative<Customer>(result));
-                });
+            client.customers().create(CreateCustomerRequest{ .email = "deferred@example.com" },
+                                      RequestOptions{},
+                                      [&](CallbackResult<Customer> result) {
+                                          callback_invoked = true;
+                                          ASSERT_TRUE(std::holds_alternative<Customer>(result));
+                                      });
             http_client.wait_until_pending();
         }
         destruction_finished = true;
     });
 
     http_client.wait_until_pending();
-    http_client.complete(HttpResponse{
-        .status_code = 200,
-        .headers = {},
-        .body = R"({"id":"cus_deferred_1","email":"deferred@example.com"})"
-    });
+    http_client.complete(
+        HttpResponse{ .status_code = 200,
+                      .headers = {},
+                      .body = R"({"id":"cus_deferred_1","email":"deferred@example.com"})" });
     destroyer.join();
 
     EXPECT_TRUE(callback_invoked);
@@ -168,20 +158,18 @@ TEST(StripeApiClientLifetimeTest, CallbackCanDestroyClient) {
     DeferredHttpClient http_client;
     auto client = std::make_unique<StripeApiClient>(http_client);
 
-    client->customers().create(
-        CreateCustomerRequest{.email = "destroy@example.com"},
-        RequestOptions{},
-        [&](CallbackResult<Customer> result) {
-            ASSERT_TRUE(std::holds_alternative<Customer>(result));
-            client.reset();
-        });
+    client->customers().create(CreateCustomerRequest{ .email = "destroy@example.com" },
+                               RequestOptions{},
+                               [&](CallbackResult<Customer> result) {
+                                   ASSERT_TRUE(std::holds_alternative<Customer>(result));
+                                   client.reset();
+                               });
 
     http_client.wait_until_pending();
-    http_client.complete(HttpResponse{
-        .status_code = 200,
-        .headers = {},
-        .body = R"({"id":"cus_destroy_1","email":"destroy@example.com"})"
-    });
+    http_client.complete(
+        HttpResponse{ .status_code = 200,
+                      .headers = {},
+                      .body = R"({"id":"cus_destroy_1","email":"destroy@example.com"})" });
 
     EXPECT_EQ(client, nullptr);
 }
@@ -190,11 +178,10 @@ TEST_F(StripeApiClientTest, RetrieveCustomerAsyncSuccess) {
     http_client.set_handler([](const HttpRequest& req) {
         EXPECT_EQ(req.method, HttpMethod::Get);
         EXPECT_EQ(req.path, "/v1/customers/cus_special%2Fid");
-        return HttpResponse{
-            .status_code = 200,
-            .headers = {},
-            .body = R"({ "id": "cus_special/id", "email": "special@example.com" })"
-        };
+        return HttpResponse{ .status_code = 200,
+                             .headers = {},
+                             .body =
+                                 R"({ "id": "cus_special/id", "email": "special@example.com" })" };
     });
 
     auto task = client->customers().retrieve_async("cus_special/id");
@@ -210,31 +197,27 @@ TEST_F(StripeApiClientTest, CreateCheckoutSessionAsyncSuccess) {
         EXPECT_NE(req.body.find("customer=cus_123"), std::string::npos);
         EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice%5D=price_abc"), std::string::npos);
         EXPECT_NE(req.body.find("line_items%5B0%5D%5Bquantity%5D=2"), std::string::npos);
-        EXPECT_NE(req.body.find("success_url=https%3A%2F%2Fexample.com%2Fsuccess"), std::string::npos);
-        EXPECT_NE(req.body.find("cancel_url=https%3A%2F%2Fexample.com%2Fcancel"), std::string::npos);
+        EXPECT_NE(req.body.find("success_url=https%3A%2F%2Fexample.com%2Fsuccess"),
+                  std::string::npos);
+        EXPECT_NE(req.body.find("cancel_url=https%3A%2F%2Fexample.com%2Fcancel"),
+                  std::string::npos);
         EXPECT_NE(req.body.find("metadata%5Bplan%5D=starter"), std::string::npos);
 
-        return HttpResponse{
-            .status_code = 200,
-            .headers = {},
-            .body = R"({
+        return HttpResponse{ .status_code = 200, .headers = {}, .body = R"({
                 "id": "cs_test_session_1",
                 "customer": "cus_123",
                 "status": "open",
                 "mode": "subscription",
                 "url": "https://checkout.stripe.com/c/pay/cs_test_session_1"
-            })"
-        };
+            })" };
     });
 
-    const CreateCheckoutSessionRequest request{
-        .customer_id = "cus_123",
-        .price_id = "price_abc",
-        .success_url = "https://example.com/success",
-        .cancel_url = "https://example.com/cancel",
-        .quantity = 2,
-        .metadata = {{"plan", "starter"}}
-    };
+    const CreateCheckoutSessionRequest request{ .customer_id = "cus_123",
+                                                .price_id = "price_abc",
+                                                .success_url = "https://example.com/success",
+                                                .cancel_url = "https://example.com/cancel",
+                                                .quantity = 2,
+                                                .metadata = { { "plan", "starter" } } };
 
     auto task = client->checkout().sessions().create_async(request);
     const CheckoutSession session = task.result();
@@ -250,33 +233,34 @@ TEST_F(StripeApiClientTest, CreateCheckoutSessionWithInlinePriceData) {
         EXPECT_NE(req.body.find("mode=subscription"), std::string::npos);
         EXPECT_NE(req.body.find("customer=cus_123"), std::string::npos);
         EXPECT_EQ(req.body.find("line_items%5B0%5D%5Bprice%5D="), std::string::npos);
-        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bcurrency%5D=usd"), std::string::npos);
-        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bunit_amount%5D=1200"), std::string::npos);
-        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Brecurring%5D%5Binterval%5D=month"), std::string::npos);
-        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bproduct_data%5D%5Bname%5D=StripeKit%20demo%20membership"), std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bcurrency%5D=usd"),
+                  std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bunit_amount%5D=1200"),
+                  std::string::npos);
+        EXPECT_NE(
+            req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Brecurring%5D%5Binterval%5D=month"),
+            std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bproduct_data%5D%5Bname%5D="
+                                "StripeKit%20demo%20membership"),
+                  std::string::npos);
 
-        return HttpResponse{
-            .status_code = 200,
-            .headers = {},
-            .body = R"({
+        return HttpResponse{ .status_code = 200, .headers = {}, .body = R"({
                 "id": "cs_test_inline_1",
                 "customer": "cus_123",
                 "status": "open",
                 "mode": "subscription",
                 "url": "https://checkout.stripe.com/c/pay/cs_test_inline_1"
-            })"
-        };
+            })" };
     });
 
-    auto task = client->checkout().sessions().create_async(CreateCheckoutSessionRequest{
-        .customer_id = "cus_123",
-        .product_name = "StripeKit demo membership",
-        .currency = "usd",
-        .unit_amount = 1200,
-        .recurring_interval = "month",
-        .success_url = "https://example.com/success",
-        .cancel_url = "https://example.com/cancel"
-    });
+    auto task = client->checkout().sessions().create_async(
+        CreateCheckoutSessionRequest{ .customer_id = "cus_123",
+                                      .product_name = "StripeKit demo membership",
+                                      .currency = "usd",
+                                      .unit_amount = 1200,
+                                      .recurring_interval = "month",
+                                      .success_url = "https://example.com/success",
+                                      .cancel_url = "https://example.com/cancel" });
     const CheckoutSession session = task.result();
     EXPECT_EQ(session.id, "cs_test_inline_1");
 }
@@ -288,14 +272,16 @@ TEST_F(StripeApiClientTest, CreateCheckoutSessionOneTimePurchaseInlinePriceData)
         EXPECT_NE(req.body.find("mode=payment"), std::string::npos);
         EXPECT_EQ(req.body.find("customer="), std::string::npos);
         EXPECT_EQ(req.body.find("recurring"), std::string::npos);
-        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bcurrency%5D=usd"), std::string::npos);
-        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bunit_amount%5D=2999"), std::string::npos);
-        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bproduct_data%5D%5Bname%5D=One-time%20Ebook"), std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bcurrency%5D=usd"),
+                  std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice_data%5D%5Bunit_amount%5D=2999"),
+                  std::string::npos);
+        EXPECT_NE(
+            req.body.find(
+                "line_items%5B0%5D%5Bprice_data%5D%5Bproduct_data%5D%5Bname%5D=One-time%20Ebook"),
+            std::string::npos);
 
-        return HttpResponse{
-            .status_code = 200,
-            .headers = {},
-            .body = R"({
+        return HttpResponse{ .status_code = 200, .headers = {}, .body = R"({
                 "id": "cs_test_payment_1",
                 "customer": null,
                 "status": "open",
@@ -303,18 +289,16 @@ TEST_F(StripeApiClientTest, CreateCheckoutSessionOneTimePurchaseInlinePriceData)
                 "payment_intent": "pi_test_12345",
                 "url": "https://checkout.stripe.com/c/pay/cs_test_payment_1",
                 "amount_total": 2999
-            })"
-        };
+            })" };
     });
 
-    auto task = client->checkout().sessions().create_async(CreateCheckoutSessionRequest{
-        .mode = "payment",
-        .product_name = "One-time Ebook",
-        .currency = "usd",
-        .unit_amount = 2999,
-        .success_url = "https://example.com/success",
-        .cancel_url = "https://example.com/cancel"
-    });
+    auto task = client->checkout().sessions().create_async(
+        CreateCheckoutSessionRequest{ .mode = "payment",
+                                      .product_name = "One-time Ebook",
+                                      .currency = "usd",
+                                      .unit_amount = 2999,
+                                      .success_url = "https://example.com/success",
+                                      .cancel_url = "https://example.com/cancel" });
     const CheckoutSession session = task.result();
     EXPECT_EQ(session.id, "cs_test_payment_1");
     EXPECT_EQ(session.mode, "payment");
@@ -328,29 +312,25 @@ TEST_F(StripeApiClientTest, CreateCheckoutSessionOneTimePurchaseWithPriceIdAndCu
         EXPECT_EQ(req.path, "/v1/checkout/sessions");
         EXPECT_NE(req.body.find("mode=payment"), std::string::npos);
         EXPECT_NE(req.body.find("customer=cus_456"), std::string::npos);
-        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice%5D=price_onetime_456"), std::string::npos);
+        EXPECT_NE(req.body.find("line_items%5B0%5D%5Bprice%5D=price_onetime_456"),
+                  std::string::npos);
 
-        return HttpResponse{
-            .status_code = 200,
-            .headers = {},
-            .body = R"({
+        return HttpResponse{ .status_code = 200, .headers = {}, .body = R"({
                 "id": "cs_test_payment_2",
                 "customer": "cus_456",
                 "status": "open",
                 "mode": "payment",
                 "payment_intent": "pi_test_67890",
                 "url": "https://checkout.stripe.com/c/pay/cs_test_payment_2"
-            })"
-        };
+            })" };
     });
 
-    auto task = client->checkout().sessions().create_async(CreateCheckoutSessionRequest{
-        .customer_id = "cus_456",
-        .mode = "payment",
-        .price_id = "price_onetime_456",
-        .success_url = "https://example.com/success",
-        .cancel_url = "https://example.com/cancel"
-    });
+    auto task = client->checkout().sessions().create_async(
+        CreateCheckoutSessionRequest{ .customer_id = "cus_456",
+                                      .mode = "payment",
+                                      .price_id = "price_onetime_456",
+                                      .success_url = "https://example.com/success",
+                                      .cancel_url = "https://example.com/cancel" });
     const CheckoutSession session = task.result();
     EXPECT_EQ(session.id, "cs_test_payment_2");
     EXPECT_EQ(session.customer_id, "cus_456");
@@ -397,8 +377,7 @@ TEST_F(StripeApiClientTest, SubscriptionsRetrieveAndCancelCallbacks) {
     http_client.set_response(HttpResponse{
         .status_code = 200,
         .headers = {},
-        .body = R"({ "id": "sub_cb_1", "customer": "cus_123", "status": "active" })"
-    });
+        .body = R"({ "id": "sub_cb_1", "customer": "cus_123", "status": "active" })" });
 
     bool retrieve_cb_invoked = false;
     client->subscriptions().retrieve("sub_cb_1", {}, [&](CallbackResult<Subscription> result) {
@@ -413,8 +392,7 @@ TEST_F(StripeApiClientTest, SubscriptionsRetrieveAndCancelCallbacks) {
     http_client.set_response(HttpResponse{
         .status_code = 200,
         .headers = {},
-        .body = R"({ "id": "sub_cb_1", "customer": "cus_123", "status": "canceled" })"
-    });
+        .body = R"({ "id": "sub_cb_1", "customer": "cus_123", "status": "canceled" })" });
 
     bool cancel_cb_invoked = false;
     client->subscriptions().cancel("sub_cb_1", {}, [&](CallbackResult<Subscription> result) {
@@ -427,20 +405,17 @@ TEST_F(StripeApiClientTest, SubscriptionsRetrieveAndCancelCallbacks) {
 }
 
 TEST_F(StripeApiClientTest, CreateCheckoutSessionCallbackSuccess) {
-    http_client.set_response(HttpResponse{
-        .status_code = 200,
-        .headers = {},
-        .body = R"({ "id": "cs_cb_1", "customer": "cus_123", "status": "open" })"
-    });
+    http_client.set_response(
+        HttpResponse{ .status_code = 200,
+                      .headers = {},
+                      .body = R"({ "id": "cs_cb_1", "customer": "cus_123", "status": "open" })" });
 
     bool checkout_cb_invoked = false;
     client->checkout().sessions().create(
-        CreateCheckoutSessionRequest{
-            .customer_id = "cus_123",
-            .price_id = "price_test",
-            .success_url = "https://example.com/success",
-            .cancel_url = "https://example.com/cancel"
-        },
+        CreateCheckoutSessionRequest{ .customer_id = "cus_123",
+                                      .price_id = "price_test",
+                                      .success_url = "https://example.com/success",
+                                      .cancel_url = "https://example.com/cancel" },
         {},
         [&](CallbackResult<CheckoutSession> result) {
             checkout_cb_invoked = true;
@@ -454,15 +429,13 @@ TEST_F(StripeApiClientTest, CreateBillingPortalSessionCallbackSuccess) {
     http_client.set_response(HttpResponse{
         .status_code = 200,
         .headers = {},
-        .body = R"({ "id": "bps_cb_1", "customer": "cus_123", "url": "https://billing.stripe.com/session/bps_cb_1" })"
-    });
+        .body =
+            R"({ "id": "bps_cb_1", "customer": "cus_123", "url": "https://billing.stripe.com/session/bps_cb_1" })" });
 
     bool portal_cb_invoked = false;
     client->billing_portal().sessions().create(
-        CreateBillingPortalSessionRequest{
-            .customer_id = "cus_123",
-            .return_url = "https://example.com/return"
-        },
+        CreateBillingPortalSessionRequest{ .customer_id = "cus_123",
+                                           .return_url = "https://example.com/return" },
         {},
         [&](CallbackResult<BillingPortalSession> result) {
             portal_cb_invoked = true;
@@ -477,25 +450,20 @@ TEST_F(StripeApiClientTest, CreateBillingPortalSessionAsyncSuccess) {
         EXPECT_EQ(req.method, HttpMethod::Post);
         EXPECT_EQ(req.path, "/v1/billing_portal/sessions");
         EXPECT_NE(req.body.find("customer=cus_123"), std::string::npos);
-        EXPECT_NE(req.body.find("return_url=https%3A%2F%2Fexample.com%2Freturn"), std::string::npos);
+        EXPECT_NE(req.body.find("return_url=https%3A%2F%2Fexample.com%2Freturn"),
+                  std::string::npos);
 
-        return HttpResponse{
-            .status_code = 200,
-            .headers = {},
-            .body = R"({
+        return HttpResponse{ .status_code = 200, .headers = {}, .body = R"({
                 "id": "bps_portal_1",
                 "customer": "cus_123",
                 "url": "https://billing.stripe.com/session/bps_portal_1",
                 "return_url": "https://example.com/return",
                 "created": 1700000000
-            })"
-        };
+            })" };
     });
 
-    const CreateBillingPortalSessionRequest request{
-        .customer_id = "cus_123",
-        .return_url = "https://example.com/return"
-    };
+    const CreateBillingPortalSessionRequest request{ .customer_id = "cus_123",
+                                                     .return_url = "https://example.com/return" };
 
     auto task = client->billing_portal().sessions().create_async(request);
     const BillingPortalSession session = task.result();
@@ -506,16 +474,13 @@ TEST_F(StripeApiClientTest, CreateBillingPortalSessionAsyncSuccess) {
 
 TEST_F(StripeApiClientTest, ApiErrorThrowsStripeApiException) {
     http_client.set_response(HttpResponse{
-        .status_code = 402,
-        .headers = {{"request-id", "req_card_declined"}},
-        .body = R"({
+        .status_code = 402, .headers = { { "request-id", "req_card_declined" } }, .body = R"({
             "error": {
                 "type": "card_error",
                 "code": "card_declined",
                 "message": "Your card was declined."
             }
-        })"
-    });
+        })" });
 
     try {
         auto task = client->customers().retrieve_async("cus_invalid");
@@ -532,22 +497,16 @@ TEST_F(StripeApiClientTest, ApiErrorThrowsStripeApiException) {
 }
 
 TEST_F(StripeApiClientTest, ApiErrorPassedToCallback) {
-    http_client.set_response(HttpResponse{
-        .status_code = 400,
-        .headers = {},
-        .body = R"({
+    http_client.set_response(HttpResponse{ .status_code = 400, .headers = {}, .body = R"({
             "error": {
                 "type": "invalid_request_error",
                 "message": "Invalid request parameter"
             }
-        })"
-    });
+        })" });
 
     bool callback_invoked = false;
     client->customers().retrieve(
-        "cus_test",
-        RequestOptions{},
-        [&](CallbackResult<Customer> result) {
+        "cus_test", RequestOptions{}, [&](CallbackResult<Customer> result) {
             callback_invoked = true;
             ASSERT_TRUE(std::holds_alternative<std::exception_ptr>(result));
             try {
@@ -564,20 +523,20 @@ TEST_F(StripeApiClientTest, ApiErrorPassedToCallback) {
 TEST_F(StripeApiClientTest, TransportExceptionPropagates) {
     http_client.set_exception(std::make_exception_ptr(std::runtime_error("Connection refused")));
 
-    EXPECT_THROW({
-        auto task = client->customers().retrieve_async("cus_123");
-        task.result();
-    }, std::runtime_error);
+    EXPECT_THROW(
+        {
+            auto task = client->customers().retrieve_async("cus_123");
+            task.result();
+        },
+        std::runtime_error);
 
     bool callback_invoked = false;
     http_client.set_exception(std::make_exception_ptr(std::runtime_error("Connection refused")));
-    client->customers().retrieve(
-        "cus_123",
-        RequestOptions{},
-        [&](CallbackResult<Customer> result) {
-            callback_invoked = true;
-            ASSERT_TRUE(std::holds_alternative<std::exception_ptr>(result));
-            EXPECT_THROW(std::rethrow_exception(std::get<std::exception_ptr>(result)), std::runtime_error);
-        });
+    client->customers().retrieve("cus_123", RequestOptions{}, [&](CallbackResult<Customer> result) {
+        callback_invoked = true;
+        ASSERT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+        EXPECT_THROW(std::rethrow_exception(std::get<std::exception_ptr>(result)),
+                     std::runtime_error);
+    });
     EXPECT_TRUE(callback_invoked);
 }
