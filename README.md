@@ -2,16 +2,22 @@
 
 StripeKit C++ is a C++ toolkit for integrating with Stripe for processing payments.
 
-It's designed to be platform/framework agnostic, with a pluggable backend for making 
-HTTP API calls and receiving webhooks. For now, it only includes a backend for [drogon](https://drogon.org/).
+It's designed to be platform/framework agnostic, with a pluggable backend for making
+HTTP API calls and receiving webhooks. It ships with [Drogon](https://drogon.org/)
+as the default backend (adaptor).
 
 This is part of a larger project of mine, which is a full web app [foundation/starter-kit](https://zitakit.com/) called [ZitaKit](https://zitakit.com/).
 
 ## Status
 
-Still a work in progress.
+StripeKit supports Stripe-hosted Checkout for subscriptions and one-time card
+payments. It sends API requests, parses responses, and verifies and parses webhooks.
 
-**TODO: Update once we reach MVP**
+Your application decides what to do with those results: billing policies, access
+control, and other business logic are up to you.
+
+Start with the [Quickstart](docs/Quickstart.md) and [runnable examples](examples/README.md).
+For adding support for other web frameworks, see [Writing an Adapter](docs/WritingAnAdapter.md).
 
 ## Roadmap
 
@@ -20,7 +26,7 @@ Things that may be done later (if the need arises):
 - Broad direct `payment_intents` client surface.
 - Non-card payment methods.
 - Webhook families outside the current checkout/subscription/invoice/dispute/refund scope.
-- Additional first-party framework adapters beyond Drogon.
+- Backends (adaptors) for frameworks other than Drogon.
 - Expanded billing portal configuration helpers beyond session creation.
 
 ## Build
@@ -174,6 +180,25 @@ StripeKit exports a CMake package config, so downstream consumers can link it wi
 find_package(StripeKit CONFIG REQUIRED)
 target_link_libraries(your_target PRIVATE StripeKit::stripekit)
 ```
+
+Linking StripeKit automatically requires C++20 for your target; no manual
+`CMAKE_CXX_STANDARD` setting is needed.
+Configure your application with `-DCMAKE_PREFIX_PATH=/path/to/stripekit/install`
+so CMake can find the installed package and its dependencies.
+The installed package includes the fetched libsodium archive when the fallback
+is used. JsonCpp, SQLite (when enabled), and external Drogon/libsodium packages
+must also be available to the consumer.
+
+To include StripeKit directly in a parent project instead of installing it:
+
+```cmake
+set(STRIPEKIT_BUILD_TESTS OFF CACHE BOOL "")
+set(STRIPEKIT_BUILD_EXAMPLES OFF CACHE BOOL "")
+add_subdirectory(external/StripeKit)
+target_link_libraries(your_target PRIVATE StripeKit::stripekit StripeKit::drogon)
+```
+
+Add any dependency targets supplied by the parent before `add_subdirectory()`.
 
 The Drogon runtime adapter is enabled by default. Link `StripeKit::drogon` in
 addition to `StripeKit::stripekit`:

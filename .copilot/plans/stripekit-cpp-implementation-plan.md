@@ -280,5 +280,13 @@ Deliverables:
 - [x] Dependency injection and fallback fetching wired.
 - [x] Unit/integration/sandbox E2E suites implemented (including invoice-based entitlement signals, dispute events, and refund signal coverage). (Sandbox coverage is opt-in locally and runs serially against a real Stripe sandbox.)
 - [x] GitLab CI gating and protected secret policy implemented. (Normal pipelines run CTest without sandbox secrets; protected default-branch pipelines run sandbox E2E, and same-project merge requests can run it manually with serialized sandbox access.)
-- [ ] Packaging and consumer integration docs completed. (Install/export and basic integration docs exist; full migration guidance is still pending.)
-- [ ] README refreshed for MVP release messaging and public-facing scope summary.
+- [x] Packaging and consumer integration docs completed. (Installed targets and dependencies are wired; CTest includes an installed-package consumer check. The README and Quickstart cover CMake consumers, and WritingAnAdapter includes migration and validation guidance.)
+- [x] README refreshed for MVP release messaging and public-facing scope summary.
+
+## Completion Validation
+
+- Local build and unit, integration, and installed-package consumer tests pass.
+- The installed package exposes `StripeKit::stripekit` and `StripeKit::drogon`,
+  includes the fetched libsodium archive, and discovers enabled SQLite support.
+- Real Stripe sandbox E2E remains required in trusted pipelines. It was not
+  rerun as part of the final packaging and documentation work.
