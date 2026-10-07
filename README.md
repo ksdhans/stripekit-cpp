@@ -5,7 +5,7 @@ StripeKit C++ is a C++ toolkit for integrating with Stripe for processing paymen
 It's designed to be platform/framework agnostic, with a pluggable backend for making 
 HTTP API calls and receiving webhooks. For now, it only includes a backend for [drogon](https://drogon.org/).
 
-This is part of a larger project of mine, which is a full web app framework/starter-kit.
+This is part of a larger project of mine, which is a full web app [foundation/starter-kit](https://zitakit.com/) called [ZitaKit](https://zitakit.com/).
 
 ## Status
 
