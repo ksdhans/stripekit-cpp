@@ -47,6 +47,14 @@ endif()
 add_test(NAME stripekit.unit COMMAND stripekit_unit_tests)
 
 if(STRIPEKIT_STANDALONE_PROJECT)
+    add_test(NAME stripekit.dependency-reuse
+        COMMAND ${CMAKE_COMMAND}
+            -S ${CMAKE_CURRENT_SOURCE_DIR}/packaging/DependencyReuse
+            -B ${CMAKE_BINARY_DIR}/dependency-reuse-test
+            "-DSTRIPEKIT_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
+            "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+    )
+    set_tests_properties(stripekit.dependency-reuse PROPERTIES LABELS packaging TIMEOUT 120)
     add_test(NAME stripekit.packaging
         COMMAND ${CMAKE_COMMAND}
             -DSTRIPEKIT_BUILD_DIR=${CMAKE_BINARY_DIR}

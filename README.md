@@ -294,7 +294,11 @@ cmake -S . -B build \
 	-DUSE_EXTERNAL_DROGON=ON
 ```
 
-When the external switches are on, StripeKit looks for existing CMake targets first. That means a parent project can add libsodium or Drogon before adding StripeKit, and StripeKit will reuse those targets instead of building or fetching a second copy.
+StripeKit always reuses existing dependency targets first. For libsodium it then
+checks installed CMake packages and pkg-config before fetching a fallback.
+For Drogon, enable `USE_EXTERNAL_DROGON` to use an installed package; otherwise
+StripeKit fetches its default TLS-enabled backend. The external switches disable
+fetching and make a missing dependency a configuration error.
 
 `find_package()` follows normal CMake discovery rules. For an installed dependency, point CMake at the install prefix or package config location using the standard hints:
 

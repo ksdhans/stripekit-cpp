@@ -59,24 +59,34 @@ target_include_directories(stripekit
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
+set(stripekit_libsodium_target "")
+if(NOT TARGET sodium AND NOT TARGET unofficial-sodium::sodium)
+    find_package(sodium CONFIG QUIET)
+    if(NOT TARGET sodium)
+        find_package(unofficial-sodium CONFIG QUIET)
+    endif()
+endif()
+
 if(TARGET sodium)
     set(stripekit_libsodium_target sodium)
 elseif(TARGET unofficial-sodium::sodium)
     set(stripekit_libsodium_target unofficial-sodium::sodium)
 endif()
 
-if(USE_EXTERNAL_LIBSODIUM)
-    find_package(sodium CONFIG QUIET)
-    find_package(unofficial-sodium CONFIG QUIET)
+if(NOT stripekit_libsodium_target)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(STRIPEKIT_SODIUM QUIET IMPORTED_TARGET libsodium)
+        if(TARGET PkgConfig::STRIPEKIT_SODIUM)
+            set(stripekit_libsodium_target PkgConfig::STRIPEKIT_SODIUM)
+        endif()
+    endif()
+endif()
 
-    if(TARGET sodium)
-        set(stripekit_libsodium_target sodium)
-    elseif(TARGET unofficial-sodium::sodium)
-        set(stripekit_libsodium_target unofficial-sodium::sodium)
-    else()
+if(NOT stripekit_libsodium_target)
+    if(USE_EXTERNAL_LIBSODIUM)
         message(FATAL_ERROR "USE_EXTERNAL_LIBSODIUM is ON, but StripeKit could not find libsodium. Add libsodium before StripeKit, or point CMake at the install prefix with CMAKE_PREFIX_PATH, libsodium_ROOT, or libsodium_DIR.")
     endif()
-else()
     set(STRIPEKIT_LIBSODIUM_VERSION 1.0.20)
     set(stripekit_libsodium_install_dir ${CMAKE_CURRENT_BINARY_DIR}/_deps/libsodium-install)
     file(MAKE_DIRECTORY ${stripekit_libsodium_install_dir}/include)
@@ -114,6 +124,9 @@ elseif(stripekit_libsodium_target)
     target_link_libraries(stripekit PRIVATE ${stripekit_libsodium_target})
     if(stripekit_libsodium_target STREQUAL "unofficial-sodium::sodium")
         set(STRIPEKIT_CONFIG_LIBSODIUM "find_dependency(unofficial-sodium CONFIG)")
+    elseif(stripekit_libsodium_target STREQUAL "PkgConfig::STRIPEKIT_SODIUM")
+        set(STRIPEKIT_CONFIG_LIBSODIUM
+            "find_dependency(PkgConfig)\npkg_check_modules(STRIPEKIT_SODIUM REQUIRED IMPORTED_TARGET libsodium)")
     else()
         set(STRIPEKIT_CONFIG_LIBSODIUM "find_dependency(sodium CONFIG)")
     endif()
@@ -171,30 +184,29 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
     set(STRIPEKIT_DROGON_VERSION 1.9.10)
     set(stripekit_drogon_target "")
 
-    if(USE_EXTERNAL_DROGON)
+    if(TARGET Drogon::Drogon)
+        set(stripekit_drogon_target Drogon::Drogon)
+    elseif(TARGET drogon)
+        set(stripekit_drogon_target drogon)
+    endif()
+
+    if(NOT stripekit_drogon_target AND USE_EXTERNAL_DROGON)
+        find_package(Drogon ${STRIPEKIT_DROGON_VERSION} CONFIG REQUIRED)
+        # Drogon's filesystem finder can restore an unset standard as an empty value.
+        if(DEFINED CMAKE_CXX_STANDARD AND CMAKE_CXX_STANDARD STREQUAL "")
+            unset(CMAKE_CXX_STANDARD)
+        endif()
         if(TARGET Drogon::Drogon)
             set(stripekit_drogon_target Drogon::Drogon)
         elseif(TARGET drogon)
             set(stripekit_drogon_target drogon)
         endif()
+    endif()
 
-        if(NOT stripekit_drogon_target)
-            FetchContent_Declare(
-                Drogon
-                GIT_REPOSITORY https://github.com/drogonframework/drogon.git
-                GIT_TAG v${STRIPEKIT_DROGON_VERSION}
-                GIT_SUBMODULES_RECURSE TRUE
-                FIND_PACKAGE_ARGS ${STRIPEKIT_DROGON_VERSION} CONFIG REQUIRED
-            )
-            FetchContent_MakeAvailable(Drogon)
-
-            if(TARGET Drogon::Drogon)
-                set(stripekit_drogon_target Drogon::Drogon)
-            elseif(TARGET drogon)
-                set(stripekit_drogon_target drogon)
-            endif()
+    if(NOT stripekit_drogon_target)
+        if(USE_EXTERNAL_DROGON)
+            message(FATAL_ERROR "USE_EXTERNAL_DROGON is ON, but StripeKit could not find Drogon. Add Drogon before StripeKit, or set CMAKE_PREFIX_PATH to its installation.")
         endif()
-    else()
         FetchContent_Declare(
             Drogon
             GIT_REPOSITORY https://github.com/drogonframework/drogon.git

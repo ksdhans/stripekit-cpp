@@ -22,3 +22,6 @@ The default CTest run includes `stripekit.packaging`. It installs into
 consumer using `find_package(StripeKit CONFIG REQUIRED)`. This check does not
 use Stripe credentials or make Stripe API requests. Build the project before
 running this test. The test installs the existing build outputs.
+
+`stripekit.dependency-reuse` checks that a parent project's libsodium and Drogon
+targets are reused without fetching second copies.

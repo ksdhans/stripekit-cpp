@@ -1,5 +1,10 @@
 # Installs into a private prefix and checks a separate downstream project.
 set(test_dir "${STRIPEKIT_BUILD_DIR}/package-test")
+if(NOT EXISTS "${STRIPEKIT_BUILD_DIR}/CMakeCache.txt")
+    message(FATAL_ERROR "The package test requires an existing StripeKit build directory.")
+endif()
+# Keep previously installed dependency packages from affecting this run.
+file(REMOVE_RECURSE "${test_dir}/install" "${test_dir}/consumer")
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" --install "${STRIPEKIT_BUILD_DIR}"
