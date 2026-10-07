@@ -51,7 +51,8 @@ public:
 `application/x-www-form-urlencoded`, which is what Stripe's API expects. Do not
 re-encode it or convert it to JSON.
 
-**Authenticate.** Add `Authorization: Bearer <secret key>`. The key is
+**Authenticate.** Set the `Authorization` header to `Bearer` followed by a space
+and your Stripe secret API key. The key is
 configuration your adapter holds, not part of the request. Never log it.
 
 **Apply the options.** stripekit::HttpRequest::options carries the
@@ -193,6 +194,11 @@ important property is that stripekit::WebhookDedupStore::claim() is atomic.
 Two instances racing on the same event id must produce exactly one
 stripekit::ClaimOutcome::Claimed. A read-then-write is not good enough; use
 your database's conditional insert.
+
+Implement `release_claim()` too: after a handler fails, StripeKit releases its
+reservation so the next delivery can retry immediately. Delete only an
+unfinished record with the matching claim time; leave newer reservations and
+completed records alone.
 
 @section adapter_testing Testing an adapter
 
