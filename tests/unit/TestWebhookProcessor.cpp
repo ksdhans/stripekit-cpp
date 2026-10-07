@@ -11,6 +11,9 @@
 
 #include <chrono>
 #include <string>
+#include <type_traits>
+
+static_assert(std::is_same_v<stripekit::webhooks::ProcessResult, stripekit::EventDispatchResult>);
 
 using namespace stripekit;
 using namespace stripekit::testing;

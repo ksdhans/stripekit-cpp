@@ -22,9 +22,10 @@ namespace stripekit {
  */
 
 /**
- * What a dispatcher reports back about an event.
+ * What a webhook handler reports back about an event.
  *
- * The class-based counterpart of stripekit::webhooks::ProcessResult.
+ * Used by EventDispatcher and, as stripekit::webhooks::ProcessResult, by
+ * coroutine handlers.
  */
 enum class EventDispatchResult {
     Handled,          /**< Dealt with. Stripe is told the delivery succeeded. */

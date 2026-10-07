@@ -45,13 +45,8 @@ struct ConstructEventOptions {
     std::chrono::seconds tolerance = std::chrono::minutes(5);
 };
 
-/** What a handler reports back about an event. */
-enum class ProcessResult {
-    Handled,          /**< Dealt with. Stripe is told the delivery succeeded. */
-    Ignored,          /**< Not interesting to this application. Also reported as success. */
-    RetryableFailure, /**< Something was temporarily unavailable. Stripe will deliver again. */
-    FatalFailure      /**< Needs intervention. Logged as an error; Stripe is asked to retry. */
-};
+/** What a handler reports back about an event. Shared with EventDispatcher. */
+using ProcessResult = EventDispatchResult;
 
 /**
  * The application's webhook handler.

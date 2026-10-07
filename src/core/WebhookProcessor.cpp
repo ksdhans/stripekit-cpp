@@ -24,23 +24,10 @@ WebhookResponseAction WebhookProcessor::process(const WebhookVerificationInput& 
         dedup_store,
         [this, &delivery_id, &input](
             const webhooks::Event& event) -> Task<webhooks::ProcessResult> {
-            const EventDispatchResult dispatch_result =
-                dispatcher.dispatch(VerifiedEventSignal{ .envelope = event,
-                                                         .delivery_id = std::move(delivery_id),
-                                                         .received_at = input.now });
-
-            switch (dispatch_result) {
-            case EventDispatchResult::Handled:
-                co_return webhooks::ProcessResult::Handled;
-            case EventDispatchResult::Ignored:
-                co_return webhooks::ProcessResult::Ignored;
-            case EventDispatchResult::RetryableFailure:
-                co_return webhooks::ProcessResult::RetryableFailure;
-            case EventDispatchResult::FatalFailure:
-                co_return webhooks::ProcessResult::FatalFailure;
-            }
-
-            co_return webhooks::ProcessResult::FatalFailure;
+            co_return dispatcher.dispatch(
+                VerifiedEventSignal{ .envelope = event,
+                                     .delivery_id = std::move(delivery_id),
+                                     .received_at = input.now });
         },
         webhooks::ProcessEventOptions{ .now = input.now,
                                        .tolerance = input.tolerance,
