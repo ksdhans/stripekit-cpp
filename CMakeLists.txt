@@ -99,8 +99,27 @@ else()
     set(stripekit_libsodium_target stripekit_libsodium)
 endif()
 
-if(stripekit_libsodium_target)
+set(STRIPEKIT_CONFIG_LIBSODIUM "")
+set(STRIPEKIT_INSTALL_LIBSODIUM OFF)
+if(stripekit_libsodium_target STREQUAL "stripekit_libsodium")
+    target_link_libraries(stripekit PRIVATE
+        $<BUILD_INTERFACE:stripekit_libsodium>
+        $<INSTALL_INTERFACE:StripeKit::libsodium>
+    )
+    install(FILES ${stripekit_libsodium_install_dir}/lib/libsodium.a
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/stripekit
+    )
+    set(STRIPEKIT_INSTALL_LIBSODIUM ON)
+elseif(stripekit_libsodium_target)
     target_link_libraries(stripekit PRIVATE ${stripekit_libsodium_target})
+    if(stripekit_libsodium_target STREQUAL "unofficial-sodium::sodium")
+        set(STRIPEKIT_CONFIG_LIBSODIUM "find_dependency(unofficial-sodium CONFIG)")
+    else()
+        set(STRIPEKIT_CONFIG_LIBSODIUM "find_dependency(sodium CONFIG)")
+    endif()
+endif()
+
+if(stripekit_libsodium_target)
     target_compile_definitions(stripekit PRIVATE STRIPEKIT_WITH_LIBSODIUM=1)
 else()
     message(STATUS "StripeKit: libsodium not found; webhook signature verification support is disabled")
@@ -213,6 +232,7 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
         src/adapters/drogon/DrogonWebhookEndpoint.cpp
     )
     add_library(StripeKit::drogon ALIAS stripekit_drogon)
+    set_target_properties(stripekit_drogon PROPERTIES EXPORT_NAME drogon)
     set_target_properties(stripekit_drogon PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
     target_link_libraries(stripekit_drogon PUBLIC StripeKit::stripekit ${stripekit_drogon_target})
     target_include_directories(stripekit_drogon
@@ -223,11 +243,13 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
     )
 endif()
 
+set(STRIPEKIT_CONFIG_FIND_SQLITE "")
 if(STRIPEKIT_ENABLE_SQLITE)
     find_package(SQLite3 QUIET)
     if(TARGET SQLite::SQLite3)
         target_link_libraries(stripekit PRIVATE SQLite::SQLite3)
         target_compile_definitions(stripekit PRIVATE STRIPEKIT_WITH_SQLITE3=1)
+        set(STRIPEKIT_CONFIG_FIND_SQLITE "find_dependency(SQLite3)")
     endif()
 endif()
 
