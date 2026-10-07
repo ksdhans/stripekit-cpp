@@ -106,6 +106,11 @@ else()
     message(STATUS "StripeKit: libsodium not found; webhook signature verification support is disabled")
 endif()
 
+if(NOT TARGET JsonCpp::JsonCpp AND NOT TARGET jsoncpp_lib AND NOT TARGET jsoncpp_static)
+    # Prefer the installed package that Drogon's FindJsoncpp module also uses.
+    find_package(jsoncpp CONFIG QUIET)
+endif()
+
 set(stripekit_jsoncpp_target "")
 if(TARGET JsonCpp::JsonCpp)
     set(stripekit_jsoncpp_target JsonCpp::JsonCpp)

@@ -40,12 +40,14 @@ Requirements:
 On Debian/Ubuntu, install the minimal build dependencies with:
 
 ```bash
-sudo apt install build-essential cmake git uuid-dev zlib1g-dev libssl-dev
+sudo apt install build-essential cmake git uuid-dev zlib1g-dev libssl-dev libjsoncpp-dev
 ```
 
-Drogon requires Trantor, JsonCpp, UUID, and Zlib on Linux. CMake fetches Drogon,
-its Trantor dependency, and JsonCpp, so UUID, Zlib, and TLS development packages
-need to be installed by the host system. YAML, Brotli, and c-ares support are
+Drogon requires Trantor, JsonCpp, UUID, and Zlib on Linux. CMake fetches Drogon
+and its Trantor dependency. Install JsonCpp, UUID, Zlib, and TLS development
+packages on the host system. StripeKit reuses an existing JsonCpp target or
+installed package before fetching a fallback, so it can share the system library
+used by Drogon. YAML, Brotli, and c-ares support are
 optional Drogon features and are not required by StripeKit.
 
 Configure and build:
