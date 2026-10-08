@@ -11,6 +11,8 @@
 #include "CheckoutDemoViewData.h"
 
 #include <drogon/drogon.h>
+#include <drogon/utils/Utilities.h>
+#include <drogon/utils/coroutine.h>
 
 #include <cctype>
 #include <chrono>
@@ -23,9 +25,9 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -48,6 +50,7 @@ struct AppState {
     std::int64_t unit_amount = 1200;
     std::string webhook_secret;
     bool cli_started = false;
+    bool cli_starting = false;
     stripekit::InMemoryWebhookDedupStore dedup_store;
     std::vector<EventRecord> events;
 };
@@ -105,16 +108,17 @@ std::string read_file(std::string_view path) {
     return contents.str();
 }
 
-/** Waits briefly for stripe listen to print a webhook signing secret. */
-std::string wait_for_webhook_secret(std::string_view path) {
+/** Waits briefly for a signing secret without blocking other HTTP requests. */
+::drogon::Task<std::string> wait_for_webhook_secret(std::string path) {
     for (int attempt = 0; attempt < 50; ++attempt) {
         const auto secret = extract_webhook_secret(read_file(path));
         if (!secret.empty()) {
-            return secret;
+            co_return secret;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        co_await ::drogon::sleepCoro(::trantor::EventLoop::getEventLoopOfCurrentThread(),
+                                   std::chrono::milliseconds(100));
     }
-    return {};
+    co_return std::string();
 }
 
 /** Returns the absolute path to the Stripe CLI listener log file. */
@@ -151,6 +155,7 @@ CheckoutDemoViewData make_home_view_data(const std::shared_ptr<AppState>& state,
         data.unit_amount = state->unit_amount;
         data.has_webhook_secret = !state->webhook_secret.empty();
         data.cli_started = state->cli_started;
+        data.cli_starting = state->cli_starting;
         data.events = state->events;
     }
     data.configured_summary = configured_summary(data.has_api_key ? "sk_test_" : "",
@@ -175,6 +180,14 @@ CheckoutDemoViewData make_home_view_data(const std::shared_ptr<AppState>& state,
     view_data.insert("data", make_home_view_data(state, port, std::move(notice)));
     auto response = ::drogon::HttpResponse::newHttpViewResponse("Home", view_data);
     response->setStatusCode(status);
+    return response;
+}
+
+/** Redirects a completed form submission to the home page with a notice. */
+::drogon::HttpResponsePtr home_redirect(const std::string& notice) {
+    auto response = ::drogon::HttpResponse::newHttpResponse();
+    response->setStatusCode(::drogon::k303SeeOther);
+    response->addHeader("Location", "/?notice=" + ::drogon::utils::urlEncodeComponent(notice));
     return response;
 }
 
@@ -244,9 +257,9 @@ int main(int argc, char** argv) {
     // Handler to show the current setup, checkout form, and recent verified webhook events.
     ::drogon::app().registerHandler(
         "/",
-        [state, port](const ::drogon::HttpRequestPtr&,
+        [state, port](const ::drogon::HttpRequestPtr& request,
                       std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
-            callback(home_response(state, port));
+            callback(home_response(state, port, request->getParameter("notice")));
         },
         { ::drogon::Get });
 
@@ -271,23 +284,22 @@ int main(int argc, char** argv) {
                 return;
             }
 
-            std::lock_guard<std::mutex> lock(state->mutex);
-            if (!api_key.empty()) {
-                state->api_key = api_key;
-            }
-            state->price_id = parameter_or(request, "price_id", state->price_id);
-            state->product_name = parameter_or(request, "product_name", state->product_name);
-            state->currency = parameter_or(request, "currency", state->currency);
+            std::optional<std::int64_t> parsed_amount;
             const auto unit_amount = parameter_or(request, "unit_amount");
             if (!unit_amount.empty()) {
                 try {
                     std::size_t parsed_length = 0;
-                    const auto parsed_amount = std::stoll(unit_amount, &parsed_length);
-                    if (parsed_length != unit_amount.size() || parsed_amount <= 0) {
+                    parsed_amount = std::stoll(unit_amount, &parsed_length);
+                    if (parsed_length != unit_amount.size() || *parsed_amount <= 0) {
                         throw std::invalid_argument("unit amount must be a positive integer");
                     }
-                    state->unit_amount = parsed_amount;
-                } catch (const std::exception&) {
+                } catch (const std::invalid_argument&) {
+                    callback(home_response(state,
+                                           port,
+                                           "Unit amount must be a positive integer.",
+                                           ::drogon::k400BadRequest));
+                    return;
+                } catch (const std::out_of_range&) {
                     callback(home_response(state,
                                            port,
                                            "Unit amount must be a positive integer.",
@@ -296,47 +308,70 @@ int main(int argc, char** argv) {
                 }
             }
             const std::string webhook_secret = parameter_or(request, "webhook_secret");
-            if (!webhook_secret.empty()) {
-                state->webhook_secret = webhook_secret;
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                if (!api_key.empty()) {
+                    state->api_key = api_key;
+                }
+                state->price_id = parameter_or(request, "price_id", state->price_id);
+                state->product_name = parameter_or(request, "product_name", state->product_name);
+                state->currency = parameter_or(request, "currency", state->currency);
+                if (parsed_amount) {
+                    state->unit_amount = *parsed_amount;
+                }
+                if (!webhook_secret.empty()) {
+                    state->webhook_secret = webhook_secret;
+                }
             }
-            callback(home_response(state, port, "Setup saved."));
+            callback(home_redirect("Setup saved."));
         },
         { ::drogon::Post });
 
     // Starts stripe listen in the background and captures the webhook secret it prints.
     ::drogon::app().registerHandler(
         "/stripe-cli/start",
-        [state, port](const ::drogon::HttpRequestPtr&,
-                      std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
+        [state, port](::drogon::HttpRequestPtr) -> ::drogon::Task<::drogon::HttpResponsePtr> {
             if (!stripe_cli_installed()) {
-                callback(home_response(state,
-                                       port,
-                                       "Stripe CLI is not installed or not on PATH.",
-                                       ::drogon::k400BadRequest));
-                return;
+                co_return home_response(state,
+                                        port,
+                                        "Stripe CLI is not installed or not on PATH.",
+                                        ::drogon::k400BadRequest);
+            }
+            bool already_starting;
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                already_starting = state->cli_starting;
+                if (!already_starting) {
+                    state->cli_starting = true;
+                }
+            }
+            if (already_starting) {
+                co_return home_redirect("Stripe CLI listener startup is already in progress.");
             }
             std::ostringstream command;
             std::remove(std::string(listener_log_filename).c_str());
             command << "nohup stripe listen --all-snapshot --latest --forward-to http://127.0.0.1:" << port
                     << "/webhook > " << listener_log_filename << " 2>&1 &";
             const int result = std::system(command.str().c_str());
-            const auto captured_secret =
-                result == 0 ? wait_for_webhook_secret(listener_log_filename) : std::string();
+            std::string captured_secret;
+            if (result == 0) {
+                captured_secret =
+                    co_await wait_for_webhook_secret(std::string(listener_log_filename));
+            }
             {
                 std::lock_guard<std::mutex> lock(state->mutex);
+                state->cli_starting = false;
                 state->cli_started = result == 0;
                 if (!captured_secret.empty()) {
                     state->webhook_secret = captured_secret;
                 }
             }
-            callback(
-                home_response(state,
-                              port,
-                              result != 0 ? "Could not start Stripe CLI listener."
-                              : captured_secret.empty()
-                                  ? "Stripe CLI listener start requested. Could not capture the "
-                                    "webhook secret yet; check stripe-listener.log."
-                                  : "Stripe CLI listener started and webhook secret captured."));
+            co_return home_redirect(
+                result != 0 ? "Could not start Stripe CLI listener."
+                : captured_secret.empty()
+                    ? "Stripe CLI listener start requested. Could not capture the "
+                      "webhook secret yet; check stripe-listener.log."
+                    : "Stripe CLI listener started and webhook secret captured.");
         },
         { ::drogon::Post });
 

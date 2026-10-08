@@ -71,7 +71,7 @@ auto data = @@.get<stripekit::examples::CheckoutDemoViewData>("data");
             <form method="post" action="/setup">
                 <div class="grid">
                     <label>Stripe secret key
-                        <input name="api_key" autocomplete="off" placeholder="sk_test_..." value="<%c++ $$ << (data.has_api_key ? "sk_test_..." : ""); %>">
+                        <input name="api_key" autocomplete="off" placeholder="sk_test_...">
                     </label>
                     <label>Existing recurring price id, optional
                         <input name="price_id" placeholder="price_..." value="{% data.price_id %}">
@@ -89,8 +89,9 @@ auto data = @@.get<stripekit::examples::CheckoutDemoViewData>("data");
                     <input name="currency" value="{% data.currency %}">
                 </label>
                 <label>Webhook signing secret
-                    <input name="webhook_secret" autocomplete="off" placeholder="whsec_..." value="<%c++ $$ << (data.has_webhook_secret ? "whsec_..." : ""); %>">
+                    <input name="webhook_secret" autocomplete="off" placeholder="whsec_...">
                 </label>
+                <p class="muted">Leave credential fields blank to keep saved values.</p>
                 <button type="submit">Save setup</button>
             </form>
             <div class="status">
@@ -100,8 +101,11 @@ auto data = @@.get<stripekit::examples::CheckoutDemoViewData>("data");
             <p><code>stripe listen --all-snapshot --latest --forward-to http://127.0.0.1:<%c++ $$ << data.port; %>/webhook</code></p>
             <p class="muted">Listener log: <code>{% data.listener_log_path %}</code></p>
             <form method="post" action="/stripe-cli/start">
-                <button class="secondary" type="submit">Start Stripe CLI listener</button>
+                <button class="secondary" type="submit" <%c++ if(data.cli_starting) { $$ << "disabled"; } %>>Start Stripe CLI listener</button>
             </form>
+            <%c++ if(data.cli_starting) { %>
+            <p class="muted listener-status">Waiting for the Stripe CLI listener signing secret.</p>
+            <%c++ } %>
             <%c++ if(data.cli_started) { %>
             <%c++ if(data.has_webhook_secret) { %>
             <p class="muted listener-status">Listener is started and the webhook signing secret was captured automatically.</p>

@@ -46,6 +46,20 @@ endif()
 
 add_test(NAME stripekit.unit COMMAND stripekit_unit_tests)
 
+if(UNIX AND TARGET stripekit_drogon_checkout_demo)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME stripekit.checkout-demo
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/integration/TestCheckoutDemo.py
+                $<TARGET_FILE:stripekit_drogon_checkout_demo>
+        )
+        set_tests_properties(stripekit.checkout-demo PROPERTIES TIMEOUT 30)
+    else()
+        message(STATUS "StripeKit: Python3 not found; checkout demo regression test is disabled")
+    endif()
+endif()
+
 if(STRIPEKIT_STANDALONE_PROJECT)
     add_test(NAME stripekit.dependency-reuse
         COMMAND ${CMAKE_COMMAND}

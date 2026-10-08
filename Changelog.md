@@ -7,7 +7,12 @@ version section when a release is tagged.
 
 - The Stripe CLI tool now requires setting which events you want to receive.
   Updated the Stripe Checkout Demo and related docs
-
+- Fixes to StripeCheckoutDemo:
+    - Fixed a mutex locking issue that could cause the demo to hang after 
+      "Save setup" is clicked
+    - Waiting for the listener's signing secret no longer blocks the server's 
+      event loop
+    - Successful setup and listener actions now redirect to the home page
 
 ## 0.1.0 2026-10-07
 
