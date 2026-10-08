@@ -3,7 +3,7 @@
 Notable changes for users of StripeKit. Unreleased changes move into a dated
 version section when a release is tagged.
 
-## Unreleased
+## 0.1.0 2026-10-08
 
 - The Stripe CLI tool now requires setting which events you want to receive.
   Updated the Stripe Checkout Demo and related docs
