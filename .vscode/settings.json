@@ -1,4 +1,11 @@
 {
+    "C_Cpp.formatting": "clangFormat",
+    "C_Cpp.clang_format_path": "/usr/bin/clang-format-21",
+    "C_Cpp.clang_format_style": "file",
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.formatOnSave": true
+    },
     "svn.ignoreMissingSvnWarning": true,
     "chat.tools.terminal.autoApprove": {
         "pkg-config": true,

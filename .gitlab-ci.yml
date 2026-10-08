@@ -1,5 +1,5 @@
 ---
-image: debian:bookworm
+image: ubuntu:26.04
 
 stages:
   - verify
@@ -14,6 +14,7 @@ variables:
 # only change when their pinned versions in CMakeLists.txt change.
 .deps_cache: &deps_cache
   key:
+    prefix: ubuntu-26.04
     files:
       - CMakeLists.txt
   paths:
@@ -33,9 +34,9 @@ verify:format:
   cache: []
   before_script:
     - apt-get update
-    - apt-get install -y --no-install-recommends clang-format-14
+    - apt-get install -y --no-install-recommends clang-format-21
   script:
-    - find include src tests examples -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0 | xargs -0 clang-format-14 --dry-run --Werror
+    - find include src tests examples -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0 | xargs -0 clang-format-21 --dry-run --Werror
 
 build:cmake:
   stage: build

@@ -116,7 +116,7 @@ std::string read_file(std::string_view path) {
             co_return secret;
         }
         co_await ::drogon::sleepCoro(::trantor::EventLoop::getEventLoopOfCurrentThread(),
-                                   std::chrono::milliseconds(100));
+                                     std::chrono::milliseconds(100));
     }
     co_return std::string();
 }
@@ -350,8 +350,8 @@ int main(int argc, char** argv) {
             }
             std::ostringstream command;
             std::remove(std::string(listener_log_filename).c_str());
-            command << "nohup stripe listen --all-snapshot --latest --forward-to http://127.0.0.1:" << port
-                    << "/webhook > " << listener_log_filename << " 2>&1 &";
+            command << "nohup stripe listen --all-snapshot --latest --forward-to http://127.0.0.1:"
+                    << port << "/webhook > " << listener_log_filename << " 2>&1 &";
             const int result = std::system(command.str().c_str());
             std::string captured_secret;
             if (result == 0) {

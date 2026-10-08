@@ -2,14 +2,22 @@
 
 This directory is reserved for CI helper scripts (for things such as automated testing).
 
+All pipeline jobs use Ubuntu 26.04.
+
 ## C++ Formatting
 
-The `verify:format` job uses clang-format 14 and the repository's `.clang-format`
+The `verify:format` job uses clang-format 21 and the repository's `.clang-format`
 configuration. To run the same check locally from the repository root:
 
 ```sh
-find include src tests examples -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0 | xargs -0 clang-format-14 --dry-run --Werror
+find include src tests examples -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0 | xargs -0 clang-format-21 --dry-run --Werror
 ```
+
+On Ubuntu 26.04, install it with `sudo apt install clang-format-21`.
+Configure your editor to use `clang-format-21` as well.
+The VS Code workspace settings use `/usr/bin/clang-format-21` with Microsoft's
+C/C++ extension and format C++ files on save. If the executable is installed
+elsewhere, update `C_Cpp.clang_format_path` in the workspace settings.
 
 To apply the formatting, replace `--dry-run --Werror` with `-i`.
 Use a trailing comma after the last member of a multiline initializer list to
