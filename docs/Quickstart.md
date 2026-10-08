@@ -224,7 +224,7 @@ in for it during development. With your application running, in a separate
 terminal run:
 
 @code{.sh}
-stripe listen --forward-to localhost:8080/stripe/webhook
+stripe listen --all-snapshot --forward-to localhost:8080/stripe/webhook
 @endcode
 
 This prints a secret starting with `whsec_`. Set that as `STRIPE_WEBHOOK_SECRET`

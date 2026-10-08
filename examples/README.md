@@ -70,5 +70,8 @@ exact commands they need.
 	session and prints the hosted portal URL.
 
 The examples pin `Stripe-Version: 2024-06-20` on outbound calls. When testing
-webhooks locally, use `stripe listen --latest` so Stripe CLI event payloads are
-not shaped by an older account default API version.
+webhooks locally, use `stripe listen --all-snapshot --latest` to forward all
+events with full object payloads using the latest API version rather than an
+older account default. Current Stripe CLI versions require an explicit event
+selection; use `--events` instead of `--all-snapshot` to forward selected event
+types.

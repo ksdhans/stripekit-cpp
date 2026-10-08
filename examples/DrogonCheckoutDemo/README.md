@@ -74,7 +74,7 @@ The setup page checks whether the Stripe CLI is installed. Click **Start Stripe
 CLI listener** to run this local listener:
 
 ```bash
-stripe listen --latest --forward-to http://127.0.0.1:4242/webhook
+stripe listen --all-snapshot --latest --forward-to http://127.0.0.1:4242/webhook
 ```
 
 The app reads the `whsec_...` signing secret from `stripe-listener.log` and keeps

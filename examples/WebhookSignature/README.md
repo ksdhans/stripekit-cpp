@@ -18,7 +18,7 @@ it can run before the example server is up.
 Terminal 1:
 
 ```bash
-stripe listen --latest --forward-to http://127.0.0.1:4242/webhook
+stripe listen --all-snapshot --latest --forward-to http://127.0.0.1:4242/webhook
 ```
 
 Copy the `whsec_...` value printed by the listener:

@@ -317,7 +317,7 @@ int main(int argc, char** argv) {
             }
             std::ostringstream command;
             std::remove(std::string(listener_log_filename).c_str());
-            command << "nohup stripe listen --latest --forward-to http://127.0.0.1:" << port
+            command << "nohup stripe listen --all-snapshot --latest --forward-to http://127.0.0.1:" << port
                     << "/webhook > " << listener_log_filename << " 2>&1 &";
             const int result = std::system(command.str().c_str());
             const auto captured_secret =

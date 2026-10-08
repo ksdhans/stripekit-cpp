@@ -5,6 +5,9 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- The Stripe CLI tool now requires setting which events you want to receive.
+  Updated the Stripe Checkout Demo and related docs
+
 
 ## 0.1.0 2026-10-07
 

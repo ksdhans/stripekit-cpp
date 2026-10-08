@@ -97,7 +97,7 @@ auto data = @@.get<stripekit::examples::CheckoutDemoViewData>("data");
                 <span class="pill">Stripe CLI: <%c++ $$ << (data.stripe_cli_installed ? "installed" : "not found"); %></span>
                 <span class="pill">Webhook endpoint: /webhook</span>
             </div>
-            <p><code>stripe listen --latest --forward-to http://127.0.0.1:<%c++ $$ << data.port; %>/webhook</code></p>
+            <p><code>stripe listen --all-snapshot --latest --forward-to http://127.0.0.1:<%c++ $$ << data.port; %>/webhook</code></p>
             <p class="muted">Listener log: <code>{% data.listener_log_path %}</code></p>
             <form method="post" action="/stripe-cli/start">
                 <button class="secondary" type="submit">Start Stripe CLI listener</button>

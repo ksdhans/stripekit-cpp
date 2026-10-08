@@ -222,7 +222,7 @@ before releases that touch checkout, or when changing
    from:
 
    ```bash
-   stripe listen --latest --forward-to http://127.0.0.1:4242/webhook
+   stripe listen --all-snapshot --latest --forward-to http://127.0.0.1:4242/webhook
    ```
 
 4. Start Checkout from the mock sales page and pay with a
