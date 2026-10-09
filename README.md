@@ -368,3 +368,6 @@ Additional usage notes are in `docs/`.
 ## License
 
 This project has a BSD-3-Clause license. See `LICENSE`.
+
+
+[![Visitors](https://api.visitorbadge.io/api/visitors?path=https%3A%2F%2Fgitlab.com%2Fkeasigmadelta%2Fstripekit-cpp&countColor=%23263759)](https://visitorbadge.io/status?path=https%3A%2F%2Fgitlab.com%2Fkeasigmadelta%2Fstripekit-cpp)
