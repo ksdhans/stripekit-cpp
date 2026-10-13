@@ -5,11 +5,13 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.1.2 2026-10-13
+
 - The drogon backend's webhook HTTP request handler was doing a synchronous 
   wait (via .result()). Fixed, so that it's fully asynchronous, using 
   co-routines (as it should).
 
-## 0.1.0 2026-10-08
+## 0.1.1 2026-10-08
 
 - The Stripe CLI tool now requires setting which events you want to receive.
   Updated the Stripe Checkout Demo and related docs
