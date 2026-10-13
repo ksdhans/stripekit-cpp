@@ -56,10 +56,6 @@ result_for(const Event& event, ClaimOutcome claim_outcome, WebhookResponseAction
                                    .event_type = event.type };
 }
 
-Task<ProcessEventOnceResult> ready_result(ProcessEventOnceResult result) {
-    co_return result;
-}
-
 /** Makes a finished, failed attempt available to the next delivery. */
 void release_failed_claim(WebhookDedupStore& store,
                           const Event& event,
@@ -117,8 +113,8 @@ Task<ProcessEventOnceResult> process_event_once(const Event& event,
                     LogLevel::Error,
                     std::string("Webhook store claim failed: ") + error.what(),
                     event);
-        return ready_result(result_for(
-            event, ClaimOutcome::RetryableStoreError, WebhookResponseAction::RetryLater));
+        co_return result_for(
+            event, ClaimOutcome::RetryableStoreError, WebhookResponseAction::RetryLater);
     }
 
     if (!claim_result.should_process()) {
@@ -133,22 +129,27 @@ Task<ProcessEventOnceResult> process_event_once(const Event& event,
                         "Webhook store returned a retryable claim error",
                         event);
         }
-        return ready_result(result_for(
-            event, claim_result.outcome, map_claim_outcome_to_response(claim_result.outcome)));
+        co_return result_for(
+            event, claim_result.outcome, map_claim_outcome_to_response(claim_result.outcome));
     }
 
     ProcessResult process_result;
     try {
-        auto handler_task = handler(event);
-        process_result = handler_task.result();
+        process_result = co_await handler(event);
     } catch (const std::exception& error) {
         log_message(options.logger,
                     LogLevel::Error,
                     std::string("Webhook handler failed: ") + error.what(),
                     event);
         release_failed_claim(dedup_store, event, options);
-        return ready_result(
-            result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
+        co_return result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater);
+    } catch (...) {
+        log_message(options.logger,
+                    LogLevel::Error,
+                    "Webhook handler failed with an unknown exception",
+                    event);
+        release_failed_claim(dedup_store, event, options);
+        co_return result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater);
     }
 
     if (process_result == ProcessResult::RetryableFailure ||
@@ -159,8 +160,7 @@ Task<ProcessEventOnceResult> process_event_once(const Event& event,
                     "Webhook handler requested a retry",
                     event);
         release_failed_claim(dedup_store, event, options);
-        return ready_result(
-            result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
+        co_return result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater);
     }
 
     try {
@@ -170,8 +170,7 @@ Task<ProcessEventOnceResult> process_event_once(const Event& event,
                         "Webhook store could not mark the event as processed",
                         event);
             release_failed_claim(dedup_store, event, options);
-            return ready_result(
-                result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
+            co_return result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater);
         }
     } catch (const std::exception& error) {
         log_message(options.logger,
@@ -179,12 +178,11 @@ Task<ProcessEventOnceResult> process_event_once(const Event& event,
                     std::string("Webhook store completion failed: ") + error.what(),
                     event);
         release_failed_claim(dedup_store, event, options);
-        return ready_result(
-            result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater));
+        co_return result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater);
     }
 
-    return ready_result(
-        result_for(event, claim_result.outcome, WebhookResponseAction::AcknowledgeSuccess));
+    co_return result_for(
+        event, claim_result.outcome, WebhookResponseAction::AcknowledgeSuccess);
 }
 
 Task<ProcessEventOnceResult> process_event_once(std::string_view payload,

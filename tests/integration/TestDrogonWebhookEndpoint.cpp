@@ -98,6 +98,22 @@ TEST_F(DrogonWebhookEndpointIntegrationTest, ValidIgnoredEventReturns200AndInvok
     EXPECT_EQ(DrogonIntegrationEnvironment::get().telemetry.ignored_events_count.load(), 1);
 }
 
+// The standard handler suspends on Drogon's event loop for this event type.
+// A successful response verifies the webhook route awaits coroutine handlers
+// instead of blocking on their tasks.
+TEST_F(DrogonWebhookEndpointIntegrationTest, CoroutineHandlerCanSuspendOnDrogonEventLoop) {
+    const std::string payload = make_event_payload("evt_int_async_1", "invoice.async_test");
+    const std::string signature = make_stripe_signature_header(now_unix, payload, webhook_secret);
+
+    auto [result, response] = DrogonIntegrationEnvironment::get().send_raw_post(
+        "/test/webhook/standard", payload, { { "stripe-signature", signature } });
+
+    EXPECT_EQ(result, ::drogon::ReqResult::Ok);
+    ASSERT_TRUE(response != nullptr);
+    EXPECT_EQ(response->statusCode(), ::drogon::k200OK);
+    EXPECT_EQ(DrogonIntegrationEnvironment::get().telemetry.handled_events_count.load(), 1);
+}
+
 TEST_F(DrogonWebhookEndpointIntegrationTest, LegacyStringRequestIdReturns200AndRecordsRequestId) {
     ASSERT_TRUE(DrogonIntegrationEnvironment::get().class_endpoint_dispatcher != nullptr);
     DrogonIntegrationEnvironment::get().class_endpoint_dispatcher->clear();

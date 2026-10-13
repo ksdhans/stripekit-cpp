@@ -120,6 +120,9 @@ if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
     endif()
 
     add_test(NAME stripekit.integration COMMAND stripekit_integration_tests)
+    add_test(NAME stripekit.webhook-coroutine
+        COMMAND stripekit_integration_tests CoroutineHandlerCanSuspendOnDrogonEventLoop)
+    set_tests_properties(stripekit.webhook-coroutine PROPERTIES TIMEOUT 15)
 
     if(STRIPEKIT_BUILD_SANDBOX_TESTS)
         add_executable(stripekit_sandbox_tests

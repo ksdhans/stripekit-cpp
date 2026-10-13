@@ -677,6 +677,11 @@ private:
               .dedup_store = dedup_store,
               .handler = [this](const stripekit::webhooks::Event& event)
                   -> stripekit::Task<stripekit::webhooks::ProcessResult> {
+                  if (event.type == "invoice.async_test") {
+                      co_await ::drogon::sleepCoro(
+                          ::trantor::EventLoop::getEventLoopOfCurrentThread(),
+                          std::chrono::milliseconds(10));
+                  }
                   telemetry.record_event(event.id);
                   if (event.type == "customer.created") {
                       telemetry.ignored_events_count++;
