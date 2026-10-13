@@ -196,7 +196,7 @@ Task<ProcessEventOnceResult> process_event_once(std::string_view payload,
         endpoint_secret,
         ConstructEventOptions{ .now = options.now, .tolerance = options.tolerance });
 
-    return process_event_once(event, dedup_store, std::move(handler), options);
+    co_return co_await process_event_once(event, dedup_store, std::move(handler), options);
 }
 
 } // namespace stripekit::webhooks
