@@ -181,8 +181,7 @@ Task<ProcessEventOnceResult> process_event_once(const Event& event,
         co_return result_for(event, claim_result.outcome, WebhookResponseAction::RetryLater);
     }
 
-    co_return result_for(
-        event, claim_result.outcome, WebhookResponseAction::AcknowledgeSuccess);
+    co_return result_for(event, claim_result.outcome, WebhookResponseAction::AcknowledgeSuccess);
 }
 
 Task<ProcessEventOnceResult> process_event_once(std::string_view payload,

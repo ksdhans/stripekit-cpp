@@ -35,10 +35,8 @@ void log_webhook_failure(Logger* logger, std::string_view message) {
  * @param signature Stripe's signature header.
  * @return The HTTP response for this delivery.
  */
-::drogon::Task<::drogon::HttpResponsePtr> handle_webhook_request(
-    WebhookHandlerOptions options,
-    std::string payload,
-    std::string signature) {
+::drogon::Task<::drogon::HttpResponsePtr>
+handle_webhook_request(WebhookHandlerOptions options, std::string payload, std::string signature) {
     auto response = ::drogon::HttpResponse::newHttpResponse();
     try {
         const auto result = co_await webhooks::process_event_once(
@@ -49,8 +47,7 @@ void log_webhook_failure(Logger* logger, std::string_view message) {
             options.handler,
             webhooks::ProcessEventOptions{ .now = std::chrono::system_clock::now(),
                                            .tolerance = options.tolerance,
-                                           .stale_inflight_timeout =
-                                               options.stale_inflight_timeout,
+                                           .stale_inflight_timeout = options.stale_inflight_timeout,
                                            .logger = options.logger });
 
         response->setStatusCode(result.response_action == WebhookResponseAction::AcknowledgeSuccess
@@ -58,8 +55,7 @@ void log_webhook_failure(Logger* logger, std::string_view message) {
                                     : ::drogon::k500InternalServerError);
     } catch (const SignatureVerificationException& error) {
         log_webhook_failure(options.logger,
-                            std::string("Webhook signature verification failed: ") +
-                                error.what());
+                            std::string("Webhook signature verification failed: ") + error.what());
         response->setStatusCode(::drogon::k400BadRequest);
     } catch (const StripeKitException& error) {
         log_webhook_failure(options.logger,
@@ -120,9 +116,7 @@ void register_webhook_handler(WebhookHandlerOptions options) {
         [options = std::move(options)](
             ::drogon::HttpRequestPtr request) -> ::drogon::Task<::drogon::HttpResponsePtr> {
             return handle_webhook_request(
-                options,
-                std::string(request->body()),
-                request->getHeader("stripe-signature"));
+                options, std::string(request->body()), request->getHeader("stripe-signature"));
         },
         { ::drogon::Post });
 }
