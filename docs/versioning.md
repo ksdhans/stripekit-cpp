@@ -41,8 +41,34 @@ Before tagging:
    sandbox tests, passes for that commit.
 4. Check out that tested commit and confirm `git status --short` is empty.
 
-Create an annotated tag on the current commit, then push that tag. For example,
-for version 0.1.0:
+To tag the release, run the `tag-release.sh` script:
+
+```sh
+./tag-release.sh
+```
+
+The script verifies that:
+
+- You are on the `main` branch.
+- The working directory has no uncommitted changes or untracked files.
+- The local `main` branch is in sync with `origin/main`.
+- The project version in [CMakeLists.txt](../CMakeLists.txt) matches SemVer format.
+- The release tag does not already exist locally or on the remote.
+- [Changelog.md](../Changelog.md) contains release notes and the release date for this version, and the `Unreleased` section has been cleared.
+
+You can preview the checks without creating a tag by passing `--dry-run`:
+
+```sh
+./tag-release.sh --dry-run
+```
+
+To create the tag and automatically push it to the remote repository:
+
+```sh
+./tag-release.sh --push
+```
+
+To tag manually instead:
 
 ```sh
 git tag -a v0.1.0 -m "StripeKit 0.1.0"
@@ -55,7 +81,7 @@ Push the specific tag rather than all local tags. Do not move a published releas
 tag; publish a new version if a correction is needed.
 
 Create a GitLab release from the tag and use that version's changelog entry as
-its release notes. These few commands do not require a separate release script.
+its release notes.
 
 ## Build Metadata
 
