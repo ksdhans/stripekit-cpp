@@ -221,7 +221,7 @@ std::string idempotency_key(std::string_view prefix) {
 std::shared_ptr<stripekit::StripeClient> make_client(std::string api_key) {
     std::unique_ptr<stripekit::StripeClient> client = stripekit::drogon::make_stripe_client(
         { .api_key = std::move(api_key),
-          .api_base_url = "https://api.stripe.com",
+          .api_base_url = stripekit::default_api_base_url,
           // This demo is already running inside Drogon, so StripeKit sends
           // outbound API requests through the Drogon framework's event loop instead
           // of creating a separate StripeKit-owned event loop thread.

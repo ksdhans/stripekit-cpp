@@ -45,7 +45,8 @@ public:
 @subsection adapter_http_contract What your implementation must do
 
 **Resolve the path.** stripekit::HttpRequest::path is relative, like
-`/v1/customers`. Join it to Stripe's base URL, `https://api.stripe.com`.
+`/v1/customers`. Join it to `stripekit::default_api_base_url`, declared in
+`StripeKit/ApiConstants.h`, unless the caller supplies a different base URL.
 
 **Send the body as-is.** stripekit::HttpRequest::body is already encoded as
 `application/x-www-form-urlencoded`, which is what Stripe's API expects. Do not

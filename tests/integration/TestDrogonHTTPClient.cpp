@@ -19,6 +19,11 @@
 using namespace stripekit;
 using namespace stripekit::testing;
 
+TEST(DrogonClientOptionsTest, UsesSharedApiEndpointByDefault) {
+    const stripekit::drogon::ClientOptions options;
+    EXPECT_EQ(options.api_base_url, std::string(default_api_base_url));
+}
+
 class DrogonHTTPClientIntegrationTest : public ::testing::Test {
 protected:
     void SetUp() override {

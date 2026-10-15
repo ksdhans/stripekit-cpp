@@ -46,7 +46,7 @@ struct HttpRequest {
     /**
      * Path relative to the Stripe API base URL, for example "/v1/customers".
      *
-     * Join it to the base URL, normally "https://api.stripe.com".
+     * Join it to the base URL, normally stripekit::default_api_base_url.
      * Path components and query values are already percent-encoded. Send them
      * unchanged; encoding again would corrupt IDs and list filters.
      */

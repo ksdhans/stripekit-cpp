@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "StripeKit/ApiConstants.h"
 #include "StripeKit/Callback.h"
 #include "StripeKit/Client.h"
 #include "StripeKit/Errors.h"

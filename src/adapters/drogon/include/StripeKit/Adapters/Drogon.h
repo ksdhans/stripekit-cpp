@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include "StripeKit/ApiConstants.h"
 #include "StripeKit/HTTPClient.h"
 #include "StripeKit/Logging.h"
 #include "StripeKit/StripeApiClient.h"
@@ -91,7 +92,7 @@ struct ClientOptions {
     std::string api_key;
 
     /** Stripe API base URL. HTTPS is required except for loopback mock servers. */
-    std::string api_base_url = "https://api.stripe.com";
+    std::string api_base_url = default_api_base_url;
 
     /** Which event loop outbound requests run on. */
     EventLoopOptions event_loop;
@@ -153,7 +154,7 @@ public:
      *        server, pass EventLoopOptions::drogon_framework().
      */
     explicit HTTPClient(std::string api_key,
-                        std::string api_base_url = "https://api.stripe.com",
+                        std::string api_base_url = default_api_base_url,
                         EventLoopOptions event_loop = {});
 
     /** Destroys the client, stopping its event loop thread if it owns one. */
