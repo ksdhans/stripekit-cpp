@@ -9,8 +9,9 @@ prices or prices introduced at different times.
 
 Use reusable prices when customers purchase the same offering, or when existing
 subscribers must keep their original pricing after you change prices for new
-customers. StripeKit can create, retrieve, and update products, and create,
-retrieve, and list prices. Your application decides when to call these operations
+customers. StripeKit can create, retrieve, and update products and prices, list
+prices, and switch existing subscription items to new prices.
+Your application decides when to call these operations
 and stores the resulting IDs.
 
 @section catalog_setup Before you start
@@ -119,8 +120,115 @@ Keep the old price ID associated with existing subscriptions.
 **Creating a new price does not change existing subscriptions.** This supports
 grandfathered pricing: existing customers keep the old price while new customers
 purchase at the new price. Moving existing subscriptions to a different price
-requires a separate subscription change; StripeKit does not currently expose
-that operation. It also does not currently expose price updates or archiving.
+requires a separate subscription change, as described below.
+
+@subsection catalog_default Choose the product's default price
+
+After creating a replacement price, you can make it the product's default:
+
+@code
+stripekit::UpdateProductRequest defaults;
+defaults.default_price_id = price.id;
+const auto product_with_default =
+    co_await stripe->products().update_async(product.id, defaults);
+@endcode
+
+The price must be active and belong to this product. Stripe validates these
+requirements. `Product::default_price_id` reports the selected price, or an
+empty string when none is set. Changing it does not change existing subscriptions.
+Checkout still requires you to supply `CreateCheckoutSessionRequest::price_id`.
+
+@subsection catalog_archive Archive prices and move lookup keys
+
+@code
+stripekit::UpdatePriceRequest archive;
+archive.active = false;
+const auto archived = co_await stripe->prices().update_async(old_price_id, archive);
+@endcode
+
+Archiving prevents new purchases without changing existing subscriptions.
+You can also update `nickname` (an internal label), metadata, and `lookup_key`.
+Unset fields remain unchanged; empty nickname or lookup-key strings clear them.
+An empty metadata value removes that key.
+
+To move a stable lookup key to a replacement price atomically, supply the key
+and set `transfer_lookup_key = true` in the replacement price's update request.
+Only transfer a key when its meaning is "current price"; keep versioned keys
+distinct when they identify specific pricing terms.
+
+Amounts, currencies, and billing intervals cannot be changed by a price update.
+
+@section catalog_subscriptions Change an existing subscription's pricing
+
+Retrieve the subscription and choose the item to change from `Subscription::items`.
+Each item exposes its ID, price ID, and optional quantity. Do not assume every
+subscription contains only one item. `items_has_more` indicates a partial list;
+StripeKit does not fetch more pages or expose subscription-item listing yet.
+
+For a licensed item, explicitly copy its quantity when replacing its price.
+Stripe otherwise resets the quantity to one. Supply the existing `si_...` item
+ID, not just the new price ID: omitting the item ID in Stripe's API adds another
+item rather than replacing it. StripeKit requires an existing item ID.
+
+@code
+stripekit::UpdateSubscriptionRequest migration;
+migration.items.push_back({
+    .item_id = saved_item_id,
+    .price_id = replacement_price_id,
+    .quantity = saved_quantity
+});
+migration.proration_behavior = stripekit::ProrationBehavior::None;
+migration.payment_behavior = stripekit::PaymentBehavior::AllowIncomplete;
+
+stripekit::RequestOptions migration_options;
+migration_options.idempotency_key = "subscription-migration-v2";
+const auto changed = co_await stripe->subscriptions().update_async(
+    subscription_id, migration, migration_options);
+@endcode
+
+Use a distinct, stable idempotency key for each subscription change. Retry with
+the same key and unchanged inputs after an interrupted request.
+Only listed items change. A request accepts one through twenty distinct item
+IDs and requires a positive quantity for each. This operation targets licensed,
+fixed-quantity subscriptions, not metered subscription changes.
+
+Both behaviors are required; leaving either unset raises `ConfigurationException`
+before sending a request.
+
+| ProrationBehavior | Effect |
+| --- | --- |
+| `CreateProrations` | Create adjustments for unused time; they are not necessarily invoiced immediately. |
+| `AlwaysInvoice` | Create and immediately invoice prorated adjustments. |
+| `None` | Do not create prorated adjustments. |
+
+No proration does not mean no immediate payment. Switching billing intervals,
+for example, can reset the billing date and trigger an immediate invoice.
+
+| PaymentBehavior | Effect when an automatically charged update requires payment |
+| --- | --- |
+| `AllowIncomplete` | Apply the change even if collection fails or requires authentication; follow payment recovery for `past_due`. |
+| `PendingIfIncomplete` | Keep the change pending until its invoice is paid. |
+| `ErrorIfIncomplete` | Reject the change if payment cannot complete. |
+| `DefaultIncomplete` | Use a flow requiring explicit confirmation of the invoice's PaymentIntent. |
+
+**A successful API call is not proof of payment or of an applied pending change.**
+Inspect `status`, `latest_invoice_id`, and `pending_update`, and follow invoice
+and subscription webhooks. Current prices are in `items`; proposed prices and
+the expiry time of a pending change are in `pending_update`. Stripe can restrict
+which updates and payment methods support pending changes.
+
+For optional upgrades, `PendingIfIncomplete` with `AlwaysInvoice` lets payment
+gate the upgrade. For a mandatory price migration, `AllowIncomplete` avoids
+keeping the old price merely because collection failed. Notify customers,
+provide a way to complete authentication or replace a payment method, configure
+Stripe's retries, and enforce a finite grace period in your access policy.
+Stripe Billing can send hosted payment and authentication links. StripeKit
+does not automatically notify customers, collect outstanding invoices, confirm
+PaymentIntents, or change application access.
+
+These updates take effect immediately. For a future change at renewal, use
+Stripe Subscription Schedules through another integration; StripeKit does not
+yet expose schedules. An immediate update with `None` is not a scheduled change.
 
 @section catalog_validation Check returned prices and handle failures
 

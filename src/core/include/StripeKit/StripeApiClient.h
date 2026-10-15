@@ -336,16 +336,30 @@ private:
     public:
         /** Retain the owning client for the lifetime of the group. */
         explicit PriceOperations(StripeApiClient& owner);
+
         /** Create a fixed per-unit price. */
         Task<Price> create_async(const CreatePriceRequest&, const RequestOptions&) override;
+
         /** Create a price and deliver its result once. */
         void create(const CreatePriceRequest&, const RequestOptions&, Completion) override;
+
+        /** Update mutable price fields or archive a price. */
+        Task<Price>
+        update_async(std::string, const UpdatePriceRequest&, const RequestOptions&) override;
+
+        /** Update a price and deliver the result once. */
+        void
+        update(std::string, const UpdatePriceRequest&, const RequestOptions&, Completion) override;
+
         /** Retrieve an existing price by ID. */
         Task<Price> retrieve_async(std::string, const RequestOptions&) override;
+
         /** Retrieve a price and deliver its result once. */
         void retrieve(std::string, const RequestOptions&, Completion) override;
+
         /** Retrieve one filtered page of prices. */
         Task<PriceList> list_async(const ListPricesRequest&, const RequestOptions&) override;
+
         /** Retrieve a page and deliver its result once. */
         void list(const ListPricesRequest&, const RequestOptions&, ListCompletion) override;
 
@@ -396,6 +410,14 @@ private:
     class SubscriptionOperations final : public Subscriptions {
     public:
         explicit SubscriptionOperations(StripeApiClient& owner);
+        /** Replace existing subscription item prices with explicit billing policies. */
+        Task<Subscription>
+        update_async(std::string, const UpdateSubscriptionRequest&, const RequestOptions&) override;
+        /** Update subscription prices and deliver the result once. */
+        void update(std::string,
+                    const UpdateSubscriptionRequest&,
+                    const RequestOptions&,
+                    UpdateCompletion) override;
         Task<Subscription> retrieve_async(std::string subscription_id,
                                           const RequestOptions& options = {}) override;
         void retrieve(std::string subscription_id,

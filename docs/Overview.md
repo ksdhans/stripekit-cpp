@@ -7,7 +7,8 @@ need: charging customers for subscriptions, letting them manage their own
 billing, and reacting to what Stripe tells you afterwards.
 
 It supports hosted Checkout, customer billing portal sessions, reusable products
-and fixed prices, subscription retrieval and cancellation, and verified webhooks.
+and fixed prices, subscription retrieval, price changes and cancellation, and
+verified webhooks.
 It does not cover every Stripe operation. Webhook events include the original
 JSON for reading fields not exposed by the supplied models; this does not add
 outbound API operations that StripeKit does not yet support.

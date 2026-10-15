@@ -33,6 +33,8 @@ struct Product {
     bool livemode = false;
     /** Application-defined attributes. */
     std::unordered_map<std::string, std::string> metadata;
+    /** Default Price ID, empty when unset; expanded prices are also returned as IDs. */
+    std::string default_price_id;
 };
 
 /** Recurrence attached to a Stripe price. */
@@ -85,6 +87,8 @@ struct Price {
     bool custom_unit_amount = false;
     /** Application-defined attributes. */
     std::unordered_map<std::string, std::string> metadata;
+    /** Internal description, not shown to customers; empty when unset. */
+    std::string nickname;
 };
 
 /** One page of prices. Use the last ID as starting_after when has_more is true. */
@@ -166,12 +170,30 @@ struct CheckoutSession {
     std::unordered_map<std::string, std::string> metadata;
 };
 
+/** A current subscription item, or a proposed item in a pending update. */
+struct SubscriptionItem {
+    /** Subscription item ID (si_...). */
+    std::string id;
+    /** Current or proposed Price ID. */
+    std::string price_id;
+    /** Quantity, absent for metered pricing or when not supplied by Stripe. */
+    std::optional<std::int64_t> quantity;
+};
+
+/** Changes awaiting payment, not yet applied to the subscription. */
+struct PendingSubscriptionUpdate {
+    /** Unix timestamp after which Stripe discards this pending update. */
+    std::int64_t expires_at_unix = 0;
+    /** Proposed item changes. */
+    std::vector<SubscriptionItem> items;
+};
+
 /**
  * A Stripe subscription: a customer's recurring agreement to pay.
  *
- * `status` is what decides whether the customer should have access. "active"
- * and "trialing" mean yes; "past_due" means Stripe is retrying a failed
- * payment; "canceled" and "unpaid" mean no.
+ * Use `status` with payment webhooks and your access policy. "past_due" means
+ * payment is outstanding; recovery may need retries, a new payment method, or
+ * customer authentication. Your application decides any grace period.
  *
  * @sa https://docs.stripe.com/api/subscriptions/object
  */
@@ -199,6 +221,18 @@ struct Subscription {
 
     /** Free-form metadata key/value pairs attached to this subscription. */
     std::unordered_map<std::string, std::string> metadata;
+
+    /** Current items returned by Stripe; do not assume a single item. */
+    std::vector<SubscriptionItem> items;
+
+    /** True if items contains only the first page. No automatic pagination. */
+    bool items_has_more = false;
+
+    /** Latest invoice ID, empty when absent; not proof of payment. */
+    std::string latest_invoice_id;
+
+    /** Present when a payment-dependent change has not yet been applied. */
+    std::optional<PendingSubscriptionUpdate> pending_update;
 };
 
 /**

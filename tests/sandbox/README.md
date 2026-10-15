@@ -161,7 +161,7 @@ sets `resource_group` so two pipelines cannot drive the same sandbox at once.
 
 | Test file | Coverage |
 | --- | --- |
-| `TestCatalog.cpp` | Product creation, retrieval, updates, and idempotent retries; recurring and one-time price creation and retrieval; lookup-key encoding and filtering; pagination and archived prices; Checkout sessions using catalog prices; existing subscriptions retaining their original price after a replacement price is created; and Stripe errors for missing catalog objects. |
+| `TestCatalog.cpp` | Product creation, retrieval, updates, default-price selection, and idempotent retries; recurring and one-time price creation and retrieval; mutable price updates, lookup-key transfers, and archiving; lookup-key filtering and pagination; Checkout sessions using catalog prices; grandfathered subscriptions and explicit price migrations preserving quantities and other items; and Stripe errors for missing catalog objects. |
 | `TestSubscriptionLifecycle.cpp` | Checkout Session creation, an active subscription emitting `invoice.paid`, a declined card emitting `invoice.payment_failed`, and subscription cancellation. |
 | `TestDisputeAndRefund.cpp` | `charge.refunded`, and the dispute lifecycle through `charge.dispute.created` and `charge.dispute.closed`. |
 | `TestWebhookDelivery.cpp` | Live signed delivery, duplicate delivery handling, retryable-failure recovery, and rejection of a tampered payload. |
@@ -188,9 +188,11 @@ event stream quiet and lets you clear test data independently.
 
 ## Known Limitations
 
-- **Catalog tests do not migrate subscription prices.** The grandfathering test
-  creates a paid subscription and confirms that adding a new price leaves its
-  original price unchanged. It does not advance the subscription to a renewal.
+- **Catalog tests do not advance subscriptions to renewal.** The grandfathering
+  test confirms that adding a new price leaves existing subscriptions unchanged.
+  A migration test explicitly replaces one item's price without proration,
+  preserving its quantity and other items. Failed-payment and pending-update
+  response handling is covered by unit tests, not live catalog migration tests.
   Catalog tests expire their Checkout sessions, cancel their subscriptions, and
   archive their prices and products, including after an assertion fails.
   Archived objects and test customers remain in the sandbox for inspection.

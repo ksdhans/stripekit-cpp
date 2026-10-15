@@ -112,6 +112,68 @@ TEST_F(CatalogTest, ProductRetrieveHandlesDeletedObjects) {
     EXPECT_EQ(http.get_recorded_requests().at(0).method, HttpMethod::Get);
 }
 
+TEST_F(CatalogTest, ProductDefaultPriceIsOptionalAndSupportsExpandedResponses) {
+    http.set_response(
+        { .status_code = 200,
+          .body = replacing(product_json,
+                            R"("description":null)",
+                            R"("description":null,"default_price":{"id":"price_new"})") });
+    const auto product = client.products()
+                             .update_async("prod_test",
+                                           { .default_price_id = "price/new &" },
+                                           { .idempotency_key = "default-price" })
+                             .result();
+    EXPECT_EQ(product.default_price_id, "price_new");
+    EXPECT_EQ(http.get_recorded_requests().back().body, "default_price=price%2Fnew%20%26");
+    EXPECT_EQ(http.get_recorded_requests().back().headers.at("Idempotency-Key"), "default-price");
+    http.set_response({ .status_code = 200, .body = product_json });
+    EXPECT_TRUE(client.products().retrieve_async("prod_test").result().default_price_id.empty());
+    client.products().update_async("prod_test", { .name = "Renamed" }).result();
+    EXPECT_EQ(http.get_recorded_requests().back().body, "name=Renamed");
+    EXPECT_THROW(client.products().update_async("prod_test", { .default_price_id = "" }).result(),
+                 ConfigurationException);
+}
+
+TEST_F(CatalogTest, PriceUpdatesEncodeFalseEmptyValuesAndLookupTransfers) {
+    http.set_response({ .status_code = 200,
+                        .body = replacing(price_json,
+                                          R"("active":true)",
+                                          R"("nickname":"New & plan","active":false)") });
+    UpdatePriceRequest changes;
+    changes.active = false;
+    changes.nickname = "";
+    changes.lookup_key = "standard & monthly";
+    changes.transfer_lookup_key = true;
+    changes.metadata["remove"] = "";
+    const auto price =
+        client.prices()
+            .update_async("price/a?b",
+                          changes,
+                          { .idempotency_key = "archive", .timeout = std::chrono::seconds(4) })
+            .result();
+    EXPECT_FALSE(price.active);
+    EXPECT_EQ(price.nickname, "New & plan");
+    const auto sent = http.get_recorded_requests().back();
+    EXPECT_EQ(sent.method, HttpMethod::Post);
+    EXPECT_EQ(sent.path, "/v1/prices/price%2Fa%3Fb");
+    EXPECT_EQ(sent.headers.at("Idempotency-Key"), "archive");
+    EXPECT_EQ(sent.headers.at("Content-Type"), "application/x-www-form-urlencoded");
+    EXPECT_EQ(sent.options.timeout, std::chrono::seconds(4));
+    EXPECT_EQ(sent.body,
+              "active=false&nickname=&lookup_key=standard%20%26%20monthly"
+              "&transfer_lookup_key=true&metadata%5Bremove%5D=");
+    changes = {};
+    changes.lookup_key = "";
+    changes.transfer_lookup_key = false;
+    int calls = 0;
+    client.prices().update("price_test", changes, {}, [&](CallbackResult<Price> result) {
+        ++calls;
+        EXPECT_EQ(std::get<Price>(result).id, "price_test");
+    });
+    EXPECT_EQ(calls, 1);
+    EXPECT_EQ(http.get_recorded_requests().back().body, "lookup_key=&transfer_lookup_key=false");
+}
+
 TEST_F(CatalogTest, PriceCreateEncodesRecurrenceLookupAndIdempotency) {
     http.set_response({ .status_code = 200, .body = price_json });
     const auto request = price_request();
@@ -375,6 +437,7 @@ TEST(CatalogParser, RejectsMalformedFieldsAndIncompletePages) {
         EXPECT_THROW(parser.parse_price({ .status_code = 200, .body = body }),
                      ConfigurationException);
     }
+
     EXPECT_THROW(parser.parse_price_list({ .body = R"({"object":"list","data":[]})" }),
                  ConfigurationException);
     EXPECT_THROW(
@@ -383,4 +446,260 @@ TEST(CatalogParser, RejectsMalformedFieldsAndIncompletePages) {
     EXPECT_THROW(
         parser.parse_product({ .body = R"({"object":"product","id":"prod_test","active":true})" }),
         ConfigurationException);
+}
+
+namespace {
+
+const std::string subscription_json = R"({
+        "id":"sub_test","object":"subscription","customer":"cus_test","status":"active",
+        "items":{"data":[{"id":"si_first","price":{"id":"price_old"},"quantity":7},
+                         {"id":"si_other","price":"price_other","quantity":null}],"has_more":true},
+        "latest_invoice":{"id":"in_test"},"pending_update":null
+    })";
+
+/** Explicit price migration inputs; quantities must never reset implicitly. */
+UpdateSubscriptionRequest subscription_request() {
+    return { .items = { { .item_id = "si_first", .price_id = "price_new", .quantity = 7 } },
+             .proration_behavior = ProrationBehavior::None,
+             .payment_behavior = PaymentBehavior::AllowIncomplete };
+}
+
+} // namespace
+
+TEST_F(CatalogTest, SubscriptionUpdatesReplaceItemsWithExplicitQuantitiesAndPolicies) {
+    http.set_response({ .status_code = 200, .body = subscription_json });
+    auto request = subscription_request();
+    request.items.push_back({ .item_id = "si_second", .price_id = "price/two &", .quantity = 2 });
+    const auto result = client.subscriptions()
+                            .update_async("sub/a?b",
+                                          request,
+                                          { .idempotency_key = "migration",
+                                            .timeout = std::chrono::seconds(5),
+                                            .headers = { { "Stripe-Version", "2024-06-20" } } })
+                            .result();
+    EXPECT_EQ(result.id, "sub_test");
+    EXPECT_EQ(result.items.size(), 2U);
+    EXPECT_EQ(result.items.front().id, "si_first");
+    EXPECT_EQ(result.items.front().price_id, "price_old");
+    EXPECT_EQ(result.items.front().quantity.value(), 7);
+    EXPECT_FALSE(result.items.back().quantity.has_value());
+    EXPECT_TRUE(result.items_has_more);
+    EXPECT_EQ(result.latest_invoice_id, "in_test");
+    EXPECT_FALSE(result.pending_update.has_value());
+    const auto sent = http.get_recorded_requests().back();
+    EXPECT_EQ(sent.method, HttpMethod::Post);
+    EXPECT_EQ(sent.path, "/v1/subscriptions/sub%2Fa%3Fb");
+    EXPECT_EQ(sent.headers.at("Idempotency-Key"), "migration");
+    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2024-06-20");
+    EXPECT_EQ(sent.headers.at("Content-Type"), "application/x-www-form-urlencoded");
+    EXPECT_EQ(sent.options.timeout, std::chrono::seconds(5));
+    EXPECT_EQ(sent.body,
+              "proration_behavior=none&payment_behavior=allow_incomplete"
+              "&items%5B0%5D%5Bid%5D=si_first&items%5B0%5D%5Bprice%5D=price_new"
+              "&items%5B0%5D%5Bquantity%5D=7"
+              "&items%5B1%5D%5Bid%5D=si_second&items%5B1%5D%5Bprice%5D=price%2Ftwo%20%26"
+              "&items%5B1%5D%5Bquantity%5D=2");
+}
+
+TEST_F(CatalogTest, AllSubscriptionPoliciesAreEncodedForCallbacksAndCoroutines) {
+    http.set_response({ .status_code = 200, .body = subscription_json });
+    const std::vector<std::pair<ProrationBehavior, std::string>> prorations{
+        { ProrationBehavior::None, "none" },
+        { ProrationBehavior::CreateProrations, "create_prorations" },
+        { ProrationBehavior::AlwaysInvoice, "always_invoice" }
+    };
+    const std::vector<std::pair<PaymentBehavior, std::string>> payments{
+        { PaymentBehavior::AllowIncomplete, "allow_incomplete" },
+        { PaymentBehavior::PendingIfIncomplete, "pending_if_incomplete" },
+        { PaymentBehavior::ErrorIfIncomplete, "error_if_incomplete" },
+        { PaymentBehavior::DefaultIncomplete, "default_incomplete" }
+    };
+    for (const auto& [proration, proration_name] : prorations) {
+        for (const auto& [payment, payment_name] : payments) {
+            auto request = subscription_request();
+            request.proration_behavior = proration;
+            request.payment_behavior = payment;
+            client.subscriptions().update_async("sub_test", request).result();
+            int calls = 0;
+            client.subscriptions().update(
+                "sub_test", request, {}, [&](CallbackResult<Subscription> result) {
+                    ++calls;
+                    EXPECT_EQ(std::get<Subscription>(result).id, "sub_test");
+                });
+            EXPECT_EQ(calls, 1);
+            const auto requests = http.get_recorded_requests();
+            EXPECT_EQ(requests.back().body, requests.at(requests.size() - 2).body);
+            EXPECT_NE(requests.back().body.find("proration_behavior=" + proration_name + "&"),
+                      std::string::npos);
+            EXPECT_NE(requests.back().body.find("payment_behavior=" + payment_name + "&"),
+                      std::string::npos);
+        }
+    }
+}
+
+TEST_F(CatalogTest, InvalidPricingUpdatesNeverReachTransportAndCallbacksReceiveFailuresOnce) {
+    const auto invalid_subscription = [&](std::string id,
+                                          const UpdateSubscriptionRequest& request) {
+        EXPECT_THROW(client.subscriptions().update_async(id, request).result(),
+                     ConfigurationException);
+        int calls = 0;
+        client.subscriptions().update(id, request, {}, [&](CallbackResult<Subscription> result) {
+            ++calls;
+            EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+        });
+        EXPECT_EQ(calls, 1);
+    };
+    invalid_subscription("", subscription_request());
+    auto request = subscription_request();
+    request.proration_behavior.reset();
+    invalid_subscription("sub_test", request);
+    request = subscription_request();
+    request.payment_behavior.reset();
+    invalid_subscription("sub_test", request);
+    request = subscription_request();
+    request.items.clear();
+    invalid_subscription("sub_test", request);
+    request.items.resize(21, subscription_request().items.front());
+    invalid_subscription("sub_test", request);
+    request = subscription_request();
+    request.items.push_back(request.items.front());
+    invalid_subscription("sub_test", request);
+    for (const auto quantity : { 0, -1 }) {
+        request = subscription_request();
+        request.items.front().quantity = quantity;
+        invalid_subscription("sub_test", request);
+    }
+    request = subscription_request();
+    request.items.front().item_id = "";
+    invalid_subscription("sub_test", request);
+    request = subscription_request();
+    request.items.front().price_id = "";
+    invalid_subscription("sub_test", request);
+    request = subscription_request();
+    request.payment_behavior = static_cast<PaymentBehavior>(99);
+    invalid_subscription("sub_test", request);
+    request = subscription_request();
+    request.proration_behavior = static_cast<ProrationBehavior>(99);
+    invalid_subscription("sub_test", request);
+    EXPECT_THROW(client.prices().update_async("", {}).result(), ConfigurationException);
+    EXPECT_THROW(
+        client.prices().update_async("price_test", { .transfer_lookup_key = true }).result(),
+        ConfigurationException);
+    int calls = 0;
+    client.prices().update("price_test",
+                           { .lookup_key = "", .transfer_lookup_key = true },
+                           {},
+                           [&](CallbackResult<Price> result) {
+                               ++calls;
+                               EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+                           });
+    client.products().update(
+        "prod_test", { .default_price_id = "" }, {}, [&](CallbackResult<Product> result) {
+            ++calls;
+            EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+        });
+    EXPECT_EQ(calls, 2);
+    EXPECT_TRUE(http.get_recorded_requests().empty());
+}
+
+TEST_F(CatalogTest, SubscriptionPendingUpdatesAreNotReportedAsAppliedPrices) {
+    const auto body = replacing(subscription_json,
+                                R"("pending_update":null)",
+                                R"("pending_update":{"expires_at":1800000000,"subscription_items":[
+                {"id":"si_first","price":"price_new","quantity":7}]})");
+    http.set_response({ .status_code = 200, .body = body });
+    auto request = subscription_request();
+    request.payment_behavior = PaymentBehavior::PendingIfIncomplete;
+    request.proration_behavior = ProrationBehavior::AlwaysInvoice;
+    const auto result = client.subscriptions().update_async("sub_test", request).result();
+    EXPECT_EQ(result.items.front().price_id, "price_old");
+    EXPECT_TRUE(result.pending_update.has_value());
+    EXPECT_EQ(result.pending_update->expires_at_unix, 1800000000);
+    EXPECT_EQ(result.pending_update->items.front().price_id, "price_new");
+    EXPECT_EQ(result.pending_update->items.front().quantity.value(), 7);
+    http.set_response(
+        { .status_code = 200,
+          .body = replacing(
+              replacing(subscription_json, R"("status":"active")", R"("status":"past_due")"),
+              R"("id":"price_old")",
+              R"("id":"price_new")") });
+    const auto overdue =
+        client.subscriptions().update_async("sub_test", subscription_request()).result();
+    EXPECT_EQ(overdue.status, "past_due");
+    EXPECT_EQ(overdue.items.front().price_id, "price_new");
+    EXPECT_FALSE(overdue.pending_update.has_value());
+}
+
+TEST_F(CatalogTest, PricingUpdateApiTransportAndParsingErrorsPropagate) {
+    http.set_response(
+        { .status_code = 402,
+          .headers = { { "Request-Id", "req_payment" } },
+          .body = R"({"error":{"type":"card_error","message":"Authentication required"}})" });
+    auto request = subscription_request();
+    request.payment_behavior = PaymentBehavior::ErrorIfIncomplete;
+    EXPECT_THROW(client.subscriptions().update_async("sub_test", request).result(),
+                 StripeApiException);
+    int calls = 0;
+    client.subscriptions().update(
+        "sub_test", request, {}, [&](CallbackResult<Subscription> result) {
+            ++calls;
+            try {
+                std::rethrow_exception(std::get<std::exception_ptr>(result));
+            } catch (const StripeApiException& error) {
+                EXPECT_EQ(error.payload().http_status, 402);
+                EXPECT_EQ(error.payload().request_id, "req_payment");
+            }
+        });
+    EXPECT_EQ(calls, 1);
+    EXPECT_THROW(client.prices().update_async("price_test", { .active = false }).result(),
+                 StripeApiException);
+    http.set_exception(std::make_exception_ptr(std::runtime_error("Offline")));
+    EXPECT_THROW(client.subscriptions().update_async("sub_test", request).result(),
+                 std::runtime_error);
+    http.set_exception(std::make_exception_ptr(std::runtime_error("Offline")));
+    client.prices().update("price_test", {}, {}, [&](CallbackResult<Price> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+    });
+    EXPECT_EQ(calls, 2);
+    http.set_response({ .status_code = 200, .body = "not-json" });
+    EXPECT_THROW(client.subscriptions().update_async("sub_test", request).result(),
+                 ConfigurationException);
+    EXPECT_THROW(client.prices().update_async("price_test", {}).result(), ConfigurationException);
+    client.subscriptions().update(
+        "sub_test", request, {}, [&](CallbackResult<Subscription> result) {
+            ++calls;
+            EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+        });
+    client.prices().update("price_test", {}, {}, [&](CallbackResult<Price> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+    });
+    EXPECT_EQ(calls, 4);
+}
+
+TEST(CatalogParser, RejectsMalformedPricingStateRatherThanHidingIt) {
+    JsonStripeResponseParser parser;
+    for (const auto& body :
+         { std::string("{}"),
+           replacing(subscription_json, R"("quantity":7)", R"("quantity":"7")"),
+           replacing(subscription_json, R"("has_more":true)", R"("has_more":"true")"),
+           replacing(subscription_json,
+                     R"("latest_invoice":{"id":"in_test"})",
+                     R"("latest_invoice":123)"),
+           replacing(subscription_json,
+                     R"("pending_update":null)",
+                     R"("pending_update":{"expires_at":0})"),
+           replacing(subscription_json, R"("price":{"id":"price_old"})", R"("price":null)") }) {
+        EXPECT_THROW(parser.parse_subscription({ .body = body }), ConfigurationException);
+    }
+    EXPECT_THROW(
+        parser.parse_product({ .body = replacing(product_json,
+                                                 R"("description":null)",
+                                                 R"("description":null,"default_price":42)") }),
+        ConfigurationException);
+    EXPECT_THROW(parser.parse_price({ .body = replacing(price_json,
+                                                        R"("active":true)",
+                                                        R"("active":true,"nickname":42)") }),
+                 ConfigurationException);
 }

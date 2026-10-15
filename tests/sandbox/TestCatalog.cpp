@@ -50,8 +50,10 @@ protected:
         }
         for (const auto& id : prices) {
             cleanup(id, [&] {
-                environment->stripe_api().require_post("/v1/prices/" + id,
-                                                       { { "active", "false" } });
+                environment->stripe_client()
+                    .prices()
+                    .update_async(id, { .active = false })
+                    .result();
             });
         }
         for (const auto& id : products) {
@@ -369,4 +371,97 @@ TEST_F(SandboxCatalogTest, MissingCatalogObjectsReportStripeErrors) {
         }
         EXPECT_TRUE(rejected);
     }
+}
+
+TEST_F(SandboxCatalogTest, DefaultPriceAndMutablePriceDetailsRoundTrip) {
+    const auto product = create_product("default_price");
+    const auto original = create_price(product, "default_original", 1500);
+    const auto replacement = create_price(product, "default_replacement", 2000);
+    const auto updated = environment->stripe_client()
+                             .products()
+                             .update_async(product.id, { .default_price_id = replacement.id })
+                             .result();
+    EXPECT_EQ(updated.default_price_id, replacement.id);
+    EXPECT_EQ(environment->stripe_client()
+                  .products()
+                  .retrieve_async(product.id)
+                  .result()
+                  .default_price_id,
+              replacement.id);
+    UpdatePriceRequest changes;
+    changes.nickname = "Replacement & monthly";
+    changes.lookup_key = original.lookup_key;
+    changes.transfer_lookup_key = true;
+    changes.metadata = { { "updated", "yes" } };
+    const auto moved =
+        environment->stripe_client().prices().update_async(replacement.id, changes).result();
+    EXPECT_EQ(moved.lookup_key, original.lookup_key);
+    EXPECT_EQ(moved.nickname, *changes.nickname);
+    EXPECT_EQ(moved.metadata.at("updated"), "yes");
+    EXPECT_TRUE(environment->stripe_client()
+                    .prices()
+                    .retrieve_async(original.id)
+                    .result()
+                    .lookup_key.empty());
+    environment->stripe_client().prices().update_async(original.id, { .active = false }).result();
+    EXPECT_FALSE(environment->stripe_client().prices().retrieve_async(original.id).result().active);
+    EXPECT_EQ(environment->stripe_client()
+                  .prices()
+                  .retrieve_async(replacement.id)
+                  .result()
+                  .unit_amount.value(),
+              2000);
+}
+
+TEST_F(SandboxCatalogTest, ExplicitSubscriptionMigrationPreservesQuantityAndOtherItems) {
+    const auto product = create_product("migration");
+    const auto original = create_price(product, "migration_original", 1500);
+    const auto replacement = create_price(product, "migration_replacement", 2000);
+    const auto extra = create_price(product, "migration_extra", 500);
+    const auto customer = create_customer_with_card(*environment, "pm_card_visa", "migration");
+    const auto created = environment->stripe_api().require_post(
+        "/v1/subscriptions",
+        { { "customer", customer },
+          { "items[0][price]", original.id },
+          { "items[0][quantity]", "3" },
+          { "items[1][price]", extra.id },
+          { "items[1][quantity]", "2" },
+          { "metadata[stripekit_run_id]", environment->run_id() } });
+    subscriptions.push_back(created.id());
+    const auto before =
+        environment->stripe_client().subscriptions().retrieve_async(created.id()).result();
+    EXPECT_EQ(before.items.size(), 2U);
+    EXPECT_FALSE(before.items_has_more);
+    UpdateSubscriptionRequest request;
+    for (const auto& item : before.items) {
+        if (item.price_id == original.id)
+            request.items.push_back({ .item_id = item.id,
+                                      .price_id = replacement.id,
+                                      .quantity = item.quantity.value() });
+    }
+    EXPECT_EQ(request.items.size(), 1U);
+    request.proration_behavior = ProrationBehavior::None;
+    request.payment_behavior = PaymentBehavior::AllowIncomplete;
+    const RequestOptions options{ .idempotency_key = environment->run_id() + "_migration" };
+    const auto changed = environment->stripe_client()
+                             .subscriptions()
+                             .update_async(created.id(), request, options)
+                             .result();
+    EXPECT_EQ(changed.status, "active");
+    EXPECT_FALSE(changed.pending_update.has_value());
+    EXPECT_EQ(changed.items.size(), 2U);
+    for (const auto& item : changed.items) {
+        EXPECT_TRUE(item.price_id == replacement.id || item.price_id == extra.id);
+        EXPECT_EQ(item.quantity.value(), item.price_id == replacement.id ? 3 : 2);
+    }
+    const auto retried = environment->stripe_client()
+                             .subscriptions()
+                             .update_async(created.id(), request, options)
+                             .result();
+    EXPECT_EQ(retried.items.size(), changed.items.size());
+    EXPECT_EQ(retried.current_period_end_unix, before.current_period_end_unix);
+    environment->stripe_client().prices().update_async(original.id, { .active = false }).result();
+    EXPECT_EQ(
+        environment->stripe_client().subscriptions().retrieve_async(created.id()).result().status,
+        "active");
 }

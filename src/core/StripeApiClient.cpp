@@ -16,6 +16,7 @@
 #include <mutex>
 #include <sstream>
 #include <utility>
+#include <unordered_set>
 
 namespace stripekit {
 
@@ -185,7 +186,81 @@ std::string product_body(const UpdateProductRequest& request) {
     if (request.name) append_form_value(body, "name", *request.name);
     if (request.description) append_form_value(body, "description", *request.description);
     if (request.active) append_form_value(body, "active", *request.active ? "true" : "false");
+    if (request.default_price_id) {
+        if (request.default_price_id->empty())
+            throw ConfigurationException("A default price ID cannot be empty");
+        append_form_value(body, "default_price", *request.default_price_id);
+    }
     append_metadata(body, request.metadata);
+    return body;
+}
+
+/** Update mutable details without changing the price's amount or recurrence. */
+std::string price_body(const UpdatePriceRequest& request) {
+    if (request.transfer_lookup_key.value_or(false) &&
+        (!request.lookup_key || request.lookup_key->empty()))
+        throw ConfigurationException("Transferring a lookup key requires a nonempty lookup key");
+    std::string body;
+    if (request.active) append_form_value(body, "active", *request.active ? "true" : "false");
+    if (request.nickname) append_form_value(body, "nickname", *request.nickname);
+    if (request.lookup_key) append_form_value(body, "lookup_key", *request.lookup_key);
+    if (request.transfer_lookup_key)
+        append_form_value(
+            body, "transfer_lookup_key", *request.transfer_lookup_key ? "true" : "false");
+    append_metadata(body, request.metadata);
+    return body;
+}
+
+/** Encode an explicit policy; invalid enum values must not become a Stripe default. */
+std::string proration_value(ProrationBehavior behavior) {
+    switch (behavior) {
+    case ProrationBehavior::CreateProrations:
+        return "create_prorations";
+    case ProrationBehavior::AlwaysInvoice:
+        return "always_invoice";
+    case ProrationBehavior::None:
+        return "none";
+    }
+    throw ConfigurationException("Invalid proration behavior");
+}
+
+/** Encode an explicit payment policy. */
+std::string payment_value(PaymentBehavior behavior) {
+    switch (behavior) {
+    case PaymentBehavior::AllowIncomplete:
+        return "allow_incomplete";
+    case PaymentBehavior::PendingIfIncomplete:
+        return "pending_if_incomplete";
+    case PaymentBehavior::ErrorIfIncomplete:
+        return "error_if_incomplete";
+    case PaymentBehavior::DefaultIncomplete:
+        return "default_incomplete";
+    }
+    throw ConfigurationException("Invalid payment behavior");
+}
+
+/** Replace existing items with explicit quantities so Stripe cannot reset them to one. */
+std::string subscription_body(const UpdateSubscriptionRequest& request) {
+    if (!request.proration_behavior || !request.payment_behavior)
+        throw ConfigurationException(
+            "Subscription updates require proration and payment behaviors");
+    if (request.items.empty() || request.items.size() > 20)
+        throw ConfigurationException("Subscription updates require one through twenty items");
+    std::string body;
+    append_form_value(body, "proration_behavior", proration_value(*request.proration_behavior));
+    append_form_value(body, "payment_behavior", payment_value(*request.payment_behavior));
+    std::unordered_set<std::string> ids;
+    for (std::size_t index = 0; index < request.items.size(); ++index) {
+        const auto& item = request.items[index];
+        if (item.item_id.empty() || item.price_id.empty() || item.quantity <= 0 ||
+            !ids.insert(item.item_id).second)
+            throw ConfigurationException(
+                "Each subscription item needs a unique ID, price, and positive quantity");
+        const auto prefix = "items[" + std::to_string(index) + "]";
+        append_form_value(body, prefix + "[id]", item.item_id);
+        append_form_value(body, prefix + "[price]", item.price_id);
+        append_form_value(body, prefix + "[quantity]", std::to_string(item.quantity));
+    }
     return body;
 }
 
@@ -252,6 +327,7 @@ Price price_value(const Json::Value& object) {
         (object["unit_amount"].isNull() || object["unit_amount"].isInt64()) &&
         (object["unit_amount_decimal"].isNull() || object["unit_amount_decimal"].isString()) &&
         (object["lookup_key"].isNull() || object["lookup_key"].isString()) &&
+        (object["nickname"].isNull() || object["nickname"].isString()) &&
         (object["custom_unit_amount"].isNull() || object["custom_unit_amount"].isObject()));
     Price price;
     price.id = object["id"].asString();
@@ -265,6 +341,7 @@ Price price_value(const Json::Value& object) {
     price.active = object["active"].asBool();
     price.livemode = object["livemode"].asBool();
     price.lookup_key = json_value::string(object, "lookup_key");
+    price.nickname = json_value::string(object, "nickname");
     if (!object["unit_amount"].isNull()) price.unit_amount = object["unit_amount"].asInt64();
     if (!object["unit_amount_decimal"].isNull())
         price.unit_amount_decimal = object["unit_amount_decimal"].asString();
@@ -397,6 +474,40 @@ Product StripeResponseParser::parse_product(const HttpResponse& response) const 
     return JsonStripeResponseParser{}.parse_product(response);
 }
 
+namespace {
+
+/** Read a nullable Stripe reference as an ID, accepting expanded objects. */
+std::string reference_id(const Json::Value& value) {
+    if (value.isNull()) return {};
+    if (value.isString() && !value.asString().empty()) return value.asString();
+    if (value.isObject() && value["id"].isString() && !value["id"].asString().empty())
+        return value["id"].asString();
+    throw ConfigurationException("Stripe returned a malformed object reference");
+}
+
+/** Read current or pending subscription items without inventing a quantity. */
+std::vector<SubscriptionItem> subscription_items(const Json::Value& data) {
+    if (!data.isArray())
+        throw ConfigurationException("Stripe returned malformed subscription items");
+    std::vector<SubscriptionItem> items;
+    for (const auto& value : data) {
+        if (!value.isObject() || !value["id"].isString() || value["id"].asString().empty() ||
+            (!value["quantity"].isNull() &&
+             (!value["quantity"].isInt64() || value["quantity"].asInt64() < 0)))
+            throw ConfigurationException("Stripe returned a malformed subscription item");
+        SubscriptionItem item;
+        item.id = value["id"].asString();
+        item.price_id = reference_id(value["price"]);
+        if (item.price_id.empty())
+            throw ConfigurationException("Stripe returned a subscription item without a price");
+        if (!value["quantity"].isNull()) item.quantity = value["quantity"].asInt64();
+        items.push_back(std::move(item));
+    }
+    return items;
+}
+
+} // namespace
+
 Price StripeResponseParser::parse_price(const HttpResponse& response) const {
     return JsonStripeResponseParser{}.parse_price(response);
 }
@@ -422,6 +533,7 @@ Product JsonStripeResponseParser::parse_product(const HttpResponse& response) co
     product.active = object["active"].asBool();
     product.livemode = object["livemode"].asBool();
     product.metadata = metadata_value(object);
+    product.default_price_id = reference_id(object["default_price"]);
     return product;
 }
 
@@ -481,16 +593,39 @@ JsonStripeResponseParser::parse_checkout_session(const HttpResponse& response) c
 
 Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& response) const {
     const auto object = json_value::parse(response.body);
-    return Subscription{
-        .id = json_value::string(object, "id"),
-        .customer_id = json_value::string(object, "customer"),
-        .status = json_value::string(object, "status"),
-        .current_period_start_unix = json_value::integer(object, "current_period_start"),
-        .current_period_end_unix = json_value::integer(object, "current_period_end"),
-        .cancel_at_period_end = json_value::boolean(object, "cancel_at_period_end"),
-        .livemode = json_value::boolean(object, "livemode"),
-        .metadata = metadata_value(object)
-    };
+    if (!object.isObject() || !object["id"].isString() || object["id"].asString().empty() ||
+        !object["status"].isString() || object["status"].asString().empty())
+        throw ConfigurationException("Stripe returned a malformed subscription");
+    auto subscription =
+        Subscription{ .id = json_value::string(object, "id"),
+                      .customer_id = json_value::string(object, "customer"),
+                      .status = json_value::string(object, "status"),
+                      .current_period_start_unix =
+                          json_value::integer(object, "current_period_start"),
+                      .current_period_end_unix = json_value::integer(object, "current_period_end"),
+                      .cancel_at_period_end = json_value::boolean(object, "cancel_at_period_end"),
+                      .livemode = json_value::boolean(object, "livemode"),
+                      .metadata = metadata_value(object) };
+    const auto& items = object["items"];
+    if (!items.isNull()) {
+        if (!items.isObject() || !items["has_more"].isBool())
+            throw ConfigurationException("Stripe returned a malformed subscription item list");
+        subscription.items = subscription_items(items["data"]);
+        subscription.items_has_more = items["has_more"].asBool();
+    }
+    subscription.latest_invoice_id = reference_id(object["latest_invoice"]);
+    const auto& pending = object["pending_update"];
+    if (!pending.isNull()) {
+        if (!pending.isObject() || !pending["expires_at"].isInt64() ||
+            pending["expires_at"].asInt64() <= 0)
+            throw ConfigurationException("Stripe returned a malformed pending subscription update");
+        PendingSubscriptionUpdate update;
+        update.expires_at_unix = pending["expires_at"].asInt64();
+        if (!pending["subscription_items"].isNull())
+            update.items = subscription_items(pending["subscription_items"]);
+        subscription.pending_update = std::move(update);
+    }
+    return subscription;
 }
 
 BillingPortalSession
@@ -631,6 +766,45 @@ CheckoutSessions& StripeApiClient::CheckoutOperations::sessions() {
 
 StripeApiClient::SubscriptionOperations::SubscriptionOperations(StripeApiClient& owner)
     : owner(owner) {}
+
+Task<Subscription> StripeApiClient::SubscriptionOperations::update_async(
+    std::string id, const UpdateSubscriptionRequest& request, const RequestOptions& options) {
+    return send_and_parse_async<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post,
+                     catalog_path("subscriptions", id),
+                     subscription_body(request),
+                     options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        });
+}
+
+void StripeApiClient::SubscriptionOperations::update(std::string id,
+                                                     const UpdateSubscriptionRequest& request,
+                                                     const RequestOptions& options,
+                                                     UpdateCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            catalog_path("subscriptions", id),
+                            subscription_body(request),
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        },
+        std::move(completion));
+}
 
 Task<Subscription>
 StripeApiClient::SubscriptionOperations::retrieve_async(std::string subscription_id,
@@ -877,6 +1051,41 @@ void StripeApiClient::ProductOperations::update(std::string id,
 }
 
 StripeApiClient::PriceOperations::PriceOperations(StripeApiClient& owner) : owner(owner) {}
+
+Task<Price> StripeApiClient::PriceOperations::update_async(std::string id,
+                                                           const UpdatePriceRequest& request,
+                                                           const RequestOptions& options) {
+    return send_and_parse_async<Price>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post, catalog_path("prices", id), price_body(request), options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_price(response);
+        });
+}
+
+void StripeApiClient::PriceOperations::update(std::string id,
+                                              const UpdatePriceRequest& request,
+                                              const RequestOptions& options,
+                                              Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(
+            HttpMethod::Post, catalog_path("prices", id), price_body(request), options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Price>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_price(response);
+        },
+        std::move(completion));
+}
 
 Task<Price> StripeApiClient::PriceOperations::create_async(const CreatePriceRequest& request,
                                                            const RequestOptions& options) {

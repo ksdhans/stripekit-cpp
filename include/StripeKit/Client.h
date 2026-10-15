@@ -162,6 +162,57 @@ struct UpdateProductRequest {
     std::optional<bool> active;
     /** Metadata changes; empty values remove individual keys. */
     std::unordered_map<std::string, std::string> metadata;
+    /** Active Price ID belonging to this product. Does not reprice existing subscriptions. */
+    std::optional<std::string> default_price_id;
+};
+
+/** Mutable price details. Amount, currency, and recurrence cannot be changed. */
+struct UpdatePriceRequest {
+    /** Set false to archive; existing subscriptions are unaffected. */
+    std::optional<bool> active;
+    /** Internal description; an empty string clears it. */
+    std::optional<std::string> nickname;
+    /** Replacement lookup key; an empty string clears it. */
+    std::optional<std::string> lookup_key;
+    /** Move the supplied nonempty lookup key from another price atomically. */
+    std::optional<bool> transfer_lookup_key;
+    /** Metadata changes; empty values remove individual keys. */
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/** How a subscription change accounts for the unused portion of a billing period. */
+enum class ProrationBehavior {
+    CreateProrations, /**< Create adjustments, without necessarily invoicing immediately. */
+    AlwaysInvoice,    /**< Create and immediately invoice adjustments. */
+    None              /**< Do not create adjustments; a change can still trigger billing. */
+};
+
+/** What happens when an automatically charged subscription update requires payment. */
+enum class PaymentBehavior {
+    AllowIncomplete,     /**< Apply changes even if payment fails; follow past_due recovery. */
+    PendingIfIncomplete, /**< Apply changes only after payment; inspect pending_update. */
+    ErrorIfIncomplete,   /**< Reject changes if payment cannot complete. */
+    DefaultIncomplete    /**< Require explicit confirmation of the invoice's payment intent. */
+};
+
+/** Replace the price of an existing licensed subscription item, not add another item. */
+struct UpdateSubscriptionItemRequest {
+    /** Existing subscription item ID (si_...), not the subscription or price ID. */
+    std::string item_id;
+    /** Replacement recurring Price ID. */
+    std::string price_id;
+    /** Required positive quantity. Copy the existing quantity to preserve it. */
+    std::int64_t quantity = 0;
+};
+
+/** Immediate subscription price changes. Both billing behaviors must be chosen explicitly. */
+struct UpdateSubscriptionRequest {
+    /** One through twenty existing items to reprice; other items remain unchanged. */
+    std::vector<UpdateSubscriptionItemRequest> items;
+    /** Required; no implicit proration policy. */
+    std::optional<ProrationBehavior> proration_behavior;
+    /** Required; no implicit payment-failure policy. */
+    std::optional<PaymentBehavior> payment_behavior;
 };
 
 /** Create a fixed per-unit price. Does not change existing subscriptions. */
@@ -229,7 +280,7 @@ public:
     /** Retrieve a product; completion receives the product or failure. */
     virtual void
     retrieve(std::string product_id, const RequestOptions& options, Completion completion) = 0;
-    /** Update display details or availability without changing subscription amounts. */
+    /** Update display details, availability, or default price, not existing subscriptions. */
     virtual Task<Product> update_async(std::string product_id,
                                        const UpdateProductRequest& request,
                                        const RequestOptions& options = {}) = 0;
@@ -241,7 +292,7 @@ public:
 };
 
 /**
- * Create and inspect prices through StripeClient::prices().
+ * Create, inspect, and update mutable price details through StripeClient::prices().
  * Creation supports fixed amounts and licensed recurrence, not tiered, metered,
  * or custom amounts. Retrieval exposes those distinctions for safe validation.
  * Failures propagate as StripeApiException, transport errors, or ConfigurationException.
@@ -260,6 +311,27 @@ public:
                                      const RequestOptions& options = {}) = 0;
     /** Create a price; completion receives the price or failure. */
     virtual void create(const CreatePriceRequest& request,
+                        const RequestOptions& options,
+                        Completion completion) = 0;
+    /**
+     * Update mutable details or archive a price; core pricing terms remain unchanged.
+     * @param price_id Existing Price ID.
+     * @param request Supplied fields to change.
+     * @param options Per-request settings.
+     * @return Updated price.
+     */
+    virtual Task<Price> update_async(std::string price_id,
+                                     const UpdatePriceRequest& request,
+                                     const RequestOptions& options = {}) = 0;
+    /**
+     * Update a price, reporting validation, transport, and API failures through completion.
+     * @param price_id Existing Price ID.
+     * @param request Supplied fields to change.
+     * @param options Per-request settings.
+     * @param completion Receives the updated price or failure exactly once.
+     */
+    virtual void update(std::string price_id,
+                        const UpdatePriceRequest& request,
                         const RequestOptions& options,
                         Completion completion) = 0;
     /** Retrieve an active or archived price by its ID. */
@@ -421,11 +493,11 @@ public:
 };
 
 /**
- * Retrieves and cancels Stripe subscriptions.
+ * Retrieves, reprices, and cancels Stripe subscriptions.
  *
  * Reach an instance through StripeClient::subscriptions(). Subscriptions are
  * created by Checkout rather than here; this interface covers inspecting one
- * and ending it.
+ * changing its prices and ending it.
  *
  * @sa https://docs.stripe.com/api/subscriptions
  */
@@ -436,6 +508,36 @@ public:
 
     /** Completion callback for the callback form of cancel(). */
     using CancelCompletion = std::function<void(CallbackResult<Subscription>)>;
+    /** Completion callback receiving an updated subscription or a failure. */
+    using UpdateCompletion = std::function<void(CallbackResult<Subscription>)>;
+
+    /**
+     * Replace prices on existing licensed subscription items immediately.
+     *
+     * Choose proration and payment behaviors explicitly. A successful request
+     * does not prove payment or that a pending change was applied: inspect
+     * status, pending_update, and latest_invoice_id and follow billing webhooks.
+     * Use an idempotency key when retrying. This does not schedule a future change.
+     *
+     * @param subscription_id Existing subscription ID.
+     * @param request Items, explicit quantities, and billing policies.
+     * @param options Per-request settings.
+     * @return Subscription state returned by Stripe.
+     */
+    virtual Task<Subscription> update_async(std::string subscription_id,
+                                            const UpdateSubscriptionRequest& request,
+                                            const RequestOptions& options = {}) = 0;
+    /**
+     * Reprice a subscription, reporting failures through completion.
+     * @param subscription_id Existing subscription ID.
+     * @param request Items, explicit quantities, and billing policies.
+     * @param options Per-request settings.
+     * @param completion Receives the returned subscription or failure exactly once.
+     */
+    virtual void update(std::string subscription_id,
+                        const UpdateSubscriptionRequest& request,
+                        const RequestOptions& options,
+                        UpdateCompletion completion) = 0;
 
     /**
      * Destroys the API instance.
