@@ -11,6 +11,8 @@ version section when a release is tagged.
   prices, and preserve encoded paths and query values in the Drogon transport.
 - Custom StripeClient implementations now need products() and prices() groups.
   Existing custom response parsers inherit JSON catalog parsing by default.
+- Refactored code to use one universal default_api_base_url instead of having 
+  "https://api.stripe.com" duplicated in multiple places.
 
 ## 0.1.2 2026-10-13
 
