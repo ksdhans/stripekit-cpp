@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -136,6 +137,145 @@ struct CreateBillingPortalSessionRequest {
  */
 template <typename TResult>
 using CallbackResult = std::variant<TResult, std::exception_ptr>;
+
+/** Inputs for creating a reusable Stripe product. */
+struct CreateProductRequest {
+    /** Optional caller-assigned ID, useful for recovering interrupted creation. */
+    std::string id;
+    /** Required customer-facing name. */
+    std::string name;
+    /** Optional customer-facing description. */
+    std::string description;
+    /** Whether new purchases can use the product. */
+    bool active = true;
+    /** Application-defined attributes. */
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/** Product changes. Unset fields are left unchanged. */
+struct UpdateProductRequest {
+    /** Replacement name; must not be empty if supplied. */
+    std::optional<std::string> name;
+    /** Replacement description; an empty string clears it. */
+    std::optional<std::string> description;
+    /** Whether new purchases can use the product. */
+    std::optional<bool> active;
+    /** Metadata changes; empty values remove individual keys. */
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/** Create a fixed per-unit price. Does not change existing subscriptions. */
+struct CreatePriceRequest {
+    /** Existing Stripe product ID. */
+    std::string product_id;
+    /** Lower-case three-letter currency code, such as usd. */
+    std::string currency;
+    /** Non-negative amount in the currency's smallest unit. */
+    std::int64_t unit_amount = 0;
+    /** Empty for one-time pricing; otherwise day, week, month, or year. */
+    std::string recurring_interval;
+    /** Number of intervals between bills; positive and 1 for one-time prices. */
+    std::int64_t recurring_interval_count = 1;
+    /** Optional unique lookup key for finding a price after an interrupted request. */
+    std::string lookup_key;
+    /** inclusive, exclusive, or unspecified; empty uses Stripe's default. */
+    std::string tax_behavior;
+    /** Application-defined attributes. */
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/** Price filters and pagination. No automatic pagination or hidden retries. */
+struct ListPricesRequest {
+    /** Optional product ID filter. */
+    std::string product_id;
+    /** Optional availability filter; unset includes active and inactive prices. */
+    std::optional<bool> active;
+    /** Optional exact lookup keys; Stripe accepts at most ten. */
+    std::vector<std::string> lookup_keys;
+    /** Page size from 1 to 100. */
+    std::int64_t limit = 10;
+    /** Return the page after this price ID. Empty starts at the first page. */
+    std::string starting_after;
+};
+
+/**
+ * Create, retrieve, and update catalog products through StripeClient::products().
+ * Failures propagate as StripeApiException, transport errors, or ConfigurationException.
+ * Callbacks run exactly once and may run on another thread.
+ */
+class Products {
+public:
+    /** Callback receiving a product or an exception. */
+    using Completion = std::function<void(CallbackResult<Product>)>;
+    /** Destroy the operation group. */
+    virtual ~Products() = default;
+    /**
+     * Create a product. Use an idempotency key for safe retries.
+     *
+     * @param request Product details.
+     * @param options Request settings.
+     *
+     * @return Created product.
+     */
+    virtual Task<Product> create_async(const CreateProductRequest& request,
+                                       const RequestOptions& options = {}) = 0;
+    /** Create a product; completion receives the product or failure. */
+    virtual void create(const CreateProductRequest& request,
+                        const RequestOptions& options,
+                        Completion completion) = 0;
+    /** Retrieve a product by ID; deleted products have deleted=true. */
+    virtual Task<Product> retrieve_async(std::string product_id,
+                                         const RequestOptions& options = {}) = 0;
+    /** Retrieve a product; completion receives the product or failure. */
+    virtual void
+    retrieve(std::string product_id, const RequestOptions& options, Completion completion) = 0;
+    /** Update display details or availability without changing subscription amounts. */
+    virtual Task<Product> update_async(std::string product_id,
+                                       const UpdateProductRequest& request,
+                                       const RequestOptions& options = {}) = 0;
+    /** Update a product; completion receives the product or failure. */
+    virtual void update(std::string product_id,
+                        const UpdateProductRequest& request,
+                        const RequestOptions& options,
+                        Completion completion) = 0;
+};
+
+/**
+ * Create and inspect prices through StripeClient::prices().
+ * Creation supports fixed amounts and licensed recurrence, not tiered, metered,
+ * or custom amounts. Retrieval exposes those distinctions for safe validation.
+ * Failures propagate as StripeApiException, transport errors, or ConfigurationException.
+ * Callbacks run exactly once and may run on another thread.
+ */
+class Prices {
+public:
+    /** Callback receiving a price or an exception. */
+    using Completion = std::function<void(CallbackResult<Price>)>;
+    /** Callback receiving one page or an exception. */
+    using ListCompletion = std::function<void(CallbackResult<PriceList>)>;
+    /** Destroy the operation group. */
+    virtual ~Prices() = default;
+    /** Create a new price; does not replace prices on existing subscriptions. */
+    virtual Task<Price> create_async(const CreatePriceRequest& request,
+                                     const RequestOptions& options = {}) = 0;
+    /** Create a price; completion receives the price or failure. */
+    virtual void create(const CreatePriceRequest& request,
+                        const RequestOptions& options,
+                        Completion completion) = 0;
+    /** Retrieve an active or archived price by its ID. */
+    virtual Task<Price> retrieve_async(std::string price_id,
+                                       const RequestOptions& options = {}) = 0;
+    /** Retrieve a price; completion receives the price or failure. */
+    virtual void
+    retrieve(std::string price_id, const RequestOptions& options, Completion completion) = 0;
+    /** Retrieve one filtered page, including lookup-key results. */
+    virtual Task<PriceList> list_async(const ListPricesRequest& request = {},
+                                       const RequestOptions& options = {}) = 0;
+    /** List one page; completion receives the page or failure. */
+    virtual void list(const ListPricesRequest& request,
+                      const RequestOptions& options,
+                      ListCompletion completion) = 0;
+};
 
 /**
  * Creates and retrieves Stripe customers.
@@ -458,6 +598,12 @@ public:
      * Destroys the client instance.
      */
     virtual ~StripeClient() = default;
+
+    /** Return catalog product operations, valid for this client's lifetime. */
+    virtual Products& products() = 0;
+
+    /** Return catalog price operations, valid for this client's lifetime. */
+    virtual Prices& prices() = 0;
 
     /**
      * Returns the customer operations.

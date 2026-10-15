@@ -37,6 +37,47 @@ public:
     virtual ~StripeResponseParser() = default;
 
     /**
+     * Reads a product out of a successful response.
+     *
+     * Deleted products contain only their ID and deleted flag.
+     *
+     * @param response The response body and status from Stripe.
+     *
+     * @return The parsed product.
+     *
+     * @throws ConfigurationException The body was not a valid product object.
+     */
+    virtual Product parse_product(const HttpResponse& response) const;
+
+    /**
+     * Reads a price out of a successful response.
+     *
+     * Preserves absent amounts and recurrence details so callers can distinguish
+     * fixed prices from other pricing types. Active and archived prices are accepted.
+     *
+     * @param response The response body and status from Stripe.
+     *
+     * @return The parsed price.
+     *
+     * @throws ConfigurationException The body was not a valid price object.
+     */
+    virtual Price parse_price(const HttpResponse& response) const;
+
+    /**
+     * Reads one page of prices out of a successful response.
+     *
+     * Does not fetch further pages.
+     *
+     * @param response The response body and status from Stripe.
+     *
+     * @return The parsed prices and whether further pages are available.
+     *
+     * @throws ConfigurationException The body was not a valid price list or
+     * contained an invalid price object.
+     */
+    virtual PriceList parse_price_list(const HttpResponse& response) const;
+
+    /**
      * Reads a customer out of a successful response.
      *
      * @param response The response body and status from Stripe.
@@ -93,6 +134,49 @@ public:
  */
 class JsonStripeResponseParser final : public StripeResponseParser {
 public:
+    /**
+     * Reads a product out of a successful JSON response.
+     *
+     * Deleted products contain only their ID and deleted flag.
+     *
+     * @param response The response body and status from Stripe.
+     *
+     * @return The parsed product.
+     *
+     * @throws ConfigurationException The body was not valid JSON or contained
+     * a malformed product object.
+     */
+    Product parse_product(const HttpResponse& response) const override;
+
+    /**
+     * Reads a price out of a successful JSON response.
+     *
+     * Preserves absent amounts and recurrence details. Active and archived prices
+     * are accepted, and expanded products are returned as product IDs.
+     *
+     * @param response The response body and status from Stripe.
+     *
+     * @return The parsed price.
+     *
+     * @throws ConfigurationException The body was not valid JSON or contained
+     * a malformed price object.
+     */
+    Price parse_price(const HttpResponse& response) const override;
+
+    /**
+     * Reads one page of prices out of a successful JSON response.
+     *
+     * Does not fetch further pages.
+     *
+     * @param response The response body and status from Stripe.
+     *
+     * @return The parsed prices and whether further pages are available.
+     *
+     * @throws ConfigurationException The body was not valid JSON, was not a
+     * price list, or contained a malformed price object.
+     */
+    PriceList parse_price_list(const HttpResponse& response) const override;
+
     /**
      * Reads a customer out of a successful response.
      *
@@ -208,7 +292,67 @@ public:
      */
     BillingPortal& billing_portal() override;
 
+    /** Return the product operations owned by this client. */
+    Products& products() override;
+
+    /** Return the price operations owned by this client. */
+    Prices& prices() override;
+
 private:
+    /** Creates, retrieves, and updates Stripe products. */
+    class ProductOperations final : public Products {
+    public:
+        /** Retain the owning client for the lifetime of the group. */
+        explicit ProductOperations(StripeApiClient& owner);
+
+        /** Create a product with the supplied request settings. */
+        Task<Product> create_async(const CreateProductRequest&, const RequestOptions&) override;
+
+        /** Create a product and deliver its result once. */
+        void create(const CreateProductRequest&, const RequestOptions&, Completion) override;
+
+        /** Retrieve a product by ID. */
+        Task<Product> retrieve_async(std::string, const RequestOptions&) override;
+
+        /** Retrieve a product and deliver its result once. */
+        void retrieve(std::string, const RequestOptions&, Completion) override;
+
+        /** Update the specified product. */
+        Task<Product>
+        update_async(std::string, const UpdateProductRequest&, const RequestOptions&) override;
+
+        /** Update a product and deliver its result once. */
+        void update(std::string,
+                    const UpdateProductRequest&,
+                    const RequestOptions&,
+                    Completion) override;
+
+    private:
+        StripeApiClient& owner;
+    };
+
+    /** Creates and retrieves Stripe prices, including filtered lists. */
+    class PriceOperations final : public Prices {
+    public:
+        /** Retain the owning client for the lifetime of the group. */
+        explicit PriceOperations(StripeApiClient& owner);
+        /** Create a fixed per-unit price. */
+        Task<Price> create_async(const CreatePriceRequest&, const RequestOptions&) override;
+        /** Create a price and deliver its result once. */
+        void create(const CreatePriceRequest&, const RequestOptions&, Completion) override;
+        /** Retrieve an existing price by ID. */
+        Task<Price> retrieve_async(std::string, const RequestOptions&) override;
+        /** Retrieve a price and deliver its result once. */
+        void retrieve(std::string, const RequestOptions&, Completion) override;
+        /** Retrieve one filtered page of prices. */
+        Task<PriceList> list_async(const ListPricesRequest&, const RequestOptions&) override;
+        /** Retrieve a page and deliver its result once. */
+        void list(const ListPricesRequest&, const RequestOptions&, ListCompletion) override;
+
+    private:
+        StripeApiClient& owner;
+    };
+
     class CustomerOperations final : public Customers {
     public:
         explicit CustomerOperations(StripeApiClient& owner);
@@ -299,6 +443,8 @@ private:
     SubscriptionOperations subscription_operations;
     BillingPortalSessionOperations billing_portal_session_operations;
     BillingPortalOperations billing_portal_operations;
+    ProductOperations product_operations;
+    PriceOperations price_operations;
 };
 
 /** @} */

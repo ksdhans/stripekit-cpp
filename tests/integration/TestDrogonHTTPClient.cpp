@@ -35,6 +35,17 @@ protected:
     std::unique_ptr<StripeClient> client;
 };
 
+TEST_F(DrogonHTTPClientIntegrationTest, PriceLookupPreservesEncodedQueryValues) {
+    ListPricesRequest request;
+    request.active = false;
+    request.lookup_keys = { "standard & monthly" };
+    request.starting_after = "price+old";
+    auto task = client->prices().list_async(request);
+    const auto page = task.result();
+    EXPECT_TRUE(page.data.empty());
+    EXPECT_FALSE(page.has_more);
+}
+
 TEST_F(DrogonHTTPClientIntegrationTest, CustomerCreateAsyncSuccess) {
     const CreateCustomerRequest request{ .email = "integration@example.com",
                                          .name = "Integration User",

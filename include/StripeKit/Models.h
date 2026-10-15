@@ -10,10 +10,90 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace stripekit {
+
+/** A catalog product. Deleted products only guarantee their ID and deleted flag. */
+struct Product {
+    /** Stripe product identifier, including a caller-supplied ID when used. */
+    std::string id;
+    /** Customer-facing display name. */
+    std::string name;
+    /** Customer-facing description; empty when absent. */
+    std::string description;
+    /** Whether the product can be used for new purchases. */
+    bool active = false;
+    /** True for a deleted product returned by retrieval. */
+    bool deleted = false;
+    /** True for a live-mode object. */
+    bool livemode = false;
+    /** Application-defined attributes. */
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/** Recurrence attached to a Stripe price. */
+struct PriceRecurrence {
+    /** day, week, month, or year. */
+    std::string interval;
+    /** Number of intervals per billing period. */
+    std::int64_t interval_count = 1;
+    /** licensed or metered; callers must not treat them interchangeably. */
+    std::string usage_type;
+};
+
+/** Quantity adjustment applied before calculating a price. */
+struct PriceQuantityTransform {
+    /** Divisor applied to the purchased quantity. */
+    std::int64_t divide_by = 1;
+    /** up or down. */
+    std::string round;
+};
+
+/** A Stripe price. Changing an amount requires creating a new price. */
+struct Price {
+    /** Stripe price identifier. */
+    std::string id;
+    /** Associated product ID, whether the response contains an ID or expanded product. */
+    std::string product_id;
+    /** Lower-case ISO currency code. */
+    std::string currency;
+    /** Integer amount in the smallest currency unit; absent for non-integer or custom pricing. */
+    std::optional<std::int64_t> unit_amount;
+    /** Exact decimal amount when provided by Stripe. */
+    std::optional<std::string> unit_amount_decimal;
+    /** one_time or recurring. */
+    std::string type;
+    /** per_unit or tiered. */
+    std::string billing_scheme;
+    /** inclusive, exclusive, or unspecified. */
+    std::string tax_behavior;
+    /** Whether the price is available for new purchases. */
+    bool active = false;
+    /** True for a live-mode object. */
+    bool livemode = false;
+    /** Stable application lookup key; empty when absent. */
+    std::string lookup_key;
+    /** Recurrence, absent for one-time prices. */
+    std::optional<PriceRecurrence> recurring;
+    /** Quantity adjustment, absent when quantities are used unchanged. */
+    std::optional<PriceQuantityTransform> transform_quantity;
+    /** True when the customer chooses the amount rather than paying a fixed amount. */
+    bool custom_unit_amount = false;
+    /** Application-defined attributes. */
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/** One page of prices. Use the last ID as starting_after when has_more is true. */
+struct PriceList {
+    /** Prices in Stripe's response order. */
+    std::vector<Price> data;
+    /** Whether further pages are available. */
+    bool has_more = false;
+};
 
 /**
  * @addtogroup models

@@ -47,6 +47,8 @@ struct HttpRequest {
      * Path relative to the Stripe API base URL, for example "/v1/customers".
      *
      * Join it to the base URL, normally "https://api.stripe.com".
+     * Path components and query values are already percent-encoded. Send them
+     * unchanged; encoding again would corrupt IDs and list filters.
      */
     std::string path;
 

@@ -5,6 +5,13 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Add product creation, retrieval, and updates, plus fixed-price creation,
+  retrieval, and paginated listing with lookup-key filters.
+- Preserve nullable price amounts and recurrence/quantity details when reading
+  prices, and preserve encoded paths and query values in the Drogon transport.
+- Custom StripeClient implementations now need products() and prices() groups.
+  Existing custom response parsers inherit JSON catalog parsing by default.
+
 - The drogon backend's webhook HTTP request handler was doing a synchronous 
   wait (via .result()). Fixed, so that it's fully asynchronous, using 
   co-routines (as it should).

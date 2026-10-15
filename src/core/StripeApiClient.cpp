@@ -9,6 +9,7 @@
 #include "StripeKit/Callback.h"
 
 #include <cctype>
+#include <algorithm>
 #include <condition_variable>
 #include <iomanip>
 #include <memory>
@@ -158,6 +159,139 @@ make_request(HttpMethod method, std::string path, std::string body, const Reques
     return request;
 }
 
+/** Require nonempty IDs before placing them in an encoded request path. */
+std::string catalog_path(std::string_view group, const std::string& id) {
+    if (id.empty()) throw ConfigurationException("A catalog object ID is required");
+    return "/v1/" + std::string(group) + "/" + url_encode(id);
+}
+
+/** Encode product creation, retaining caller-supplied identities and metadata. */
+std::string product_body(const CreateProductRequest& request) {
+    if (request.name.empty()) throw ConfigurationException("A product name is required");
+    std::string body;
+    if (!request.id.empty()) append_form_value(body, "id", request.id);
+    append_form_value(body, "name", request.name);
+    append_form_value(body, "description", request.description);
+    append_form_value(body, "active", request.active ? "true" : "false");
+    append_metadata(body, request.metadata);
+    return body;
+}
+
+/** Encode only supplied product changes, allowing explicit false and empty descriptions. */
+std::string product_body(const UpdateProductRequest& request) {
+    if (request.name && request.name->empty())
+        throw ConfigurationException("An updated product name cannot be empty");
+    std::string body;
+    if (request.name) append_form_value(body, "name", *request.name);
+    if (request.description) append_form_value(body, "description", *request.description);
+    if (request.active) append_form_value(body, "active", *request.active ? "true" : "false");
+    append_metadata(body, request.metadata);
+    return body;
+}
+
+/** Validate and encode fixed per-unit pricing without changing existing subscriptions. */
+std::string price_body(const CreatePriceRequest& request) {
+    const auto& interval = request.recurring_interval;
+    if (request.product_id.empty() || request.currency.size() != 3 ||
+        !std::all_of(request.currency.begin(),
+                     request.currency.end(),
+                     [](unsigned char c) { return c >= 'a' && c <= 'z'; }) ||
+        request.unit_amount < 0 || request.recurring_interval_count <= 0 ||
+        (interval.empty() && request.recurring_interval_count != 1) ||
+        (!interval.empty() && interval != "day" && interval != "week" && interval != "month" &&
+         interval != "year") ||
+        (!request.tax_behavior.empty() && request.tax_behavior != "inclusive" &&
+         request.tax_behavior != "exclusive" && request.tax_behavior != "unspecified"))
+        throw ConfigurationException("Invalid fixed-price creation request");
+    std::string body;
+    append_form_value(body, "product", request.product_id);
+    append_form_value(body, "currency", request.currency);
+    append_form_value(body, "unit_amount", std::to_string(request.unit_amount));
+    if (!interval.empty()) {
+        append_form_value(body, "recurring[interval]", interval);
+        append_form_value(
+            body, "recurring[interval_count]", std::to_string(request.recurring_interval_count));
+        append_form_value(body, "recurring[usage_type]", "licensed");
+    }
+    if (!request.lookup_key.empty()) append_form_value(body, "lookup_key", request.lookup_key);
+    if (!request.tax_behavior.empty())
+        append_form_value(body, "tax_behavior", request.tax_behavior);
+    append_metadata(body, request.metadata);
+    return body;
+}
+
+/** Build a filtered price-list URL with explicit pagination. */
+std::string prices_path(const ListPricesRequest& request) {
+    if (request.limit < 1 || request.limit > 100 || request.lookup_keys.size() > 10)
+        throw ConfigurationException("Invalid price-list limit or lookup-key count");
+    std::string query;
+    append_form_value(query, "limit", std::to_string(request.limit));
+    if (!request.product_id.empty()) append_form_value(query, "product", request.product_id);
+    if (request.active) append_form_value(query, "active", *request.active ? "true" : "false");
+    if (!request.starting_after.empty())
+        append_form_value(query, "starting_after", request.starting_after);
+    for (const auto& key : request.lookup_keys) {
+        if (key.empty()) throw ConfigurationException("Price lookup keys cannot be empty");
+        append_form_value(query, "lookup_keys[]", key);
+    }
+    return "/v1/prices?" + query;
+}
+
+/** Require a typed field rather than disguising malformed responses as default values. */
+void require_catalog_field(bool valid) {
+    if (!valid) throw ConfigurationException("Stripe returned a malformed catalog object");
+}
+
+/** Read a complete price while preserving optional and unsupported pricing distinctions. */
+Price price_value(const Json::Value& object) {
+    require_catalog_field(
+        object.isObject() && object["object"] == "price" && object["id"].isString() &&
+        !object["id"].asString().empty() && object["active"].isBool() &&
+        object["livemode"].isBool() && object["currency"].isString() && object["type"].isString() &&
+        object["billing_scheme"].isString() &&
+        (object["unit_amount"].isNull() || object["unit_amount"].isInt64()) &&
+        (object["unit_amount_decimal"].isNull() || object["unit_amount_decimal"].isString()) &&
+        (object["lookup_key"].isNull() || object["lookup_key"].isString()) &&
+        (object["custom_unit_amount"].isNull() || object["custom_unit_amount"].isObject()));
+    Price price;
+    price.id = object["id"].asString();
+    const auto& product = object["product"];
+    price.product_id = product.isString() ? product.asString() : json_value::string(product, "id");
+    require_catalog_field(!price.product_id.empty());
+    price.currency = object["currency"].asString();
+    price.type = object["type"].asString();
+    price.billing_scheme = object["billing_scheme"].asString();
+    price.tax_behavior = json_value::string(object, "tax_behavior");
+    price.active = object["active"].asBool();
+    price.livemode = object["livemode"].asBool();
+    price.lookup_key = json_value::string(object, "lookup_key");
+    if (!object["unit_amount"].isNull()) price.unit_amount = object["unit_amount"].asInt64();
+    if (!object["unit_amount_decimal"].isNull())
+        price.unit_amount_decimal = object["unit_amount_decimal"].asString();
+    const auto& recurring = object["recurring"];
+    require_catalog_field((price.type == "one_time" && recurring.isNull()) ||
+                          (price.type == "recurring" && recurring.isObject()));
+    if (!recurring.isNull()) {
+        require_catalog_field(
+            recurring["interval"].isString() && recurring["interval_count"].isInt64() &&
+            recurring["interval_count"].asInt64() > 0 && recurring["usage_type"].isString());
+        price.recurring = PriceRecurrence{ recurring["interval"].asString(),
+                                           recurring["interval_count"].asInt64(),
+                                           recurring["usage_type"].asString() };
+    }
+    const auto& transform = object["transform_quantity"];
+    if (!transform.isNull()) {
+        require_catalog_field(transform.isObject() && transform["divide_by"].isInt64() &&
+                              transform["divide_by"].asInt64() > 0 &&
+                              transform["round"].isString());
+        price.transform_quantity = PriceQuantityTransform{ transform["divide_by"].asInt64(),
+                                                           transform["round"].asString() };
+    }
+    price.custom_unit_amount = !object["custom_unit_amount"].isNull();
+    price.metadata = metadata_value(object);
+    return price;
+}
+
 bool is_success(const HttpResponse& response) {
     return response.status_code >= 200 && response.status_code < 300;
 }
@@ -258,6 +392,53 @@ void send_and_parse(HTTPClient& http_client,
 }
 
 } // namespace
+
+Product StripeResponseParser::parse_product(const HttpResponse& response) const {
+    return JsonStripeResponseParser{}.parse_product(response);
+}
+
+Price StripeResponseParser::parse_price(const HttpResponse& response) const {
+    return JsonStripeResponseParser{}.parse_price(response);
+}
+
+PriceList StripeResponseParser::parse_price_list(const HttpResponse& response) const {
+    return JsonStripeResponseParser{}.parse_price_list(response);
+}
+
+Product JsonStripeResponseParser::parse_product(const HttpResponse& response) const {
+    const auto object = json_value::parse(response.body);
+    require_catalog_field(object.isObject() && object["object"] == "product" &&
+                          object["id"].isString() && !object["id"].asString().empty() &&
+                          (object["deleted"].isNull() || object["deleted"].isBool()));
+    Product product;
+    product.id = object["id"].asString();
+    product.deleted = object["deleted"] == true;
+    if (product.deleted) return product;
+    require_catalog_field(object["name"].isString() && object["active"].isBool() &&
+                          object["livemode"].isBool() &&
+                          (object["description"].isNull() || object["description"].isString()));
+    product.name = object["name"].asString();
+    product.description = json_value::string(object, "description");
+    product.active = object["active"].asBool();
+    product.livemode = object["livemode"].asBool();
+    product.metadata = metadata_value(object);
+    return product;
+}
+
+Price JsonStripeResponseParser::parse_price(const HttpResponse& response) const {
+    return price_value(json_value::parse(response.body));
+}
+
+PriceList JsonStripeResponseParser::parse_price_list(const HttpResponse& response) const {
+    const auto object = json_value::parse(response.body);
+    require_catalog_field(object.isObject() && object["object"] == "list" &&
+                          object["data"].isArray() && object["has_more"].isBool());
+    PriceList result;
+    result.has_more = object["has_more"].asBool();
+    for (const auto& value : object["data"])
+        result.data.push_back(price_value(value));
+    return result;
+}
 
 Customer JsonStripeResponseParser::parse_customer(const HttpResponse& response) const {
     const auto object = json_value::parse(response.body);
@@ -555,7 +736,7 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client)
       callback_lifetime(std::make_shared<CallbackLifetime>()), customer_operations(*this),
       checkout_session_operations(*this), checkout_operations(*this),
       subscription_operations(*this), billing_portal_session_operations(*this),
-      billing_portal_operations(*this) {}
+      billing_portal_operations(*this), product_operations(*this), price_operations(*this) {}
 
 StripeApiClient::StripeApiClient(HTTPClient& http_client,
                                  const StripeResponseParser& response_parser)
@@ -563,7 +744,7 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client,
       callback_lifetime(std::make_shared<CallbackLifetime>()), customer_operations(*this),
       checkout_session_operations(*this), checkout_operations(*this),
       subscription_operations(*this), billing_portal_session_operations(*this),
-      billing_portal_operations(*this) {}
+      billing_portal_operations(*this), product_operations(*this), price_operations(*this) {}
 
 StripeApiClient::~StripeApiClient() {
     callback_lifetime->close_and_wait();
@@ -583,6 +764,214 @@ Subscriptions& StripeApiClient::subscriptions() {
 
 BillingPortal& StripeApiClient::billing_portal() {
     return billing_portal_operations;
+}
+
+Products& StripeApiClient::products() {
+    return product_operations;
+}
+
+Prices& StripeApiClient::prices() {
+    return price_operations;
+}
+
+StripeApiClient::ProductOperations::ProductOperations(StripeApiClient& owner) : owner(owner) {}
+
+Task<Product> StripeApiClient::ProductOperations::create_async(const CreateProductRequest& request,
+                                                               const RequestOptions& options) {
+    return send_and_parse_async<Product>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post, "/v1/products", product_body(request), options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_product(response);
+        });
+}
+
+void StripeApiClient::ProductOperations::create(const CreateProductRequest& request,
+                                                const RequestOptions& options,
+                                                Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post, "/v1/products", product_body(request), options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Product>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_product(response);
+        },
+        std::move(completion));
+}
+
+Task<Product> StripeApiClient::ProductOperations::retrieve_async(std::string id,
+                                                                 const RequestOptions& options) {
+    return send_and_parse_async<Product>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, catalog_path("products", id), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_product(response);
+        });
+}
+
+void StripeApiClient::ProductOperations::retrieve(std::string id,
+                                                  const RequestOptions& options,
+                                                  Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, catalog_path("products", id), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Product>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_product(response);
+        },
+        std::move(completion));
+}
+
+Task<Product> StripeApiClient::ProductOperations::update_async(std::string id,
+                                                               const UpdateProductRequest& request,
+                                                               const RequestOptions& options) {
+    return send_and_parse_async<Product>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(
+            HttpMethod::Post, catalog_path("products", id), product_body(request), options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_product(response);
+        });
+}
+
+void StripeApiClient::ProductOperations::update(std::string id,
+                                                const UpdateProductRequest& request,
+                                                const RequestOptions& options,
+                                                Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(
+            HttpMethod::Post, catalog_path("products", id), product_body(request), options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Product>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_product(response);
+        },
+        std::move(completion));
+}
+
+StripeApiClient::PriceOperations::PriceOperations(StripeApiClient& owner) : owner(owner) {}
+
+Task<Price> StripeApiClient::PriceOperations::create_async(const CreatePriceRequest& request,
+                                                           const RequestOptions& options) {
+    return send_and_parse_async<Price>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post, "/v1/prices", price_body(request), options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_price(response);
+        });
+}
+
+void StripeApiClient::PriceOperations::create(const CreatePriceRequest& request,
+                                              const RequestOptions& options,
+                                              Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post, "/v1/prices", price_body(request), options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Price>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_price(response);
+        },
+        std::move(completion));
+}
+
+Task<Price> StripeApiClient::PriceOperations::retrieve_async(std::string id,
+                                                             const RequestOptions& options) {
+    return send_and_parse_async<Price>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, catalog_path("prices", id), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_price(response);
+        });
+}
+
+void StripeApiClient::PriceOperations::retrieve(std::string id,
+                                                const RequestOptions& options,
+                                                Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, catalog_path("prices", id), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Price>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_price(response);
+        },
+        std::move(completion));
+}
+
+Task<PriceList> StripeApiClient::PriceOperations::list_async(const ListPricesRequest& request,
+                                                             const RequestOptions& options) {
+    return send_and_parse_async<PriceList>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, prices_path(request), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_price_list(response);
+        });
+}
+
+void StripeApiClient::PriceOperations::list(const ListPricesRequest& request,
+                                            const RequestOptions& options,
+                                            ListCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, prices_path(request), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<PriceList>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_price_list(response);
+        },
+        std::move(completion));
 }
 
 } // namespace stripekit

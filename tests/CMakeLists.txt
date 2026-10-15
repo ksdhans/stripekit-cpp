@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(stripekit_unit_tests
     unit/Main.cpp
+    unit/TestCatalog.cpp
     unit/TestLogging.cpp
     unit/TestModelsAndParser.cpp
     unit/TestSqliteWebhookDedupStore.cpp

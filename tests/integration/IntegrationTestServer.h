@@ -347,6 +347,24 @@ private:
     std::thread server_thread;
 
     void register_mock_stripe_api_handlers() {
+        ::drogon::app().registerHandler(
+            "/v1/prices",
+            [this](const ::drogon::HttpRequestPtr& req,
+                   std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
+                auto resp = ::drogon::HttpResponse::newHttpResponse();
+                resp->setContentTypeCode(::drogon::CT_APPLICATION_JSON);
+                if (req->getHeader("authorization") != "Bearer " + std::string(api_key) ||
+                    req->getParameter("lookup_keys[]") != "standard & monthly" ||
+                    req->getParameter("starting_after") != "price+old" ||
+                    req->getParameter("active") != "false") {
+                    resp->setStatusCode(::drogon::k400BadRequest);
+                    resp->setBody(R"({"error":{"message":"Incorrect catalog request encoding"}})");
+                } else {
+                    resp->setBody(R"({"object":"list","has_more":false,"data":[]})");
+                }
+                callback(resp);
+            },
+            { ::drogon::Get });
         // POST /v1/customers
         ::drogon::app().registerHandler(
             "/v1/customers",

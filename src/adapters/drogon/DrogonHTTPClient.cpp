@@ -78,6 +78,16 @@ public:
               std::move(options.api_key), std::move(options.api_base_url), options.event_loop),
           client(http_client) {}
 
+    /** Return the underlying client's catalog product operations. */
+    Products& products() override {
+        return client.products();
+    }
+
+    /** Return the underlying client's catalog price operations. */
+    Prices& prices() override {
+        return client.prices();
+    }
+
     Customers& customers() override {
         return client.customers();
     }
@@ -232,6 +242,7 @@ void HTTPClient::send(const HttpRequest& request, Completion completion) {
         break;
     }
     http_request->setPath(request.path);
+    http_request->setPathEncode(false);
     http_request->addHeader("Authorization", "Bearer " + api_key);
     for (const auto& [name, value] : request.headers) {
         http_request->addHeader(name, value);
