@@ -121,6 +121,13 @@ auto data = @@.get<stripekit::examples::CheckoutDemoViewData>("data");
                 <h3>Demo service membership</h3>
                 <p class="price">$12<span class="muted"> / month</span></p>
                 <p class="muted">The product is defined inline unless you provide an existing Price ID.</p>
+                <p class="muted">Use test cards only, with a future expiry and a valid-format CVC.</p>
+                <ul class="muted">
+                    <li>Success: <code>4242 4242 4242 4242</code></li>
+                    <li>Decline: <code>4000 0000 0000 0002</code></li>
+                    <li>Always authenticate (3D Secure): <code>4000 0027 6000 3184</code></li>
+                </ul>
+                <p class="muted">See <a href="https://docs.stripe.com/testing">Stripe's test cards and expected outcomes</a>.</p>
             </div>
             <%c++ if(data.can_start_checkout) { %>
             <form method="post" action="/checkout">

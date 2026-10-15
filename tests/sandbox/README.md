@@ -214,36 +214,68 @@ event stream quiet and lets you clear test data independently.
 
 ## Verifying Hosted Checkout With The Demo
 
-`SandboxSubscriptionTest.CheckoutSessionIsCreatedForSubscriptionMode` only
-checks that StripeKit can create a Checkout Session correctly. It cannot drive
-the hosted page itself, complete a real card entry, or follow the redirect back
-to `success_url`, since that page is rendered and operated by Stripe in a
-browser. Cover that part with [examples/DrogonCheckoutDemo](../../examples/DrogonCheckoutDemo/README.md)
-before releases that touch checkout, or when changing
-`CreateCheckoutSessionRequest` handling:
+The sandbox suite checks Checkout Session creation, not the browser-hosted
+payment flow. Before releases that touch Checkout, follow the
+[DrogonCheckoutDemo README](../../examples/DrogonCheckoutDemo/README.md)
+for setup, test cards, and webhook checks. Its
+[manual 3D Secure checks](../../examples/DrogonCheckoutDemo/README.md#manually-check-3d-secure)
+cover successful, failed, and canceled authentication during initial Checkout.
 
-1. Build the demo:
+## Manually Check 3D Secure Payment Recovery
 
-   ```bash
-   cmake -S . -B build -DSTRIPEKIT_BUILD_EXAMPLES=ON
-   cmake --build build --target stripekit_drogon_checkout_demo
-   ```
+This checks an existing subscription's price change, not initial Checkout.
+Use a separate sandbox subscription and keep webhook forwarding running.
 
-2. Run `./build/bin/stripekit_drogon_checkout_demo` and open
-   `http://127.0.0.1:4242`.
-3. Enter a sandbox **secret API key** (`sk_test_...`) and the `whsec_...` value
-   from:
+1. Create and pay for a subscription using a normal test card such as
+   `4242 4242 4242 4242`. Save its subscription and item IDs and quantity.
+2. Attach the test payment method `pm_card_authenticationRequired` to its
+   customer and select the attached method as the subscription's default.
+   Alternatively, enter the **always authenticate** test card
+   `4000 0027 6000 3184` through your application's payment-method setup flow.
+3. Replace the subscription item's price using `PaymentBehavior::AllowIncomplete`
+   and an explicit proration choice. Use a change that triggers an immediate
+   invoice, such as switching monthly to yearly billing with
+   `ProrationBehavior::None`. Preserve the item ID and quantity.
+4. Retrieve the subscription and its latest invoice. Confirm that the new price
+   is assigned, the subscription is `past_due`, the invoice is unpaid, and
+   `invoice.payment_action_required` has arrived. Retrieve the invoice's
+   PaymentIntent and check for `requires_action`.
+5. Retrieve the invoice through Stripe's API and open its `hosted_invoice_url`
+   in your browser. Follow the payment/authentication prompts without replacing
+   the card with a different, non-authenticating card.
+6. Complete the test challenge successfully. Confirm that the **same invoice**
+   becomes paid and emits `invoice.paid`. Retrieve the subscription again and
+   confirm that it is `active`, retains the replacement price, and has the
+   expected quantity.
+7. On fresh test subscriptions, repeat with failed or canceled authentication.
+   Verify that an unpaid attempt does not grant paid access. With
+   `AllowIncomplete`, failure must not restore the old price. Your application's
+   grace-period and recovery policy determines continued access.
+8. Cancel the test subscriptions when finished and archive unused catalog
+   objects. Change or clear a product's default before archiving that price.
 
-   ```bash
-   stripe listen --all-snapshot --latest --forward-to http://127.0.0.1:4242/webhook
-   ```
+The automated authentication-required sandbox test already covers the state
+before challenge completion, but it cancels its subscription during cleanup.
+Do not use its invoice as a manual recovery fixture after the test exits.
+The existing Checkout demo does not provide a subscription price-change or
+invoice-recovery screen. Use your application or Stripe's API for these steps;
+StripeKit does not expose payment-method setup, invoice retrieval, or
+PaymentIntent confirmation.
 
-4. Start Checkout from the mock sales page and pay with a
-   [Stripe test card](https://docs.stripe.com/testing#cards), for example
-   `4242 4242 4242 4242` with any future expiry and any CVC.
-5. Confirm the browser redirects to the demo return page.
-6. Confirm the terminal running `stripe listen` shows `invoice.paid`, and that
-   the demo's webhook table shows the verified event.
-7. Repeat with a declining test card (for example `4000 0000 0000 0002`) and
-   confirm the checkout page shows a decline and no `invoice.paid` event
-   arrives.
+Paying with a different working card checks payment recovery, **not** completion
+of the original 3D Secure challenge.
+
+### What Automated Integration Tests Can Check
+
+Locally signed, simulated webhook events can test delivery of
+`invoice.payment_action_required`, `invoice.payment_failed`, and `invoice.paid`
+through the HTTP endpoint, including payload preservation and duplicate handling.
+Simulated API responses can test parsing of outstanding and recovered subscription
+states. Applications should also test their access policy against duplicate and
+out-of-order events.
+
+These tests do not prove that Stripe's challenge UI works or that authentication
+actually completed. Pair them with the live sandbox authentication-required test
+and the manual browser checks above. See
+[Stripe's automated-testing guidance](https://docs.stripe.com/automated-testing)
+for the limitations of automating Stripe-owned payment interfaces.

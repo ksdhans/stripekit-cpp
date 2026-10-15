@@ -95,8 +95,13 @@ def main():
                 while True:
                     assert server.poll() is None, "Demo exited at startup"
                     try:
-                        status, _, _ = request(port, "GET", "/")
+                        status, _, home = request(port, "GET", "/")
                         assert status == 200
+                        assert 'href="https://docs.stripe.com/testing"' in home
+                        assert "4000 0027 6000 3184" in home
+                        assert "<li>Success: <code>4242 4242 4242 4242</code></li>" in home
+                        assert "<li>Decline: <code>4000 0000 0000 0002</code></li>" in home
+                        assert "<li>Always authenticate (3D Secure): <code>4000 0027 6000 3184</code></li>" in home
                         break
                     except ConnectionRefusedError:
                         if time.monotonic() >= deadline:

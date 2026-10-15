@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Added info about Stripe sandbox's test credit card numbers, including the
+  "always authenticate" number that shows a 3D secure challenge page
 - Add product creation, retrieval, and updates, plus fixed-price creation,
   retrieval, and paginated listing with lookup-key filters.
 - Preserve nullable price amounts and recurrence/quantity details when reading
