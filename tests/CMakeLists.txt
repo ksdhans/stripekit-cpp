@@ -56,6 +56,14 @@ if(UNIX AND TARGET stripekit_drogon_checkout_demo)
                 $<TARGET_FILE:stripekit_drogon_checkout_demo>
         )
         set_tests_properties(stripekit.checkout-demo PROPERTIES TIMEOUT 30)
+        if(TARGET stripekit_product_catalog_cli)
+            add_test(NAME stripekit.product-catalog-cli
+                COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/integration/TestProductCatalogCli.py
+                    $<TARGET_FILE:stripekit_product_catalog_cli>
+            )
+            set_tests_properties(stripekit.product-catalog-cli PROPERTIES TIMEOUT 30)
+        endif()
     else()
         message(STATUS "StripeKit: Python3 not found; checkout demo regression test is disabled")
     endif()

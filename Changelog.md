@@ -13,6 +13,8 @@ version section when a release is tagged.
   prices, and preserve encoded paths and query values in the Drogon transport.
 - Custom StripeClient implementations now need products() and prices() groups.
   Existing custom response parsers inherit JSON catalog parsing by default.
+- Add ProductCatalogCli, demonstrating reusable catalog creation, product updates,
+  lookup-key recovery, default-price selection, and old-price archiving.
 - Add product default-price selection, price archiving and mutable detail updates,
   and immediate subscription price changes with explicit proration and payment
   policies. Subscription responses expose item quantities, latest invoice IDs,

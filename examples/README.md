@@ -58,6 +58,9 @@ exact commands they need.
 
 ## Available Examples
 
+- [ProductCatalogCli](ProductCatalogCli/README.md) creates a product and monthly
+	price, updates display details, selects a replacement default price, finds it
+	by lookup key, and archives the old price. Its Price ID can be used with Checkout.
 - [DrogonCheckoutDemo](DrogonCheckoutDemo/README.md) is the main end-to-end
 	hosted Checkout example. It serves a small HTML/CSS UI, creates a customer,
 	creates a subscription-mode Checkout Session, redirects to Stripe-hosted

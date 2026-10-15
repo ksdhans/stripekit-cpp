@@ -254,3 +254,6 @@ handling and request settings.
 Your application owns pricing decisions, saved ID mappings, synchronization,
 and retries. These operations do not run scheduled checks or keep an application
 catalog synchronized automatically.
+
+For a runnable test-mode walkthrough, see
+[ProductCatalogCli](../examples/ProductCatalogCli/README.md).

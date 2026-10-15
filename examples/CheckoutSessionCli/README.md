@@ -25,7 +25,11 @@ cmake --build build --target stripekit_checkout_session_cli
 This example needs an existing test-mode Customer and recurring Price because it
 only demonstrates Checkout Session creation.
 
-Create them with the Stripe CLI:
+Alternatively, use [ProductCatalogCli](../ProductCatalogCli/README.md) to create
+the product and recurring price with StripeKit, then copy its replacement Price
+ID and skip the product/price commands below. You still need a Customer.
+
+Create the needed objects with the Stripe CLI:
 
 ```bash
 stripe customers create \
