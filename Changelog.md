@@ -5,6 +5,9 @@ version section when a release is tagged.
 
 ## Unreleased
 
+
+## 0.2.0 2026-10-15
+
 - Added info about Stripe sandbox's test credit card numbers, including the
   "always authenticate" number that shows a 3D secure challenge page
 - Add product creation, retrieval, and updates, plus fixed-price creation,
