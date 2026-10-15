@@ -559,7 +559,9 @@ TEST_F(CatalogTest, InvalidPricingUpdatesNeverReachTransportAndCallbacksReceiveF
     request = subscription_request();
     request.items.clear();
     invalid_subscription("sub_test", request);
-    request.items.resize(21, subscription_request().items.front());
+    for (int index = 0; index < 21; ++index)
+        request.items.push_back(
+            { .item_id = "si_" + std::to_string(index), .price_id = "price_new", .quantity = 1 });
     invalid_subscription("sub_test", request);
     request = subscription_request();
     request.items.push_back(request.items.front());
@@ -690,6 +692,18 @@ TEST(CatalogParser, RejectsMalformedPricingStateRatherThanHidingIt) {
            replacing(subscription_json,
                      R"("pending_update":null)",
                      R"("pending_update":{"expires_at":0})"),
+           replacing(subscription_json,
+                     R"("pending_update":null)",
+                     R"("pending_update":{"expires_at":1800000000,"subscription_items":{}})"),
+           replacing(subscription_json,
+                     R"("pending_update":null)",
+                     R"("pending_update":{"expires_at":1800000000,"subscription_items":[
+                         {"id":"si_pending","price":42}]})"),
+           replacing(subscription_json,
+                     R"("pending_update":null)",
+                     R"("pending_update":{"subscription_items":[]})"),
+           replacing(subscription_json, R"("id":"si_first")", R"("id":"")"),
+           replacing(subscription_json, R"("quantity":7)", R"("quantity":-1)"),
            replacing(subscription_json, R"("price":{"id":"price_old"})", R"("price":null)") }) {
         EXPECT_THROW(parser.parse_subscription({ .body = body }), ConfigurationException);
     }
@@ -702,4 +716,77 @@ TEST(CatalogParser, RejectsMalformedPricingStateRatherThanHidingIt) {
                                                         R"("active":true)",
                                                         R"("active":true,"nickname":42)") }),
                  ConfigurationException);
+}
+
+TEST_F(CatalogTest, TwentyDistinctSubscriptionItemsAreAccepted) {
+    http.set_response({ .status_code = 200, .body = subscription_json });
+    auto request = subscription_request();
+    request.items.clear();
+    for (int index = 0; index < 20; ++index)
+        request.items.push_back({ .item_id = "si_" + std::to_string(index),
+                                  .price_id = "price_new",
+                                  .quantity = index + 1 });
+    client.subscriptions().update_async("sub_test", request).result();
+    const auto body = http.get_recorded_requests().back().body;
+    EXPECT_NE(body.find("items%5B19%5D%5Bid%5D=si_19"), std::string::npos);
+    EXPECT_NE(body.find("items%5B19%5D%5Bquantity%5D=20"), std::string::npos);
+    EXPECT_EQ(body.find("items%5B20%5D"), std::string::npos);
+}
+
+TEST(CatalogParser, NullablePricingStateAndStringReferencesRemainDistinct) {
+    JsonStripeResponseParser parser;
+    const auto product = parser.parse_product(
+        { .body = replacing(product_json,
+                            R"("description":null)",
+                            R"("description":null,"default_price":"price_default")") });
+    EXPECT_EQ(product.default_price_id, "price_default");
+    const auto price = parser.parse_price(
+        { .body = replacing(price_json, R"("active":true)", R"("active":true,"nickname":null)") });
+    EXPECT_TRUE(price.nickname.empty());
+    const auto subscription = parser.parse_subscription(
+        { .body = replacing(
+              replacing(subscription_json,
+                        R"("latest_invoice":{"id":"in_test"})",
+                        R"("latest_invoice":"in_test")"),
+              R"("pending_update":null)",
+              R"("pending_update":{"expires_at":1800000000,"subscription_items":null})") });
+    EXPECT_EQ(subscription.latest_invoice_id, "in_test");
+    EXPECT_TRUE(subscription.pending_update.has_value());
+    EXPECT_TRUE(subscription.pending_update->items.empty());
+    const auto without_invoice =
+        parser.parse_subscription({ .body = replacing(subscription_json,
+                                                      R"("latest_invoice":{"id":"in_test"})",
+                                                      R"("latest_invoice":null)") });
+    EXPECT_TRUE(without_invoice.latest_invoice_id.empty());
+}
+
+TEST_F(CatalogTest, SubscriptionUpdateCallbackPreservesPendingChangesAndTransportFailures) {
+    const auto body = replacing(subscription_json,
+                                R"("pending_update":null)",
+                                R"("pending_update":{"expires_at":1800000000,"subscription_items":[
+                                    {"id":"si_first","price":"price_new","quantity":7}]})");
+    http.set_response({ .status_code = 200, .body = body });
+    auto request = subscription_request();
+    request.payment_behavior = PaymentBehavior::PendingIfIncomplete;
+    int calls = 0;
+    client.subscriptions().update(
+        "sub_test", request, {}, [&](CallbackResult<Subscription> result) {
+            ++calls;
+            const auto& subscription = std::get<Subscription>(result);
+            EXPECT_EQ(subscription.items.front().price_id, "price_old");
+            EXPECT_EQ(subscription.pending_update->items.front().price_id, "price_new");
+        });
+    EXPECT_EQ(calls, 1);
+    http.set_exception(std::make_exception_ptr(std::runtime_error("Offline")));
+    client.subscriptions().update(
+        "sub_test", request, {}, [&](CallbackResult<Subscription> result) {
+            ++calls;
+            EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+            try {
+                std::rethrow_exception(std::get<std::exception_ptr>(result));
+            } catch (const std::runtime_error& error) {
+                EXPECT_EQ(std::string(error.what()), "Offline");
+            }
+        });
+    EXPECT_EQ(calls, 2);
 }

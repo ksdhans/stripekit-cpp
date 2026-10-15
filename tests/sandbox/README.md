@@ -161,7 +161,7 @@ sets `resource_group` so two pipelines cannot drive the same sandbox at once.
 
 | Test file | Coverage |
 | --- | --- |
-| `TestCatalog.cpp` | Product creation, retrieval, updates, default-price selection, and idempotent retries; recurring and one-time price creation and retrieval; mutable price updates, lookup-key transfers, and archiving; lookup-key filtering and pagination; Checkout sessions using catalog prices; grandfathered subscriptions and explicit price migrations preserving quantities and other items; and Stripe errors for missing catalog objects. |
+| `TestCatalog.cpp` | Product creation, retrieval, updates, default-price selection and rejection of invalid defaults; price creation, mutable updates, clearing fields, lookup-key transfers, archiving and reactivation; filtering and pagination; Checkout using catalog prices; grandfathered subscriptions; migrations preserving quantities and other items; all four payment behaviors, failed-payment recovery, authentication-required payments, deterministic proration amounts, idempotent retries, and related invoice/subscription webhooks. |
 | `TestSubscriptionLifecycle.cpp` | Checkout Session creation, an active subscription emitting `invoice.paid`, a declined card emitting `invoice.payment_failed`, and subscription cancellation. |
 | `TestDisputeAndRefund.cpp` | `charge.refunded`, and the dispute lifecycle through `charge.dispute.created` and `charge.dispute.closed`. |
 | `TestWebhookDelivery.cpp` | Live signed delivery, duplicate delivery handling, retryable-failure recovery, and rejection of a tampered payload. |
@@ -188,14 +188,17 @@ event stream quiet and lets you clear test data independently.
 
 ## Known Limitations
 
-- **Catalog tests do not advance subscriptions to renewal.** The grandfathering
-  test confirms that adding a new price leaves existing subscriptions unchanged.
-  A migration test explicitly replaces one item's price without proration,
-  preserving its quantity and other items. Failed-payment and pending-update
-  response handling is covered by unit tests, not live catalog migration tests.
+- **Catalog tests do not advance subscriptions to renewal.** They check immediate
+  changes and preview the next invoice. Future-dated price changes through
+  Subscription Schedules are not covered or exposed by StripeKit.
   Catalog tests expire their Checkout sessions, cancel their subscriptions, and
-  archive their prices and products, including after an assertion fails.
+  clear product defaults before archiving their prices and products, including
+  after an assertion fails. Test clocks and their customers are deleted.
   Archived objects and test customers remain in the sandbox for inspection.
+- **Authentication completion needs a browser.** The automated test verifies the
+  `requires_action` payment state and signed action-required webhook. Completing
+  the 3D Secure challenge through your payment or recovery page remains a manual
+  check.
 - **Hosted Checkout cannot be completed headlessly.** Stripe's hosted checkout
   page needs a browser, so the suite asserts that a session is created correctly
   and drives the subscription itself through the API to produce the invoice

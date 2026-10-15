@@ -113,6 +113,9 @@ public:
     /** Sends a POST and throws when Stripe does not return a success status. */
     StripeApiResult require_post(std::string_view path, const FormParams& params);
 
+    /** Sends a DELETE and throws when Stripe does not return a success status. */
+    StripeApiResult require_delete(std::string_view path);
+
     /** Returns how many Stripe API calls this run has made. */
     int call_count() const;
 

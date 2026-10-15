@@ -49,6 +49,7 @@ constexpr const char* forwarded_event_types = "customer.created,"
                                               "customer.subscription.updated,"
                                               "invoice.paid,"
                                               "invoice.payment_failed,"
+                                              "invoice.payment_action_required,"
                                               "charge.refunded,"
                                               "charge.dispute.created,"
                                               "charge.dispute.closed";
@@ -507,6 +508,15 @@ StripeApiResult SandboxStripeApi::require_post(std::string_view path, const Form
 
 int SandboxStripeApi::call_count() const {
     return calls.load();
+}
+
+StripeApiResult SandboxStripeApi::require_delete(std::string_view path) {
+    StripeApiResult result = send(HttpMethod::Delete, path, {});
+    if (!result.ok()) {
+        throw std::runtime_error("Stripe rejected DELETE " + std::string(path) + " - " +
+                                 result.describe());
+    }
+    return result;
 }
 
 StripeApiResult

@@ -147,6 +147,8 @@ const auto archived = co_await stripe->prices().update_async(old_price_id, archi
 @endcode
 
 Archiving prevents new purchases without changing existing subscriptions.
+Stripe rejects archiving a price while it is the product's default; choose a
+replacement default first.
 You can also update `nickname` (an internal label), metadata, and `lookup_key`.
 Unset fields remain unchanged; empty nickname or lookup-key strings clear them.
 An empty metadata value removes that key.

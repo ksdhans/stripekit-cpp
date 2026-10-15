@@ -9,6 +9,8 @@
 #include "StripeKit/Errors.h"
 
 #include <future>
+#include <chrono>
+#include <thread>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -48,6 +50,12 @@ protected:
                                                        {});
             });
         }
+        for (const auto& id : products_with_default) {
+            cleanup(id, [&] {
+                environment->stripe_api().require_post("/v1/products/" + id,
+                                                       { { "default_price", "" } });
+            });
+        }
         for (const auto& id : prices) {
             cleanup(id, [&] {
                 environment->stripe_client()
@@ -63,10 +71,17 @@ protected:
                 environment->stripe_client().products().update_async(id, changes).result();
             });
         }
+        for (const auto& id : clocks) {
+            cleanup(id, [&] {
+                environment->stripe_api().require_delete("/v1/test_helpers/test_clocks/" + id);
+            });
+        }
         subscriptions.clear();
         sessions.clear();
         prices.clear();
         products.clear();
+        products_with_default.clear();
+        clocks.clear();
         if (!failures.empty()) {
             throw std::runtime_error("Sandbox catalog cleanup failed:" + failures);
         }
@@ -124,11 +139,126 @@ protected:
         return request;
     }
 
+    /** Creates a paid subscription and records it before checking the returned state. */
+    Subscription create_subscription(const Price& price,
+                                     const std::string& label,
+                                     std::int64_t quantity = 3,
+                                     const std::string& clock_id = "") {
+        FormParams customer_params{ { "email", sandbox_email(*environment, label) },
+                                    { "payment_method", "pm_card_visa" },
+                                    { "invoice_settings[default_payment_method]", "pm_card_visa" },
+                                    { "metadata[stripekit_run_id]", environment->run_id() } };
+        if (!clock_id.empty()) customer_params.emplace_back("test_clock", clock_id);
+        const auto customer =
+            environment->stripe_api().require_post("/v1/customers", customer_params);
+        const auto created = environment->stripe_api().require_post(
+            "/v1/subscriptions",
+            { { "customer", customer.id() },
+              { "items[0][price]", price.id },
+              { "items[0][quantity]", std::to_string(quantity) },
+              { "metadata[stripekit_run_id]", environment->run_id() } });
+        subscriptions.push_back(created.id());
+        const auto subscription =
+            environment->stripe_client().subscriptions().retrieve_async(created.id()).result();
+        EXPECT_EQ(subscription.status, "active");
+        EXPECT_EQ(subscription.items.size(), 1U);
+        EXPECT_EQ(subscription.items.front().quantity.value(), quantity);
+        EXPECT_FALSE(subscription.latest_invoice_id.empty());
+        return subscription;
+    }
+
+    /** Attaches a fresh test payment method and selects it for subsequent invoices. */
+    void set_payment_method(const Subscription& subscription, const std::string& test_method) {
+        const auto attached =
+            environment->stripe_api().require_post("/v1/payment_methods/" + test_method + "/attach",
+                                                   { { "customer", subscription.customer_id } });
+        environment->stripe_api().require_post("/v1/subscriptions/" + subscription.id,
+                                               { { "default_payment_method", attached.id() } });
+    }
+
+    /** Builds an immediate, single-item migration with both policies explicit. */
+    UpdateSubscriptionRequest
+    migration_request(const Subscription& subscription,
+                      const Price& price,
+                      PaymentBehavior payment,
+                      ProrationBehavior proration = ProrationBehavior::None) {
+        return { .items = { { .item_id = subscription.items.front().id,
+                              .price_id = price.id,
+                              .quantity = subscription.items.front().quantity.value() } },
+                 .proration_behavior = proration,
+                 .payment_behavior = payment };
+    }
+
+    /** Reads a raw object, failing explicitly on API errors rather than parsing error payloads. */
+    Json::Value get_object(const std::string& path) {
+        const auto result = environment->stripe_api().get(path);
+        if (!result.ok())
+            throw std::runtime_error("Stripe rejected GET " + path + " - " + result.describe());
+        return result.body;
+    }
+
+    /** Checks persisted item identity, quantity, and price after an update. */
+    Subscription check_price(const Subscription& original, const Price& price) {
+        const auto saved =
+            environment->stripe_client().subscriptions().retrieve_async(original.id).result();
+        EXPECT_EQ(saved.items.size(), 1U);
+        EXPECT_EQ(saved.items.front().id, original.items.front().id);
+        EXPECT_EQ(saved.items.front().quantity, original.items.front().quantity);
+        EXPECT_EQ(saved.items.front().price_id, price.id);
+        return saved;
+    }
+
+    /** Waits for an invoice-specific verified event, excluding the initial subscription invoice. */
+    void check_invoice_event(const std::string& type, const std::string& invoice_id) {
+        const auto event = environment->wait_for_event(type, invoice_id);
+        EXPECT_TRUE(event.has_value());
+        EXPECT_EQ(json_path(event->json(), "data.object.id").asString(), invoice_id);
+    }
+
+    /** Checks a price-specific subscription event, avoiding earlier payment-method updates. */
+    void check_subscription_event(const Subscription& subscription, const Price& replacement) {
+        const auto event =
+            environment->wait_for_event("customer.subscription.updated", replacement.id);
+        EXPECT_TRUE(event.has_value());
+        EXPECT_EQ(json_path(event->json(), "data.object.id").asString(), subscription.id);
+    }
+
+    /** Freezes billing on 1 January 2026 so prorations have deterministic amounts. */
+    std::string create_clock() {
+        const auto clock = environment->stripe_api().require_post(
+            "/v1/test_helpers/test_clocks",
+            { { "frozen_time", "1767225600" }, { "name", "StripeKit " + environment->run_id() } });
+        clocks.push_back(clock.id());
+        return clock.id();
+    }
+
+    /** Advances to 16 January and waits for Stripe to finish processing the test clock. */
+    void advance_clock(const std::string& clock) {
+        const auto path = "/v1/test_helpers/test_clocks/" + clock;
+        environment->stripe_api().require_post(path + "/advance",
+                                               { { "frozen_time", "1768521600" } });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (std::chrono::steady_clock::now() < deadline) {
+            const auto state = get_object(path);
+            if (state["status"].asString() == "ready") {
+                EXPECT_EQ(state["frozen_time"].asInt64(), 1768521600);
+                return;
+            }
+            if (state["status"].asString() != "advancing")
+                throw std::runtime_error("Unexpected test clock status: " +
+                                         state["status"].asString());
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        throw std::runtime_error("Stripe test clock did not finish advancing");
+    }
+
     SandboxEnvironment* environment = nullptr;
     std::vector<std::string> products;
+    std::vector<std::string> products_with_default;
     std::vector<std::string> prices;
     std::vector<std::string> sessions;
     std::vector<std::string> subscriptions;
+    std::vector<std::string> clocks;
 };
 
 TEST_F(SandboxCatalogTest, ProductCreationRetryRetrievalAndUpdates) {
@@ -381,6 +511,7 @@ TEST_F(SandboxCatalogTest, DefaultPriceAndMutablePriceDetailsRoundTrip) {
                              .products()
                              .update_async(product.id, { .default_price_id = replacement.id })
                              .result();
+    products_with_default.push_back(product.id);
     EXPECT_EQ(updated.default_price_id, replacement.id);
     EXPECT_EQ(environment->stripe_client()
                   .products()
@@ -403,8 +534,26 @@ TEST_F(SandboxCatalogTest, DefaultPriceAndMutablePriceDetailsRoundTrip) {
                     .retrieve_async(original.id)
                     .result()
                     .lookup_key.empty());
+    const auto saved =
+        environment->stripe_client().prices().retrieve_async(replacement.id).result();
+    EXPECT_EQ(saved.nickname, *changes.nickname);
+    EXPECT_EQ(saved.lookup_key, original.lookup_key);
+    EXPECT_EQ(saved.metadata.at("updated"), "yes");
+    UpdatePriceRequest clear;
+    clear.nickname = "";
+    clear.lookup_key = "";
+    clear.metadata["updated"] = "";
+    environment->stripe_client().prices().update_async(replacement.id, clear).result();
+    const auto cleared =
+        environment->stripe_client().prices().retrieve_async(replacement.id).result();
+    EXPECT_TRUE(cleared.nickname.empty());
+    EXPECT_TRUE(cleared.lookup_key.empty());
+    EXPECT_EQ(cleared.metadata.count("updated"), 0U);
+    EXPECT_EQ(cleared.metadata.at("stripekit_run_id"), environment->run_id());
     environment->stripe_client().prices().update_async(original.id, { .active = false }).result();
     EXPECT_FALSE(environment->stripe_client().prices().retrieve_async(original.id).result().active);
+    environment->stripe_client().prices().update_async(original.id, { .active = true }).result();
+    EXPECT_TRUE(environment->stripe_client().prices().retrieve_async(original.id).result().active);
     EXPECT_EQ(environment->stripe_client()
                   .prices()
                   .retrieve_async(replacement.id)
@@ -460,8 +609,249 @@ TEST_F(SandboxCatalogTest, ExplicitSubscriptionMigrationPreservesQuantityAndOthe
                              .result();
     EXPECT_EQ(retried.items.size(), changed.items.size());
     EXPECT_EQ(retried.current_period_end_unix, before.current_period_end_unix);
+    EXPECT_EQ(retried.latest_invoice_id, changed.latest_invoice_id);
+    const auto persisted =
+        environment->stripe_client().subscriptions().retrieve_async(created.id()).result();
+    EXPECT_EQ(persisted.items.size(), 2U);
+    for (const auto& item : persisted.items) {
+        EXPECT_TRUE(item.price_id == replacement.id || item.price_id == extra.id);
+        EXPECT_EQ(item.quantity.value(), item.price_id == replacement.id ? 3 : 2);
+    }
     environment->stripe_client().prices().update_async(original.id, { .active = false }).result();
     EXPECT_EQ(
         environment->stripe_client().subscriptions().retrieve_async(created.id()).result().status,
         "active");
+}
+
+TEST_F(SandboxCatalogTest, InvalidDefaultPricesLeavePreviousDefaultUnchanged) {
+    const auto product = create_product("default_validation");
+    const auto original = create_price(product, "valid_default");
+    const auto inactive = create_price(product, "inactive_default");
+    const auto other_product = create_product("other_default");
+    const auto unrelated = create_price(other_product, "unrelated_default");
+    environment->stripe_client()
+        .products()
+        .update_async(product.id, { .default_price_id = original.id })
+        .result();
+    products_with_default.push_back(product.id);
+    environment->stripe_client().prices().update_async(inactive.id, { .active = false }).result();
+    for (const auto& price : { inactive, unrelated }) {
+        try {
+            environment->stripe_client()
+                .products()
+                .update_async(product.id, { .default_price_id = price.id })
+                .result();
+            FAIL() << "Stripe accepted an invalid default price";
+        } catch (const StripeApiException& error) {
+            EXPECT_EQ(error.payload().http_status, 400);
+            EXPECT_EQ(error.payload().type, StripeErrorType::InvalidRequest);
+        }
+        EXPECT_EQ(environment->stripe_client()
+                      .products()
+                      .retrieve_async(product.id)
+                      .result()
+                      .default_price_id,
+                  original.id);
+    }
+}
+
+TEST_F(SandboxCatalogTest, FailedPaymentKeepsMandatoryNewPriceAndCanBeRecovered) {
+    const auto product = create_product("allow_failed");
+    const auto original = create_price(product, "allow_monthly");
+    const auto replacement = create_price(product, "allow_yearly", 18000, "year");
+    const auto before = create_subscription(original, "allow_failed");
+    set_payment_method(before, "pm_card_chargeCustomerFail");
+    const auto request = migration_request(before, replacement, PaymentBehavior::AllowIncomplete);
+    const RequestOptions options{ .idempotency_key = environment->run_id() + "_allow_failed" };
+    const auto changed = environment->stripe_client()
+                             .subscriptions()
+                             .update_async(before.id, request, options)
+                             .result();
+    EXPECT_EQ(changed.status, "past_due");
+    EXPECT_FALSE(changed.pending_update.has_value());
+    EXPECT_FALSE(changed.latest_invoice_id == before.latest_invoice_id);
+    EXPECT_EQ(check_price(before, replacement).status, "past_due");
+    check_subscription_event(before, replacement);
+    const auto invoice = get_object("/v1/invoices/" + changed.latest_invoice_id);
+    EXPECT_EQ(invoice["status"].asString(), "open");
+    EXPECT_FALSE(invoice["paid"].asBool());
+    EXPECT_EQ(invoice["amount_due"].asInt64(), 54000);
+    EXPECT_EQ(invoice["amount_remaining"].asInt64(), 54000);
+    const auto intent = get_object("/v1/payment_intents/" + invoice["payment_intent"].asString());
+    EXPECT_EQ(intent["status"].asString(), "requires_payment_method");
+    check_invoice_event("invoice.payment_failed", changed.latest_invoice_id);
+    const auto retried = environment->stripe_client()
+                             .subscriptions()
+                             .update_async(before.id, request, options)
+                             .result();
+    EXPECT_EQ(retried.latest_invoice_id, changed.latest_invoice_id);
+    EXPECT_EQ(check_price(before, replacement).status, "past_due");
+    set_payment_method(before, "pm_card_visa");
+    const auto paid = environment->stripe_api().require_post(
+        "/v1/invoices/" + changed.latest_invoice_id + "/pay", {});
+    EXPECT_TRUE(paid.body["paid"].asBool());
+    EXPECT_EQ(check_price(before, replacement).status, "active");
+    check_invoice_event("invoice.paid", changed.latest_invoice_id);
+}
+
+TEST_F(SandboxCatalogTest, PendingPriceChangeAppliesOnlyAfterInvoicePayment) {
+    const auto product = create_product("pending_failed");
+    const auto original = create_price(product, "pending_monthly");
+    const auto replacement = create_price(product, "pending_yearly", 18000, "year");
+    const auto before = create_subscription(original, "pending_failed");
+    set_payment_method(before, "pm_card_chargeCustomerFail");
+    const auto request =
+        migration_request(before, replacement, PaymentBehavior::PendingIfIncomplete);
+    const auto changed =
+        environment->stripe_client().subscriptions().update_async(before.id, request).result();
+    EXPECT_EQ(changed.items.front().price_id, original.id);
+    EXPECT_TRUE(changed.pending_update.has_value());
+    EXPECT_TRUE(changed.pending_update->expires_at_unix > 0);
+    EXPECT_EQ(changed.pending_update->items.size(), 1U);
+    EXPECT_EQ(changed.pending_update->items.front().id, before.items.front().id);
+    EXPECT_EQ(changed.pending_update->items.front().price_id, replacement.id);
+    EXPECT_EQ(changed.pending_update->items.front().quantity, before.items.front().quantity);
+    EXPECT_TRUE(check_price(before, original).pending_update.has_value());
+    check_subscription_event(before, replacement);
+    const auto invoice = get_object("/v1/invoices/" + changed.latest_invoice_id);
+    EXPECT_EQ(invoice["status"].asString(), "open");
+    EXPECT_EQ(invoice["amount_due"].asInt64(), 54000);
+    check_invoice_event("invoice.payment_failed", changed.latest_invoice_id);
+    set_payment_method(before, "pm_card_visa");
+    const auto paid = environment->stripe_api().require_post(
+        "/v1/invoices/" + changed.latest_invoice_id + "/pay", {});
+    EXPECT_TRUE(paid.body["paid"].asBool());
+    const auto saved = check_price(before, replacement);
+    EXPECT_FALSE(saved.pending_update.has_value());
+    EXPECT_EQ(saved.status, "active");
+    check_invoice_event("invoice.paid", changed.latest_invoice_id);
+}
+
+TEST_F(SandboxCatalogTest, RejectingFailedPaymentLeavesSubscriptionUnchanged) {
+    const auto product = create_product("reject_failed");
+    const auto original = create_price(product, "reject_monthly");
+    const auto replacement = create_price(product, "reject_yearly", 18000, "year");
+    const auto before = create_subscription(original, "reject_failed");
+    set_payment_method(before, "pm_card_chargeCustomerFail");
+    const auto request = migration_request(before, replacement, PaymentBehavior::ErrorIfIncomplete);
+    try {
+        environment->stripe_client().subscriptions().update_async(before.id, request).result();
+        FAIL() << "Stripe accepted a payment-dependent price change despite a decline";
+    } catch (const StripeApiException& error) {
+        EXPECT_EQ(error.payload().http_status, 402);
+        EXPECT_EQ(error.payload().type, StripeErrorType::Card);
+        EXPECT_FALSE(error.payload().request_id.empty());
+    }
+    const auto saved = check_price(before, original);
+    EXPECT_EQ(saved.status, "active");
+    EXPECT_FALSE(saved.pending_update.has_value());
+    EXPECT_EQ(saved.current_period_end_unix, before.current_period_end_unix);
+    EXPECT_EQ(saved.latest_invoice_id, before.latest_invoice_id);
+}
+
+TEST_F(SandboxCatalogTest, AuthenticationRequiredKeepsNewPriceAndEmitsActionRequired) {
+    const auto product = create_product("authentication");
+    const auto original = create_price(product, "auth_monthly");
+    const auto replacement = create_price(product, "auth_yearly", 18000, "year");
+    const auto before = create_subscription(original, "authentication");
+    set_payment_method(before, "pm_card_authenticationRequired");
+    const auto request = migration_request(before, replacement, PaymentBehavior::AllowIncomplete);
+    const auto changed =
+        environment->stripe_client().subscriptions().update_async(before.id, request).result();
+    EXPECT_EQ(changed.status, "past_due");
+    EXPECT_FALSE(changed.pending_update.has_value());
+    EXPECT_EQ(check_price(before, replacement).status, "past_due");
+    check_subscription_event(before, replacement);
+    const auto invoice = get_object("/v1/invoices/" + changed.latest_invoice_id);
+    EXPECT_FALSE(invoice["paid"].asBool());
+    EXPECT_EQ(invoice["status"].asString(), "open");
+    const auto intent = get_object("/v1/payment_intents/" + invoice["payment_intent"].asString());
+    EXPECT_EQ(intent["status"].asString(), "requires_action");
+    EXPECT_FALSE(intent["next_action"].isNull());
+    check_invoice_event("invoice.payment_action_required", changed.latest_invoice_id);
+}
+
+TEST_F(SandboxCatalogTest, DefaultIncompleteRequiresExplicitPaymentConfirmation) {
+    const auto product = create_product("default_incomplete");
+    const auto original = create_price(product, "confirm_monthly");
+    const auto replacement = create_price(product, "confirm_yearly", 18000, "year");
+    const auto before = create_subscription(original, "default_incomplete");
+    const auto request = migration_request(before, replacement, PaymentBehavior::DefaultIncomplete);
+    const auto changed =
+        environment->stripe_client().subscriptions().update_async(before.id, request).result();
+    EXPECT_EQ(changed.status, "past_due");
+    EXPECT_FALSE(changed.pending_update.has_value());
+    EXPECT_EQ(check_price(before, replacement).status, "past_due");
+    check_subscription_event(before, replacement);
+    const auto invoice = get_object("/v1/invoices/" + changed.latest_invoice_id);
+    EXPECT_EQ(invoice["status"].asString(), "open");
+    EXPECT_FALSE(invoice["paid"].asBool());
+    const auto intent_id = invoice["payment_intent"].asString();
+    EXPECT_FALSE(intent_id.empty());
+    const auto intent = get_object("/v1/payment_intents/" + intent_id);
+    EXPECT_EQ(intent["status"].asString(), "requires_confirmation");
+    const auto confirmed =
+        environment->stripe_api().require_post("/v1/payment_intents/" + intent_id + "/confirm", {});
+    EXPECT_EQ(confirmed.body["status"].asString(), "succeeded");
+    check_invoice_event("invoice.paid", changed.latest_invoice_id);
+    EXPECT_EQ(check_price(before, replacement).status, "active");
+}
+
+TEST_F(SandboxCatalogTest, ProrationPoliciesHaveDeterministicInvoiceOutcomes) {
+    const auto product = create_product("proration");
+    const auto original = create_price(product, "proration_original", 3100);
+    const auto replacement = create_price(product, "proration_replacement", 6200);
+    const auto clock = create_clock();
+    const auto immediate = create_subscription(original, "proration_immediate", 3, clock);
+    const auto deferred = create_subscription(original, "proration_deferred", 3, clock);
+    const auto none = create_subscription(original, "proration_none", 3, clock);
+    advance_clock(clock);
+    for (const auto& [before, policy] : std::vector<std::pair<Subscription, ProrationBehavior>>{
+             { immediate, ProrationBehavior::AlwaysInvoice },
+             { deferred, ProrationBehavior::CreateProrations },
+             { none, ProrationBehavior::None } }) {
+        const auto request =
+            migration_request(before, replacement, PaymentBehavior::AllowIncomplete, policy);
+        const RequestOptions options{ .idempotency_key = environment->run_id() + "_" + before.id };
+        const auto changed = environment->stripe_client()
+                                 .subscriptions()
+                                 .update_async(before.id, request, options)
+                                 .result();
+        EXPECT_EQ(changed.status, "active");
+        EXPECT_EQ(changed.current_period_end_unix, before.current_period_end_unix);
+        check_price(before, replacement);
+        // 16 of January's 31 days remain: (6200 - 3100) * 3 * 16 / 31 = 4800.
+        if (policy == ProrationBehavior::AlwaysInvoice) {
+            EXPECT_FALSE(changed.latest_invoice_id == before.latest_invoice_id);
+            const auto invoice = get_object("/v1/invoices/" + changed.latest_invoice_id);
+            EXPECT_TRUE(invoice["paid"].asBool());
+            EXPECT_EQ(invoice["amount_paid"].asInt64(), 4800);
+            EXPECT_EQ(invoice["lines"]["data"].size(), 2U);
+            std::int64_t adjustments = 0;
+            for (const auto& line : invoice["lines"]["data"]) {
+                EXPECT_TRUE(line["proration"].asBool());
+                adjustments += line["amount"].asInt64();
+            }
+            EXPECT_EQ(adjustments, 4800);
+            check_invoice_event("invoice.paid", changed.latest_invoice_id);
+        } else {
+            EXPECT_EQ(changed.latest_invoice_id, before.latest_invoice_id);
+        }
+        const auto upcoming = get_object("/v1/invoices/upcoming?subscription=" + before.id);
+        EXPECT_EQ(upcoming["amount_due"].asInt64(),
+                  policy == ProrationBehavior::CreateProrations ? 23400 : 18600);
+        std::int64_t pending_adjustments = 0;
+        for (const auto& line : upcoming["lines"]["data"]) {
+            if (line["proration"].asBool()) pending_adjustments += line["amount"].asInt64();
+        }
+        EXPECT_EQ(pending_adjustments, policy == ProrationBehavior::CreateProrations ? 4800 : 0);
+        const auto retried = environment->stripe_client()
+                                 .subscriptions()
+                                 .update_async(before.id, request, options)
+                                 .result();
+        EXPECT_EQ(retried.latest_invoice_id, changed.latest_invoice_id);
+        const auto invoices = get_object("/v1/invoices?subscription=" + before.id);
+        EXPECT_FALSE(invoices["has_more"].asBool());
+        EXPECT_EQ(invoices["data"].size(), policy == ProrationBehavior::AlwaysInvoice ? 2U : 1U);
+    }
 }
