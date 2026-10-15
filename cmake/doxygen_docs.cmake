@@ -33,11 +33,13 @@ if(STRIPEKIT_BUILD_DOCS)
         docs/Topics.dox
         docs/Overview.md
         docs/Quickstart.md
+        docs/ProductsAndPrices.md
         docs/WritingAnAdapter.md
         docs/versioning.md
     )
 
     set(stripekit_doc_headers
+        include/StripeKit/ApiConstants.h
         include/StripeKit/Async.h
         include/StripeKit/Callback.h
         include/StripeKit/Client.h

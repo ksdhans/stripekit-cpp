@@ -47,6 +47,8 @@ public:
 **Resolve the path.** stripekit::HttpRequest::path is relative, like
 `/v1/customers`. Join it to `stripekit::default_api_base_url`, declared in
 `StripeKit/ApiConstants.h`, unless the caller supplies a different base URL.
+Path components and query values are already encoded. Send them unchanged so
+price lookup keys and other filters reach Stripe correctly.
 
 **Send the body as-is.** stripekit::HttpRequest::body is already encoded as
 `application/x-www-form-urlencoded`, which is what Stripe's API expects. Do not
@@ -113,6 +115,15 @@ the caller has a single thing to keep alive.
 
 Keep the options struct small: the API key, the base URL (overridable, for
 testing against a mock), and whatever your framework needs to schedule work.
+
+If your factory returns a wrapper derived from `stripekit::StripeClient`, it
+must expose every operation group, including `products()` and `prices()`.
+Applications should be able to use the same operations with any adapter.
+
+Custom `stripekit::StripeResponseParser` implementations may override
+`parse_product()`, `parse_price()`, and `parse_price_list()`. If not overridden,
+these methods use StripeKit's JSON decoding. Preserve absent price amounts and
+the returned billing terms; callers need them to validate prices before purchase.
 
 @section adapter_webhook Wiring up webhooks
 

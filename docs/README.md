@@ -15,9 +15,11 @@ Current docs:
 
 - `MainPage.dox`: landing page for the generated reference.
 - `Topics.dox`: topic definitions that structure the reference.
-- `Overview.md`: what StripeKit does and how the pieces fit together.
-- `Quickstart.md`: a worked integration, from build setup to webhooks.
-- `WritingAnAdapter.md`: supporting a web framework other than Drogon.
+- [Overview](Overview.md): supported capabilities and when to use them.
+- [Quickstart](Quickstart.md): a worked integration, from build setup to webhooks.
+- [Products and Prices](ProductsAndPrices.md): reusable pricing, recovery after
+  interrupted requests, and preserving existing subscription prices.
+- [Writing an Adapter](WritingAnAdapter.md): supporting a web framework other than Drogon.
 - `versioning.md`: versioning policy and release tag format.
 - `Doxyfile.in`: Doxygen configuration template used by the `stripekit-docs` target.
 

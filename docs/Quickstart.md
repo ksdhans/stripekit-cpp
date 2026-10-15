@@ -52,8 +52,8 @@ You need:
 - a **secret API key** from that account, which looks like `sk_test_...` and
   is found under Developers > API keys in the Stripe dashboard,
 - a **price**, which is Stripe's record of what you charge and how often —
-  create one under Product catalog in the dashboard, and copy its id, which
-  looks like `price_...`,
+  create one under Product catalog in the dashboard, or through the API as shown
+  in @ref products_and_prices, and keep its id, which looks like `price_...`,
 - the [Stripe CLI](https://docs.stripe.com/stripe-cli), a small command-line
   program used later in this guide to send test webhooks to your machine.
 
@@ -328,6 +328,7 @@ A few things to check before switching from a test key to a live one:
 
 @section quickstart_next Where to go next
 
+- @ref products_and_prices — reusable pricing, lookup keys, and keeping old prices.
 - @ref application_api — full reference for everything used on this page.
 - @ref overview — a step back, to see how the pieces fit together.
 - @ref writing_an_adapter — using a web framework other than Drogon.

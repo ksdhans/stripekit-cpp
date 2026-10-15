@@ -11,7 +11,8 @@ This is part of a larger project of mine, which is a full web app [foundation/st
 ## Status
 
 StripeKit supports Stripe-hosted Checkout for subscriptions and one-time card
-payments. It sends API requests, parses responses, and verifies and parses webhooks.
+payments, reusable products and prices, and customer billing portal sessions.
+It sends API requests, parses responses, and verifies and parses webhooks.
 
 It covers a subset of Stripe's API, focused on hosted Checkout. Embedded/custom
 payment forms and the full range of Stripe products and API options are not
@@ -20,56 +21,8 @@ currently supported.
 Your application decides what to do with those results: billing policies, access
 control, and other business logic are up to you.
 
-## Products and Prices
-
-Use `client->products()` to create, retrieve, or update catalog products, and
-`client->prices()` to create, retrieve, or list prices. Each operation has both
-a coroutine method (`create_async`, for example) and a callback method.
-
-```cpp
-stripekit::CreateProductRequest product_request;
-product_request.id = "my_stable_product_id"; // Optional, caller-assigned identity.
-product_request.name = "Standard";
-auto product = co_await client->products().create_async(
-    product_request, {.idempotency_key = "create-standard-product"});
-
-stripekit::CreatePriceRequest price_request;
-price_request.product_id = product.id;
-price_request.currency = "usd";
-price_request.unit_amount = 2500;
-price_request.recurring_interval = "month";
-price_request.lookup_key = "standard-usd-monthly-v1";
-auto price = co_await client->prices().create_async(
-    price_request, {.idempotency_key = "create-standard-monthly-v1"});
-```
-
-Leave `recurring_interval` empty for a one-time price. Creation supports fixed
-integer amounts and licensed recurrence (a fixed charge per quantity), not
-tiered, usage-based, or customer-chosen amounts. Retrieved prices expose those
-distinctions so applications can check whether a price matches their requirements.
-An absent `unit_amount` must not be treated as a zero-priced item.
-
-Use `ListPricesRequest::lookup_keys` to recover a price after an interrupted
-creation attempt. Lists return one page; when `has_more` is true, request the
-next page using the last price ID as `starting_after`. The default filter
-includes active and archived prices. Set `active` explicitly to filter them.
-
-`UpdateProductRequest` leaves unset fields unchanged; an empty description clears
-the description and `active = false` archives the product. Product display
-changes can affect existing subscriptions' presentation. Changing an amount or
-recurrence requires creating a new price. Creating a price does not move existing
-subscriptions to it. Applications own synchronization, mapping storage, retry
-policy, and any deliberate changes to existing subscriptions.
-
-Failures retain Stripe's status, request ID, and retry information through
-`StripeApiException`; transport and malformed-response errors also propagate.
-These operations do not automatically retry requests.
-
-Custom `StripeClient` implementations must implement the new `products()` and
-`prices()` groups. Custom response parsers inherit default JSON parsing for
-catalog responses and may override it when needed.
-
 Start with the [Quickstart](docs/Quickstart.md) and [runnable examples](examples/README.md).
+For reusable pricing and price changes, see [Products and Prices](docs/ProductsAndPrices.md).
 For adding support for other web frameworks, see [Writing an Adapter](docs/WritingAnAdapter.md).
 
 ## Roadmap
