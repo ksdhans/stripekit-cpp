@@ -129,6 +129,7 @@ if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
         add_executable(stripekit_sandbox_tests
             sandbox/Main.cpp
             sandbox/SandboxEnvironment.cpp
+            sandbox/TestCatalog.cpp
             sandbox/TestDisputeAndRefund.cpp
             sandbox/TestSubscriptionLifecycle.cpp
             sandbox/TestWebhookDelivery.cpp
