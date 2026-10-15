@@ -10,6 +10,8 @@
 #include "StripeKit/Client.h"
 #include "StripeKit/Models.h"
 
+#include <chrono>
+#include <stdexcept>
 #include <string>
 
 using namespace stripekit;
@@ -36,7 +38,25 @@ protected:
         environment = &SandboxEnvironment::get();
     }
 
+    /** Cancels a trial subscription created by this test, even after an assertion fails. */
+    void TearDown() override {
+        if (subscription_to_cleanup.empty()) return;
+
+        try {
+            const auto canceled = environment->stripe_client().subscriptions()
+                                      .cancel_async(subscription_to_cleanup)
+                                      .result();
+            if (canceled.status != "canceled")
+                throw std::runtime_error("Stripe did not cancel test subscription " +
+                                         subscription_to_cleanup);
+        } catch (const std::exception& error) {
+            throw std::runtime_error("Sandbox subscription cleanup failed: " +
+                                     std::string(error.what()));
+        }
+    }
+
     SandboxEnvironment* environment = nullptr;
+    std::string subscription_to_cleanup;
 };
 
 TEST_F(SandboxSubscriptionTest, CheckoutSessionIsCreatedForSubscriptionMode) {
@@ -120,6 +140,40 @@ TEST_F(SandboxSubscriptionTest, PaidSubscriptionEmitsInvoicePaid) {
     const Subscription canceled =
         environment->stripe_client().subscriptions().cancel_async(subscription_id).result();
     EXPECT_EQ(canceled.status, "canceled");
+}
+
+TEST_F(SandboxSubscriptionTest, TrialSubscriptionRetrievalIncludesTrialAndItemPeriodDates) {
+    const std::string customer_id =
+        create_customer_with_card(*environment, "pm_card_visa", "trial_periods");
+    const StripeApiResult created = environment->stripe_api().require_post(
+        "/v1/subscriptions",
+        { { "customer", customer_id },
+          { "items[0][price]", shared_monthly_price() },
+          { "trial_period_days", "7" },
+          { "metadata[stripekit_run_id]", environment->run_id() } });
+    subscription_to_cleanup = created.id();
+    ASSERT_FALSE(subscription_to_cleanup.empty());
+
+    const auto subscription = environment->stripe_client()
+                                  .subscriptions()
+                                  .retrieve_async(subscription_to_cleanup)
+                                  .result();
+    EXPECT_EQ(subscription.id, subscription_to_cleanup);
+    EXPECT_EQ(subscription.customer_id, customer_id);
+    EXPECT_EQ(subscription.status, "trialing");
+    ASSERT_TRUE(subscription.trial_end_unix.has_value());
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count();
+    EXPECT_TRUE(*subscription.trial_end_unix > now);
+    ASSERT_EQ(subscription.items.size(), 1U);
+    ASSERT_TRUE(subscription.items.front().current_period_start_unix.has_value());
+    ASSERT_TRUE(subscription.items.front().current_period_end_unix.has_value());
+    EXPECT_TRUE(*subscription.items.front().current_period_start_unix > 0);
+    EXPECT_TRUE(*subscription.items.front().current_period_end_unix >
+                *subscription.items.front().current_period_start_unix);
+    EXPECT_EQ(subscription.items.front().price_id, shared_monthly_price());
+    EXPECT_FALSE(subscription.livemode);
 }
 
 TEST_F(SandboxSubscriptionTest, DeclinedCardEmitsInvoicePaymentFailed) {

@@ -5,6 +5,9 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Added some missing fields to Subscription and SubscriptionItem (e.g., 
+  trial_ends_unix)
+
 
 ## 0.2.0 2026-10-15
 

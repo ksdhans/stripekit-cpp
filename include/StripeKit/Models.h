@@ -178,6 +178,10 @@ struct SubscriptionItem {
     std::string price_id;
     /** Quantity, absent for metered pricing or when not supplied by Stripe. */
     std::optional<std::int64_t> quantity;
+    /** Item billing-period start in Unix seconds, absent when Stripe omits it. */
+    std::optional<std::int64_t> current_period_start_unix;
+    /** Item billing-period end in Unix seconds, absent when Stripe omits it. */
+    std::optional<std::int64_t> current_period_end_unix;
 };
 
 /** Changes awaiting payment, not yet applied to the subscription. */
@@ -206,6 +210,9 @@ struct Subscription {
 
     /** Lifecycle status, for example active, trialing, or past_due. */
     std::string status;
+
+    /** Trial end in Unix seconds, absent when the subscription has no trial. */
+    std::optional<std::int64_t> trial_end_unix;
 
     /** Unix timestamp for the current period start. */
     std::int64_t current_period_start_unix = 0;

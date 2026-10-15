@@ -452,7 +452,10 @@ namespace {
 
 const std::string subscription_json = R"({
         "id":"sub_test","object":"subscription","customer":"cus_test","status":"active",
-        "items":{"data":[{"id":"si_first","price":{"id":"price_old"},"quantity":7},
+        "trial_end":1800000000,
+        "current_period_start":1791763200,"current_period_end":1794441600,
+        "items":{"data":[{"id":"si_first","price":{"id":"price_old"},"quantity":7,
+                          "current_period_start":1791763200,"current_period_end":1794441600},
                          {"id":"si_other","price":"price_other","quantity":null}],"has_more":true},
         "latest_invoice":{"id":"in_test"},"pending_update":null
     })";
@@ -499,6 +502,33 @@ TEST_F(CatalogTest, SubscriptionUpdatesReplaceItemsWithExplicitQuantitiesAndPoli
               "&items%5B0%5D%5Bquantity%5D=7"
               "&items%5B1%5D%5Bid%5D=si_second&items%5B1%5D%5Bprice%5D=price%2Ftwo%20%26"
               "&items%5B1%5D%5Bquantity%5D=2");
+}
+
+TEST_F(CatalogTest, SubscriptionParserPreservesTrialAndItemBillingPeriods) {
+    http.set_response({ .status_code = 200, .body = subscription_json });
+    const auto subscription = client.subscriptions().retrieve_async("sub_test").result();
+    EXPECT_EQ(subscription.trial_end_unix.value(), 1800000000);
+    EXPECT_EQ(subscription.current_period_start_unix, 1791763200);
+    EXPECT_EQ(subscription.current_period_end_unix, 1794441600);
+    EXPECT_EQ(subscription.items.size(), 2U);
+    EXPECT_EQ(subscription.items[0].current_period_start_unix.value(), 1791763200);
+    EXPECT_EQ(subscription.items[0].current_period_end_unix.value(), 1794441600);
+    EXPECT_FALSE(subscription.items[1].current_period_start_unix.has_value());
+    EXPECT_FALSE(subscription.items[1].current_period_end_unix.has_value());
+
+    auto without_periods = replacing(
+        replacing(replacing(subscription_json, R"("trial_end":1800000000)", R"("trial_end":null)"),
+                  R"("current_period_start":1791763200,"current_period_end":1794441600)",
+                  R"("current_period_start":null,"current_period_end":null)"),
+        R"("current_period_start":1791763200,"current_period_end":1794441600)",
+        R"("current_period_start":null,"current_period_end":null)");
+    http.set_response({ .status_code = 200, .body = without_periods });
+    const auto absent = client.subscriptions().retrieve_async("sub_test").result();
+    EXPECT_FALSE(absent.trial_end_unix.has_value());
+    EXPECT_EQ(absent.current_period_start_unix, 0);
+    EXPECT_EQ(absent.current_period_end_unix, 0);
+    EXPECT_FALSE(absent.items.front().current_period_start_unix.has_value());
+    EXPECT_FALSE(absent.items.front().current_period_end_unix.has_value());
 }
 
 TEST_F(CatalogTest, AllSubscriptionPoliciesAreEncodedForCallbacksAndCoroutines) {
@@ -685,6 +715,18 @@ TEST(CatalogParser, RejectsMalformedPricingStateRatherThanHidingIt) {
     for (const auto& body :
          { std::string("{}"),
            replacing(subscription_json, R"("quantity":7)", R"("quantity":"7")"),
+           replacing(subscription_json, R"("trial_end":1800000000)", R"("trial_end":"later")"),
+           replacing(subscription_json,
+                     R"("current_period_start":1791763200)",
+                     R"("current_period_start":-1)"),
+           replacing(subscription_json,
+                     R"("current_period_end":1794441600)",
+                     R"("current_period_end":"later")"),
+           replacing(subscription_json,
+                     R"("quantity":7,
+                          "current_period_start":1791763200)",
+                     R"("quantity":7,
+                          "current_period_start":"later")"),
            replacing(subscription_json, R"("has_more":true)", R"("has_more":"true")"),
            replacing(subscription_json,
                      R"("latest_invoice":{"id":"in_test"})",

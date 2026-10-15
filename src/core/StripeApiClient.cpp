@@ -476,6 +476,14 @@ Product StripeResponseParser::parse_product(const HttpResponse& response) const 
 
 namespace {
 
+/** Read an optional Stripe Unix timestamp without accepting malformed values. */
+std::optional<std::int64_t> optional_unix_timestamp(const Json::Value& value) {
+    if (value.isNull()) return std::nullopt;
+    if (!value.isInt64() || value.asInt64() < 0)
+        throw ConfigurationException("Stripe returned an invalid subscription timestamp");
+    return value.asInt64();
+}
+
 /** Read a nullable Stripe reference as an ID, accepting expanded objects. */
 std::string reference_id(const Json::Value& value) {
     if (value.isNull()) return {};
@@ -501,6 +509,8 @@ std::vector<SubscriptionItem> subscription_items(const Json::Value& data) {
         if (item.price_id.empty())
             throw ConfigurationException("Stripe returned a subscription item without a price");
         if (!value["quantity"].isNull()) item.quantity = value["quantity"].asInt64();
+        item.current_period_start_unix = optional_unix_timestamp(value["current_period_start"]);
+        item.current_period_end_unix = optional_unix_timestamp(value["current_period_end"]);
         items.push_back(std::move(item));
     }
     return items;
@@ -601,11 +611,13 @@ Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& re
                       .customer_id = json_value::string(object, "customer"),
                       .status = json_value::string(object, "status"),
                       .current_period_start_unix =
-                          json_value::integer(object, "current_period_start"),
-                      .current_period_end_unix = json_value::integer(object, "current_period_end"),
+                          optional_unix_timestamp(object["current_period_start"]).value_or(0),
+                      .current_period_end_unix =
+                          optional_unix_timestamp(object["current_period_end"]).value_or(0),
                       .cancel_at_period_end = json_value::boolean(object, "cancel_at_period_end"),
                       .livemode = json_value::boolean(object, "livemode"),
                       .metadata = metadata_value(object) };
+    subscription.trial_end_unix = optional_unix_timestamp(object["trial_end"]);
     const auto& items = object["items"];
     if (!items.isNull()) {
         if (!items.isObject() || !items["has_more"].isBool())

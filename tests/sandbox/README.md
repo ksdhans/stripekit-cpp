@@ -162,7 +162,7 @@ sets `resource_group` so two pipelines cannot drive the same sandbox at once.
 | Test file | Coverage |
 | --- | --- |
 | `TestCatalog.cpp` | Product creation, retrieval, updates, default-price selection and rejection of invalid defaults; price creation, mutable updates, clearing fields, lookup-key transfers, archiving and reactivation; filtering and pagination; Checkout using catalog prices; grandfathered subscriptions; migrations preserving quantities and other items; all four payment behaviors, failed-payment recovery, authentication-required payments, deterministic proration amounts, idempotent retries, and related invoice/subscription webhooks. |
-| `TestSubscriptionLifecycle.cpp` | Checkout Session creation, an active subscription emitting `invoice.paid`, a declined card emitting `invoice.payment_failed`, and subscription cancellation. |
+| `TestSubscriptionLifecycle.cpp` | Checkout Session creation; typed retrieval of a real trial subscription's trial end and item billing-period dates; an active subscription emitting `invoice.paid`; a declined card emitting `invoice.payment_failed`; and subscription cancellation. |
 | `TestDisputeAndRefund.cpp` | `charge.refunded`, and the dispute lifecycle through `charge.dispute.created` and `charge.dispute.closed`. |
 | `TestWebhookDelivery.cpp` | Live signed delivery, duplicate delivery handling, retryable-failure recovery, and rejection of a tampered payload. |
 

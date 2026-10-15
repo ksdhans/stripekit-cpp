@@ -196,6 +196,14 @@ TEST_F(DrogonHTTPClientIntegrationTest, SubscriptionRetrieveAndCancelAsyncSucces
     EXPECT_EQ(active_sub.status, "active");
     EXPECT_EQ(active_sub.current_period_start_unix, 1700000000);
     EXPECT_EQ(active_sub.current_period_end_unix, 1702592000);
+    ASSERT_TRUE(active_sub.trial_end_unix.has_value());
+    EXPECT_EQ(*active_sub.trial_end_unix, 1701000000);
+    ASSERT_EQ(active_sub.items.size(), 1U);
+    EXPECT_EQ(active_sub.items.front().id, "si_drogon_123");
+    ASSERT_TRUE(active_sub.items.front().current_period_start_unix.has_value());
+    EXPECT_EQ(*active_sub.items.front().current_period_start_unix, 1700000001);
+    ASSERT_TRUE(active_sub.items.front().current_period_end_unix.has_value());
+    EXPECT_EQ(*active_sub.items.front().current_period_end_unix, 1702592001);
     EXPECT_FALSE(active_sub.cancel_at_period_end);
 
     // Cancel

@@ -506,6 +506,19 @@ private:
                     "status": "active",
                     "current_period_start": 1700000000,
                     "current_period_end": 1702592000,
+                    "trial_end": 1701000000,
+                    "items": {
+                        "object": "list",
+                        "data": [{
+                            "id": "si_drogon_123",
+                            "object": "subscription_item",
+                            "price": "price_drogon_monthly",
+                            "quantity": 1,
+                            "current_period_start": 1700000001,
+                            "current_period_end": 1702592001
+                        }],
+                        "has_more": false
+                    },
                     "cancel_at_period_end": false,
                     "livemode": false,
                     "metadata": {}
