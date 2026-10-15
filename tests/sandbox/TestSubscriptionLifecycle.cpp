@@ -43,7 +43,8 @@ protected:
         if (subscription_to_cleanup.empty()) return;
 
         try {
-            const auto canceled = environment->stripe_client().subscriptions()
+            const auto canceled = environment->stripe_client()
+                                      .subscriptions()
                                       .cancel_async(subscription_to_cleanup)
                                       .result();
             if (canceled.status != "canceled")
