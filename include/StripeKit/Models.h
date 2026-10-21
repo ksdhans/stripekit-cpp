@@ -246,7 +246,10 @@ struct Subscription {
  * A Stripe invoice: the bill for one subscription period.
  *
  * A paid invoice is the signal that a period has been paid for, and is
- * normally what access should be granted from.
+ * normally what access should be granted from. An open invoice that still has
+ * an amount remaining needs the customer's attention; send them to
+ * `hosted_invoice_url` to pay it or to complete extra authentication such as
+ * 3D Secure.
  *
  * @sa https://docs.stripe.com/api/invoices/object
  */
@@ -260,7 +263,7 @@ struct Invoice {
     /** Subscription identifier associated with the invoice, when present. */
     std::string subscription_id;
 
-    /** Invoice status, for example paid, open, or uncollectible. */
+    /** Invoice status: draft, open, paid, uncollectible, or void. */
     std::string status;
 
     /** ISO currency code, for example usd. */
@@ -272,11 +275,46 @@ struct Invoice {
     /** Amount paid in the smallest currency unit. */
     std::int64_t amount_paid = 0;
 
-    /** True when Stripe marks the invoice as paid. */
+    /** Amount still owed in the smallest currency unit. */
+    std::int64_t amount_remaining = 0;
+
+    /** True when the invoice has been paid in full. */
     bool paid = false;
 
     /** True when the object belongs to a live Stripe account. */
     bool livemode = false;
+
+    /** Customer-facing invoice number, empty until the invoice is finalized. */
+    std::string number;
+
+    /**
+     * Stripe-hosted page where the customer can view and pay the invoice.
+     *
+     * Empty until the invoice is finalized. The link stays valid, so it can be
+     * included in reminder messages.
+     */
+    std::string hosted_invoice_url;
+
+    /** Link to download the invoice as a PDF, empty until the invoice is finalized. */
+    std::string invoice_pdf;
+
+    /**
+     * Why the invoice was created, for example subscription_create,
+     * subscription_cycle, subscription_update, or manual.
+     */
+    std::string billing_reason;
+
+    /** Number of payment attempts made so far. */
+    std::int64_t attempt_count = 0;
+
+    /** Unix timestamp when Stripe created the invoice. */
+    std::int64_t created_unix = 0;
+
+    /** Unix timestamp when payment is due, for invoices that are sent rather than charged. */
+    std::optional<std::int64_t> due_date_unix;
+
+    /** Unix timestamp of the next automatic payment attempt, when one is scheduled. */
+    std::optional<std::int64_t> next_payment_attempt_unix;
 };
 
 /**
@@ -303,6 +341,146 @@ struct BillingPortalSession {
 
     /** True when the object belongs to a live Stripe account. */
     bool livemode = false;
+
+    /** ID of the portal configuration the session uses, of the form "bpc_...". */
+    std::string configuration_id;
+
+    /** Language the portal is shown in, or empty when Stripe picks it automatically. */
+    std::string locale;
+};
+
+/** A product, and the prices of it, that customers can switch to in the billing portal. */
+struct BillingPortalProduct {
+    /** Stripe product ID, of the form "prod_...". */
+    std::string product_id;
+
+    /** Prices of the product that customers can choose, of the form "price_...". */
+    std::vector<std::string> price_ids;
+};
+
+/** Whether customers can edit their own billing details in the portal. */
+struct BillingPortalCustomerUpdate {
+    /** True when the feature is shown. */
+    bool enabled = false;
+
+    /** Details customers can edit: address, email, name, phone, shipping, or tax_id. */
+    std::vector<std::string> allowed_updates;
+};
+
+/** Whether customers can cancel subscriptions in the portal, and how. */
+struct BillingPortalSubscriptionCancel {
+    /** True when the feature is shown. */
+    bool enabled = false;
+
+    /**
+     * When cancellation takes effect: at_period_end or immediately.
+     *
+     * Empty means Stripe's default, which is at_period_end.
+     */
+    std::string mode;
+
+    /**
+     * How an immediate cancellation credits unused time: none or create_prorations.
+     *
+     * Empty means Stripe's default.
+     */
+    std::string proration_behavior;
+};
+
+/** Whether customers can switch plans in the portal, and which plans they can pick. */
+struct BillingPortalSubscriptionUpdate {
+    /**
+     * True when the feature is shown.
+     *
+     * Turning it on requires allowed changes, products, and payment method
+     * updates.
+     */
+    bool enabled = false;
+
+    /** What customers can change: price, quantity, or promotion_code. */
+    std::vector<std::string> default_allowed_updates;
+
+    /**
+     * Products and prices customers can switch between.
+     *
+     * Stripe allows at most 10 products. A plan change in the portal can only
+     * pick a price listed here.
+     */
+    std::vector<BillingPortalProduct> products;
+
+    /**
+     * How the switch bills for the unused part of the period: none,
+     * create_prorations, or always_invoice.
+     *
+     * Empty means Stripe's default.
+     */
+    std::string proration_behavior;
+};
+
+/** The features shown in the billing portal. */
+struct BillingPortalFeatures {
+    /** Editing of the customer's billing details. */
+    BillingPortalCustomerUpdate customer_update;
+
+    /** True when customers can see and download past invoices. On unless turned off. */
+    bool invoice_history_enabled = true;
+
+    /**
+     * True when customers can add, remove, and replace payment methods. On
+     * unless turned off.
+     *
+     * Payment method deep links only work when this is on, and plan changes
+     * cannot be enabled without it.
+     */
+    bool payment_method_update_enabled = true;
+
+    /** Cancelling subscriptions. */
+    BillingPortalSubscriptionCancel subscription_cancel;
+
+    /** Switching plans. */
+    BillingPortalSubscriptionUpdate subscription_update;
+};
+
+/**
+ * A billing portal configuration: the features and wording a portal session
+ * offers.
+ *
+ * Pass its ID when creating a portal session to use it instead of the
+ * account's default configuration from the Stripe dashboard. Configurations
+ * cannot be deleted; deactivate them instead.
+ *
+ * @sa https://docs.stripe.com/api/customer_portal/configurations/object
+ */
+struct BillingPortalConfiguration {
+    /** Stripe-assigned configuration ID, of the form "bpc_...". */
+    std::string id;
+
+    /** True when new portal sessions can use the configuration. */
+    bool active = false;
+
+    /** True when this is the account's default configuration. */
+    bool is_default = false;
+
+    /** Internal name, shown only in the Stripe dashboard. */
+    std::string name;
+
+    /** Heading shown at the top of the portal, or empty when not set. */
+    std::string headline;
+
+    /** Where to send customers when a session does not give its own return URL. */
+    std::string default_return_url;
+
+    /** Features the portal offers. */
+    BillingPortalFeatures features;
+
+    /** Unix timestamp when Stripe created the configuration. */
+    std::int64_t created_unix = 0;
+
+    /** True when the object belongs to a live Stripe account. */
+    bool livemode = false;
+
+    /** Free-form key/value pairs stored on the configuration. */
+    std::unordered_map<std::string, std::string> metadata;
 };
 
 /**

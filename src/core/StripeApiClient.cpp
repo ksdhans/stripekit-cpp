@@ -11,6 +11,7 @@
 #include <cctype>
 #include <algorithm>
 #include <condition_variable>
+#include <initializer_list>
 #include <iomanip>
 #include <memory>
 #include <mutex>
@@ -400,10 +401,250 @@ std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
     return body;
 }
 
+/** Return the Stripe name of a portal flow type. */
+std::string portal_flow_type_value(BillingPortalFlowType type) {
+    switch (type) {
+    case BillingPortalFlowType::PaymentMethodUpdate:
+        return "payment_method_update";
+    case BillingPortalFlowType::SubscriptionCancel:
+        return "subscription_cancel";
+    case BillingPortalFlowType::SubscriptionUpdate:
+        return "subscription_update";
+    case BillingPortalFlowType::SubscriptionUpdateConfirm:
+        return "subscription_update_confirm";
+    }
+    throw ConfigurationException("Invalid billing portal flow type");
+}
+
+/** Return the Stripe name of a portal after-completion behavior. */
+std::string portal_after_completion_value(BillingPortalAfterCompletion value) {
+    switch (value) {
+    case BillingPortalAfterCompletion::PortalHomepage:
+        return "portal_homepage";
+    case BillingPortalAfterCompletion::HostedConfirmation:
+        return "hosted_confirmation";
+    case BillingPortalAfterCompletion::Redirect:
+        return "redirect";
+    }
+    throw ConfigurationException("Invalid billing portal after-completion behavior");
+}
+
+/** Check that a portal flow has the details its type needs, then encode it as flow_data. */
+void append_portal_flow(std::string& body, const BillingPortalFlow& flow) {
+    const auto type = portal_flow_type_value(flow.type);
+    const bool confirm = flow.type == BillingPortalFlowType::SubscriptionUpdateConfirm;
+    const bool needs_subscription = flow.type != BillingPortalFlowType::PaymentMethodUpdate;
+    if (needs_subscription == flow.subscription_id.empty())
+        throw ConfigurationException(needs_subscription
+                                         ? "This billing portal flow requires a subscription ID"
+                                         : "A payment method flow does not take a subscription ID");
+    if (confirm != !flow.items.empty())
+        throw ConfigurationException(
+            "Only a subscription update confirm flow takes subscription items");
+    append_form_value(body, "flow_data[type]", type);
+    if (needs_subscription)
+        append_form_value(body, "flow_data[" + type + "][subscription]", flow.subscription_id);
+    if (confirm) {
+        if (flow.items.size() != 1)
+            throw ConfigurationException("Stripe can confirm a change to only one item");
+        const auto& item = flow.items.front();
+        if (item.item_id.empty() || (item.price_id.empty() && !item.quantity) ||
+            (item.quantity && *item.quantity <= 0))
+            throw ConfigurationException(
+                "The confirmed item needs an ID and a new price or positive quantity");
+        const std::string prefix = "flow_data[subscription_update_confirm][items][0]";
+        append_form_value(body, prefix + "[id]", item.item_id);
+        if (!item.price_id.empty()) append_form_value(body, prefix + "[price]", item.price_id);
+        if (item.quantity)
+            append_form_value(body, prefix + "[quantity]", std::to_string(*item.quantity));
+    }
+
+    const auto after = flow.after_completion;
+    const bool redirect = after == BillingPortalAfterCompletion::Redirect;
+    const bool hosted = after == BillingPortalAfterCompletion::HostedConfirmation;
+    if (redirect == flow.redirect_url.empty())
+        throw ConfigurationException(redirect
+                                         ? "A redirect after completion requires a redirect URL"
+                                         : "A redirect URL requires a redirect after completion");
+    if (!flow.confirmation_message.empty() && !hosted)
+        throw ConfigurationException("A confirmation message requires a hosted confirmation");
+    if (flow.confirmation_message.size() > 500)
+        throw ConfigurationException("A confirmation message is limited to 500 characters");
+    if (!after) return;
+    append_form_value(
+        body, "flow_data[after_completion][type]", portal_after_completion_value(*after));
+    if (redirect)
+        append_form_value(
+            body, "flow_data[after_completion][redirect][return_url]", flow.redirect_url);
+    if (!flow.confirmation_message.empty())
+        append_form_value(body,
+                          "flow_data[after_completion][hosted_confirmation][custom_message]",
+                          flow.confirmation_message);
+}
+
+/** Validate and encode a portal session, including any configuration, locale, and flow. */
 std::string billing_portal_session_body(const CreateBillingPortalSessionRequest& request) {
+    if (request.customer_id.empty())
+        throw ConfigurationException("A billing portal session requires a customer ID");
     std::string body;
     append_form_value(body, "customer", request.customer_id);
-    append_form_value(body, "return_url", request.return_url);
+    if (!request.return_url.empty()) append_form_value(body, "return_url", request.return_url);
+    if (!request.configuration_id.empty())
+        append_form_value(body, "configuration", request.configuration_id);
+    if (!request.locale.empty()) append_form_value(body, "locale", request.locale);
+    if (request.flow) append_portal_flow(body, *request.flow);
+    return body;
+}
+
+/** Reject a value Stripe would not accept for a portal feature setting. */
+void require_one_of(const std::string& value,
+                    std::initializer_list<std::string_view> allowed,
+                    const char* setting) {
+    if (std::find(allowed.begin(), allowed.end(), value) == allowed.end())
+        throw ConfigurationException(std::string("Invalid billing portal ") + setting + ": " +
+                                     value);
+}
+
+/**
+ * Encode a list setting. An empty list is sent as an empty value on updates,
+ * which is how Stripe clears a list.
+ */
+void append_portal_list(std::string& body,
+                        const std::string& name,
+                        const std::vector<std::string>& values,
+                        bool clear_when_empty) {
+    if (values.empty() && clear_when_empty) append_form_value(body, name, "");
+    for (const auto& value : values)
+        append_form_value(body, name + "[]", value);
+}
+
+/** Validate and encode every portal feature, so unset features are turned off. */
+void append_portal_features(std::string& body,
+                            const BillingPortalFeatures& features,
+                            bool updating) {
+    const auto enabled = [](bool value) { return value ? "true" : "false"; };
+    const auto& customer = features.customer_update;
+    for (const auto& value : customer.allowed_updates)
+        require_one_of(value,
+                       { "address", "email", "name", "phone", "shipping", "tax_id" },
+                       "customer update");
+    append_form_value(body, "features[customer_update][enabled]", enabled(customer.enabled));
+    if (customer.enabled || !customer.allowed_updates.empty())
+        append_portal_list(
+            body, "features[customer_update][allowed_updates]", customer.allowed_updates, updating);
+    append_form_value(
+        body, "features[invoice_history][enabled]", enabled(features.invoice_history_enabled));
+    append_form_value(body,
+                      "features[payment_method_update][enabled]",
+                      enabled(features.payment_method_update_enabled));
+
+    const auto& cancel = features.subscription_cancel;
+    if (!cancel.mode.empty())
+        require_one_of(cancel.mode, { "at_period_end", "immediately" }, "cancellation mode");
+    if (!cancel.proration_behavior.empty())
+        require_one_of(cancel.proration_behavior,
+                       { "none", "create_prorations" },
+                       "cancellation proration behavior");
+    append_form_value(body, "features[subscription_cancel][enabled]", enabled(cancel.enabled));
+    if (!cancel.mode.empty())
+        append_form_value(body, "features[subscription_cancel][mode]", cancel.mode);
+    if (!cancel.proration_behavior.empty())
+        append_form_value(
+            body, "features[subscription_cancel][proration_behavior]", cancel.proration_behavior);
+
+    const auto& update = features.subscription_update;
+    for (const auto& value : update.default_allowed_updates)
+        require_one_of(value, { "price", "quantity", "promotion_code" }, "plan change option");
+    if (!update.proration_behavior.empty())
+        require_one_of(update.proration_behavior,
+                       { "none", "create_prorations", "always_invoice" },
+                       "plan change proration behavior");
+    if (update.products.size() > 10)
+        throw ConfigurationException("Stripe allows at most 10 billing portal plan products");
+    for (const auto& product : update.products)
+        if (product.product_id.empty() || product.price_ids.empty() ||
+            std::any_of(product.price_ids.begin(),
+                        product.price_ids.end(),
+                        [](const std::string& id) { return id.empty(); }))
+            throw ConfigurationException(
+                "Each billing portal plan product needs an ID and at least one price ID");
+    if (update.enabled && (update.default_allowed_updates.empty() || update.products.empty()))
+        throw ConfigurationException(
+            "Enabling billing portal plan changes requires allowed changes and products");
+    if (update.enabled && !features.payment_method_update_enabled)
+        throw ConfigurationException(
+            "Billing portal plan changes require payment method updates to be enabled");
+    append_form_value(body, "features[subscription_update][enabled]", enabled(update.enabled));
+    if (update.enabled || !update.default_allowed_updates.empty())
+        append_portal_list(body,
+                           "features[subscription_update][default_allowed_updates]",
+                           update.default_allowed_updates,
+                           updating);
+    if (update.products.empty() && updating && update.enabled)
+        append_form_value(body, "features[subscription_update][products]", "");
+    for (std::size_t index = 0; index < update.products.size(); ++index) {
+        const auto prefix =
+            "features[subscription_update][products][" + std::to_string(index) + "]";
+        append_form_value(body, prefix + "[product]", update.products[index].product_id);
+        for (const auto& price : update.products[index].price_ids)
+            append_form_value(body, prefix + "[prices][]", price);
+    }
+    if (!update.proration_behavior.empty())
+        append_form_value(
+            body, "features[subscription_update][proration_behavior]", update.proration_behavior);
+}
+
+/** Reject portal configuration names Stripe would refuse. */
+void require_portal_name(const std::string& name) {
+    if (name.size() > 256)
+        throw ConfigurationException(
+            "A billing portal configuration name is limited to 256 characters");
+}
+
+/**
+ * Ask Stripe to include the plan-switching product list, which it otherwise
+ * leaves out of portal configuration responses.
+ */
+void append_portal_products_expansion(std::string& encoded) {
+    append_form_value(encoded, "expand[]", "features.subscription_update.products");
+}
+
+/** Build the retrieval path for a portal configuration, including its product list. */
+std::string portal_configuration_path(const std::string& id) {
+    std::string query;
+    append_portal_products_expansion(query);
+    return catalog_path("billing_portal/configurations", id) + "?" + query;
+}
+
+/** Validate and encode a new portal configuration. */
+std::string portal_configuration_body(const CreateBillingPortalConfigurationRequest& request) {
+    require_portal_name(request.name);
+    std::string body;
+    append_portal_products_expansion(body);
+    append_portal_features(body, request.features, false);
+    if (!request.name.empty()) append_form_value(body, "name", request.name);
+    if (!request.headline.empty())
+        append_form_value(body, "business_profile[headline]", request.headline);
+    if (!request.default_return_url.empty())
+        append_form_value(body, "default_return_url", request.default_return_url);
+    append_metadata(body, request.metadata);
+    return body;
+}
+
+/** Validate and encode only the portal configuration fields being changed. */
+std::string portal_configuration_body(const UpdateBillingPortalConfigurationRequest& request) {
+    std::string body;
+    append_portal_products_expansion(body);
+    if (request.active) append_form_value(body, "active", *request.active ? "true" : "false");
+    if (request.features) append_portal_features(body, *request.features, true);
+    if (request.name) {
+        require_portal_name(*request.name);
+        append_form_value(body, "name", *request.name);
+    }
+    if (request.headline) append_form_value(body, "business_profile[headline]", *request.headline);
+    if (request.default_return_url)
+        append_form_value(body, "default_return_url", *request.default_return_url);
+    append_metadata(body, request.metadata);
     return body;
 }
 
@@ -524,6 +765,15 @@ Price StripeResponseParser::parse_price(const HttpResponse& response) const {
 
 PriceList StripeResponseParser::parse_price_list(const HttpResponse& response) const {
     return JsonStripeResponseParser{}.parse_price_list(response);
+}
+
+Invoice StripeResponseParser::parse_invoice(const HttpResponse& response) const {
+    return JsonStripeResponseParser{}.parse_invoice(response);
+}
+
+BillingPortalConfiguration
+StripeResponseParser::parse_billing_portal_configuration(const HttpResponse& response) const {
+    return JsonStripeResponseParser{}.parse_billing_portal_configuration(response);
 }
 
 Product JsonStripeResponseParser::parse_product(const HttpResponse& response) const {
@@ -648,7 +898,122 @@ JsonStripeResponseParser::parse_billing_portal_session(const HttpResponse& respo
                                  .url = json_value::string(object, "url"),
                                  .return_url = json_value::string(object, "return_url"),
                                  .created_unix = json_value::integer(object, "created"),
-                                 .livemode = json_value::boolean(object, "livemode") };
+                                 .livemode = json_value::boolean(object, "livemode"),
+                                 .configuration_id = reference_id(object["configuration"]),
+                                 .locale = json_value::string(object, "locale") };
+}
+
+namespace {
+
+/** Read an optional list of strings, rejecting values of the wrong type. */
+std::vector<std::string> string_list(const Json::Value& value) {
+    std::vector<std::string> result;
+    if (value.isNull()) return result;
+    if (!value.isArray())
+        throw ConfigurationException("Stripe returned a malformed billing portal setting");
+    for (const auto& entry : value) {
+        if (!entry.isString())
+            throw ConfigurationException("Stripe returned a malformed billing portal setting");
+        result.push_back(entry.asString());
+    }
+    return result;
+}
+
+/** Read the plan-switching products, given as a plain array or as a list object. */
+std::vector<BillingPortalProduct> portal_products(const Json::Value& value) {
+    const auto& entries = value.isObject() ? value["data"] : value;
+    std::vector<BillingPortalProduct> products;
+    if (entries.isNull()) return products;
+    if (!entries.isArray())
+        throw ConfigurationException("Stripe returned malformed billing portal products");
+    for (const auto& entry : entries) {
+        BillingPortalProduct product{ .product_id = reference_id(entry["product"]),
+                                      .price_ids = {} };
+        for (const auto& price :
+             entry["prices"].isNull() ? Json::Value(Json::arrayValue) : entry["prices"])
+            product.price_ids.push_back(reference_id(price));
+        if (product.product_id.empty())
+            throw ConfigurationException("Stripe returned malformed billing portal products");
+        products.push_back(std::move(product));
+    }
+    return products;
+}
+
+} // namespace
+
+Invoice JsonStripeResponseParser::parse_invoice(const HttpResponse& response) const {
+    const auto object = json_value::parse(response.body);
+    if (!object.isObject() || !object["id"].isString() || object["id"].asString().empty())
+        throw ConfigurationException("Stripe returned a malformed invoice");
+    Invoice invoice{ .id = object["id"].asString(),
+                     .customer_id = reference_id(object["customer"]),
+                     .subscription_id = reference_id(object["subscription"]),
+                     .status = json_value::string(object, "status"),
+                     .currency = json_value::string(object, "currency"),
+                     .amount_due = json_value::integer(object, "amount_due"),
+                     .amount_paid = json_value::integer(object, "amount_paid"),
+                     .amount_remaining = json_value::integer(object, "amount_remaining"),
+                     .paid = false,
+                     .livemode = json_value::boolean(object, "livemode"),
+                     .number = json_value::string(object, "number"),
+                     .hosted_invoice_url = json_value::string(object, "hosted_invoice_url"),
+                     .invoice_pdf = json_value::string(object, "invoice_pdf"),
+                     .billing_reason = json_value::string(object, "billing_reason"),
+                     .attempt_count = json_value::integer(object, "attempt_count"),
+                     .created_unix = json_value::integer(object, "created"),
+                     .due_date_unix = optional_unix_timestamp(object["due_date"]),
+                     .next_payment_attempt_unix =
+                         optional_unix_timestamp(object["next_payment_attempt"]) };
+    // Newer Stripe API versions moved the subscription under `parent` and dropped `paid`.
+    if (invoice.subscription_id.empty()) {
+        const auto& parent = object["parent"];
+        if (parent.isObject() && parent["subscription_details"].isObject())
+            invoice.subscription_id = reference_id(parent["subscription_details"]["subscription"]);
+    }
+    invoice.paid = object["paid"].isBool() ? object["paid"].asBool() : invoice.status == "paid";
+    return invoice;
+}
+
+BillingPortalConfiguration
+JsonStripeResponseParser::parse_billing_portal_configuration(const HttpResponse& response) const {
+    const auto object = json_value::parse(response.body);
+    if (!object.isObject() || !object["id"].isString() || object["id"].asString().empty() ||
+        !object["features"].isObject())
+        throw ConfigurationException("Stripe returned a malformed billing portal configuration");
+    const auto& features = object["features"];
+    const auto& customer = features["customer_update"];
+    const auto& cancel = features["subscription_cancel"];
+    const auto& update = features["subscription_update"];
+    BillingPortalConfiguration configuration{
+        .id = object["id"].asString(),
+        .active = json_value::boolean(object, "active"),
+        .is_default = json_value::boolean(object, "is_default"),
+        .name = json_value::string(object, "name"),
+        .headline = json_value::string(object["business_profile"], "headline"),
+        .default_return_url = json_value::string(object, "default_return_url"),
+        .features = {},
+        .created_unix = json_value::integer(object, "created"),
+        .livemode = json_value::boolean(object, "livemode"),
+        .metadata = metadata_value(object)
+    };
+    // Report features Stripe leaves out as off, rather than using the request defaults.
+    auto& result = configuration.features;
+    result.customer_update = { .enabled = json_value::boolean(customer, "enabled"),
+                               .allowed_updates = string_list(customer["allowed_updates"]) };
+    result.invoice_history_enabled = json_value::boolean(features["invoice_history"], "enabled");
+    result.payment_method_update_enabled =
+        json_value::boolean(features["payment_method_update"], "enabled");
+    result.subscription_cancel = { .enabled = json_value::boolean(cancel, "enabled"),
+                                   .mode = json_value::string(cancel, "mode"),
+                                   .proration_behavior =
+                                       json_value::string(cancel, "proration_behavior") };
+    result.subscription_update = { .enabled = json_value::boolean(update, "enabled"),
+                                   .default_allowed_updates =
+                                       string_list(update["default_allowed_updates"]),
+                                   .products = portal_products(update["products"]),
+                                   .proration_behavior =
+                                       json_value::string(update, "proration_behavior") };
+    return configuration;
 }
 
 StripeErrorPayload JsonStripeResponseParser::parse_error(const HttpResponse& response) const {
@@ -896,14 +1261,21 @@ void StripeApiClient::BillingPortalSessionOperations::create(
     const CreateBillingPortalSessionRequest& request,
     const RequestOptions& options,
     CreateCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            "/v1/billing_portal/sessions",
+                            billing_portal_session_body(request),
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
     send_and_parse<BillingPortalSession>(
         owner.http_client,
         owner.response_parser,
         owner.callback_lifetime,
-        make_request(HttpMethod::Post,
-                     "/v1/billing_portal/sessions",
-                     billing_portal_session_body(request),
-                     options),
+        std::move(http),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_billing_portal_session(response);
         },
@@ -917,12 +1289,166 @@ BillingPortalSessions& StripeApiClient::BillingPortalOperations::sessions() {
     return owner.billing_portal_session_operations;
 }
 
+BillingPortalConfigurations& StripeApiClient::BillingPortalOperations::configurations() {
+    return owner.billing_portal_configuration_operations;
+}
+
+namespace {
+
+/** Parse a billing portal configuration response. */
+BillingPortalConfiguration parse_portal_configuration(const StripeResponseParser& parser,
+                                                      const HttpResponse& response) {
+    return parser.parse_billing_portal_configuration(response);
+}
+
+/** Parse an invoice response. */
+Invoice parse_invoice_response(const StripeResponseParser& parser, const HttpResponse& response) {
+    return parser.parse_invoice(response);
+}
+
+} // namespace
+
+StripeApiClient::InvoiceOperations::InvoiceOperations(StripeApiClient& owner) : owner(owner) {}
+
+Task<Invoice> StripeApiClient::InvoiceOperations::retrieve_async(std::string id,
+                                                                 const RequestOptions& options) {
+    return send_and_parse_async<Invoice>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, catalog_path("invoices", id), {}, options),
+        parse_invoice_response);
+}
+
+void StripeApiClient::InvoiceOperations::retrieve(std::string id,
+                                                  const RequestOptions& options,
+                                                  Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, catalog_path("invoices", id), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Invoice>(owner.http_client,
+                            owner.response_parser,
+                            owner.callback_lifetime,
+                            std::move(http),
+                            parse_invoice_response,
+                            std::move(completion));
+}
+
+StripeApiClient::BillingPortalConfigurationOperations::BillingPortalConfigurationOperations(
+    StripeApiClient& owner)
+    : owner(owner) {}
+
+Task<BillingPortalConfiguration>
+StripeApiClient::BillingPortalConfigurationOperations::create_async(
+    const CreateBillingPortalConfigurationRequest& request, const RequestOptions& options) {
+    return send_and_parse_async<BillingPortalConfiguration>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post,
+                     "/v1/billing_portal/configurations",
+                     portal_configuration_body(request),
+                     options),
+        parse_portal_configuration);
+}
+
+void StripeApiClient::BillingPortalConfigurationOperations::create(
+    const CreateBillingPortalConfigurationRequest& request,
+    const RequestOptions& options,
+    Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            "/v1/billing_portal/configurations",
+                            portal_configuration_body(request),
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<BillingPortalConfiguration>(owner.http_client,
+                                               owner.response_parser,
+                                               owner.callback_lifetime,
+                                               std::move(http),
+                                               parse_portal_configuration,
+                                               std::move(completion));
+}
+
+Task<BillingPortalConfiguration>
+StripeApiClient::BillingPortalConfigurationOperations::retrieve_async(
+    std::string id, const RequestOptions& options) {
+    return send_and_parse_async<BillingPortalConfiguration>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, portal_configuration_path(id), {}, options),
+        parse_portal_configuration);
+}
+
+void StripeApiClient::BillingPortalConfigurationOperations::retrieve(std::string id,
+                                                                     const RequestOptions& options,
+                                                                     Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, portal_configuration_path(id), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<BillingPortalConfiguration>(owner.http_client,
+                                               owner.response_parser,
+                                               owner.callback_lifetime,
+                                               std::move(http),
+                                               parse_portal_configuration,
+                                               std::move(completion));
+}
+
+Task<BillingPortalConfiguration>
+StripeApiClient::BillingPortalConfigurationOperations::update_async(
+    std::string id,
+    const UpdateBillingPortalConfigurationRequest& request,
+    const RequestOptions& options) {
+    return send_and_parse_async<BillingPortalConfiguration>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post,
+                     catalog_path("billing_portal/configurations", id),
+                     portal_configuration_body(request),
+                     options),
+        parse_portal_configuration);
+}
+
+void StripeApiClient::BillingPortalConfigurationOperations::update(
+    std::string id,
+    const UpdateBillingPortalConfigurationRequest& request,
+    const RequestOptions& options,
+    Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            catalog_path("billing_portal/configurations", id),
+                            portal_configuration_body(request),
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<BillingPortalConfiguration>(owner.http_client,
+                                               owner.response_parser,
+                                               owner.callback_lifetime,
+                                               std::move(http),
+                                               parse_portal_configuration,
+                                               std::move(completion));
+}
+
 StripeApiClient::StripeApiClient(HTTPClient& http_client)
     : http_client(http_client), default_response_parser(), response_parser(default_response_parser),
       callback_lifetime(std::make_shared<CallbackLifetime>()), customer_operations(*this),
       checkout_session_operations(*this), checkout_operations(*this),
       subscription_operations(*this), billing_portal_session_operations(*this),
-      billing_portal_operations(*this), product_operations(*this), price_operations(*this) {}
+      billing_portal_operations(*this), product_operations(*this), price_operations(*this),
+      invoice_operations(*this), billing_portal_configuration_operations(*this) {}
 
 StripeApiClient::StripeApiClient(HTTPClient& http_client,
                                  const StripeResponseParser& response_parser)
@@ -930,7 +1456,8 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client,
       callback_lifetime(std::make_shared<CallbackLifetime>()), customer_operations(*this),
       checkout_session_operations(*this), checkout_operations(*this),
       subscription_operations(*this), billing_portal_session_operations(*this),
-      billing_portal_operations(*this), product_operations(*this), price_operations(*this) {}
+      billing_portal_operations(*this), product_operations(*this), price_operations(*this),
+      invoice_operations(*this), billing_portal_configuration_operations(*this) {}
 
 StripeApiClient::~StripeApiClient() {
     callback_lifetime->close_and_wait();
@@ -950,6 +1477,10 @@ Subscriptions& StripeApiClient::subscriptions() {
 
 BillingPortal& StripeApiClient::billing_portal() {
     return billing_portal_operations;
+}
+
+Invoices& StripeApiClient::invoices() {
+    return invoice_operations;
 }
 
 Products& StripeApiClient::products() {

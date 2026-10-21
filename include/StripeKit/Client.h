@@ -21,6 +21,7 @@
 #include <string>
 #include <unordered_map>
 #include <variant>
+#include <vector>
 
 namespace stripekit {
 
@@ -114,6 +115,70 @@ struct CreateCheckoutSessionRequest {
     std::unordered_map<std::string, std::string> metadata;
 };
 
+/** Which task a billing portal session should take the customer straight to. */
+enum class BillingPortalFlowType {
+    PaymentMethodUpdate,      /**< Add or replace the customer's payment method. */
+    SubscriptionCancel,       /**< Confirm cancelling one subscription. */
+    SubscriptionUpdate,       /**< Pick a new plan for one subscription. */
+    SubscriptionUpdateConfirm /**< Review and confirm a plan change chosen by your app. */
+};
+
+/** Where the customer goes after finishing a billing portal flow. */
+enum class BillingPortalAfterCompletion {
+    PortalHomepage,     /**< Stay in the portal and show its home page. */
+    HostedConfirmation, /**< Show a Stripe-hosted confirmation, optionally with a message. */
+    Redirect            /**< Send the customer back to your app at `redirect_url`. */
+};
+
+/** The new price or quantity for the subscription item in a confirm flow. */
+struct BillingPortalFlowItem {
+    /** Existing subscription item ID, of the form "si_...". */
+    std::string item_id;
+
+    /**
+     * Price to switch the item to.
+     *
+     * The price must be listed in the portal configuration's plan-switching
+     * products. Leave empty to change only the quantity.
+     */
+    std::string price_id;
+
+    /** New quantity, or empty to keep the current one. */
+    std::optional<std::int64_t> quantity;
+};
+
+/**
+ * Sends the customer straight to one task in the billing portal, instead of
+ * the portal's home page.
+ *
+ * Use SubscriptionUpdateConfirm when your own app lets the customer pick a
+ * plan: the portal then only shows the price change and asks them to confirm
+ * and pay. Stripe can only confirm a change for a subscription with a single
+ * item.
+ *
+ * @sa https://docs.stripe.com/customer-management/portal-deep-links
+ */
+struct BillingPortalFlow {
+    /** The task to show. */
+    BillingPortalFlowType type = BillingPortalFlowType::PaymentMethodUpdate;
+
+    /** Subscription to cancel or change. Required for every type except PaymentMethodUpdate. */
+    std::string subscription_id;
+
+    /** The item change to confirm. Required, with exactly one entry, for SubscriptionUpdateConfirm.
+     */
+    std::vector<BillingPortalFlowItem> items;
+
+    /** What happens after the customer finishes, or empty for Stripe's default. */
+    std::optional<BillingPortalAfterCompletion> after_completion;
+
+    /** Where to send the customer afterwards. Required when after_completion is Redirect. */
+    std::string redirect_url;
+
+    /** Optional message of up to 500 characters for a HostedConfirmation. */
+    std::string confirmation_message;
+};
+
 /**
  * Describes the billing portal session to create.
  *
@@ -125,6 +190,80 @@ struct CreateBillingPortalSessionRequest {
 
     /** Where Stripe sends the customer when they leave the portal. */
     std::string return_url;
+
+    /**
+     * Portal configuration to use, of the form "bpc_...".
+     *
+     * Leave empty to use the account's default configuration from the Stripe
+     * dashboard.
+     */
+    std::string configuration_id;
+
+    /**
+     * Language to show the portal in, as a Stripe locale such as "en", "nl",
+     * or "pt-BR".
+     *
+     * Leave empty to let Stripe choose from the customer's preferences or
+     * browser.
+     */
+    std::string locale;
+
+    /** Task to send the customer straight to, or empty to open the portal's home page. */
+    std::optional<BillingPortalFlow> flow;
+};
+
+/**
+ * Describes a new billing portal configuration.
+ *
+ * Every feature is sent to Stripe explicitly. By default, invoice history and
+ * payment method updates are on, while cancelling, plan changes, and editing
+ * customer details are off until you turn them on.
+ *
+ * @sa https://docs.stripe.com/api/customer_portal/configurations/create
+ */
+struct CreateBillingPortalConfigurationRequest {
+    /** Features the portal offers. */
+    BillingPortalFeatures features;
+
+    /** Internal name of up to 256 characters, shown only in the Stripe dashboard. */
+    std::string name;
+
+    /** Optional heading shown at the top of the portal. */
+    std::string headline;
+
+    /** Where to send customers when a session does not give its own return URL. */
+    std::string default_return_url;
+
+    /** Free-form key/value pairs to store on the configuration. */
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/**
+ * Describes changes to a billing portal configuration.
+ *
+ * Only fields that are set are changed. Setting `features` replaces every
+ * feature setting, as with creation.
+ *
+ * @sa https://docs.stripe.com/api/customer_portal/configurations/update
+ */
+struct UpdateBillingPortalConfigurationRequest {
+    /** Set to false to stop new sessions from using the configuration. */
+    std::optional<bool> active;
+
+    /** New feature settings. */
+    std::optional<BillingPortalFeatures> features;
+
+    /** New internal name. */
+    std::optional<std::string> name;
+
+    /** New heading. An empty string removes it. */
+    std::optional<std::string> headline;
+
+    /** New default return URL. An empty string removes it. */
+    std::optional<std::string> default_return_url;
+
+    /** Metadata keys to add or replace. Existing keys not listed are kept. */
+    std::unordered_map<std::string, std::string> metadata;
 };
 
 /**
@@ -604,6 +743,52 @@ public:
 };
 
 /**
+ * Reads invoices.
+ *
+ * Reach an instance through StripeClient::invoices(). Use it to show what a
+ * customer owes, or to fetch the link where they can pay an invoice that
+ * needs their attention, such as one awaiting 3D Secure authentication.
+ *
+ * @sa https://docs.stripe.com/api/invoices
+ */
+class Invoices {
+public:
+    /** Callback receiving an invoice or the failure. */
+    using Completion = std::function<void(CallbackResult<Invoice>)>;
+
+    /** Destroys the API instance. */
+    virtual ~Invoices() = default;
+
+    /**
+     * Fetches an invoice.
+     *
+     * @param invoice_id Stripe invoice ID, of the form "in_...".
+     * @param options Per-request settings such as a timeout.
+     *
+     * @return A task producing the invoice.
+     *
+     * @throws ConfigurationException The invoice ID was empty.
+     *
+     * @throws StripeApiException No such invoice, or Stripe rejected the request.
+     */
+    virtual Task<Invoice> retrieve_async(std::string invoice_id,
+                                         const RequestOptions& options = {}) = 0;
+
+    /**
+     * Fetches an invoice, reporting the result through a callback.
+     *
+     * The callback is invoked exactly once, and may run on a different thread
+     * than the caller.
+     *
+     * @param invoice_id Stripe invoice ID, of the form "in_...".
+     * @param options Per-request settings such as a timeout.
+     * @param completion Receives the invoice or the failure.
+     */
+    virtual void
+    retrieve(std::string invoice_id, const RequestOptions& options, Completion completion) = 0;
+};
+
+/**
  * Creates billing portal sessions.
  *
  * Reach an instance through StripeClient::billing_portal(). The billing portal
@@ -628,11 +813,17 @@ public:
      * Sessions are short-lived, so create one per visit rather than storing
      * the URL.
      *
-     * @param request The customer to create the session for, and where to
-     *        return them afterwards.
+     * @param request The customer to create the session for, where to return
+     *        them afterwards, and optionally a configuration, language, and
+     *        task to open.
      * @param options Per-request settings such as a timeout.
+     *
      * @return A task producing the session, whose `url` is where the customer
      *         should be sent.
+     *
+     * @throws ConfigurationException The customer ID was empty, or the flow
+     *         was missing details its type needs.
+     *
      * @throws StripeApiException Stripe rejected the request. A common cause is
      *         the billing portal not yet being configured in the dashboard.
      */
@@ -644,16 +835,131 @@ public:
      * Creates a billing portal session, reporting the result through a callback.
      *
      * The callback is invoked exactly once, and may run on a different thread
-     * than the caller.
+     * than the caller. Invalid requests are reported through the callback too.
      *
-     * @param request The customer to create the session for, and where to
-     *        return them afterwards.
+     * @param request The customer to create the session for, where to return
+     *        them afterwards, and optionally a configuration, language, and
+     *        task to open.
      * @param options Per-request settings such as a timeout.
      * @param completion Receives the created session or the failure.
      */
     virtual void create(const CreateBillingPortalSessionRequest& request,
                         const RequestOptions& options,
                         CreateCompletion completion) = 0;
+};
+
+/**
+ * Creates and manages billing portal configurations.
+ *
+ * Reach an instance through BillingPortal::configurations(). A configuration
+ * decides which features the portal offers, such as which plans customers can
+ * switch to. Creating one from code means the app does not depend on settings
+ * someone made by hand in the Stripe dashboard.
+ *
+ * @sa https://docs.stripe.com/api/customer_portal/configurations
+ */
+class BillingPortalConfigurations {
+public:
+    /** Callback receiving a configuration or the failure. */
+    using Completion = std::function<void(CallbackResult<BillingPortalConfiguration>)>;
+
+    /** Destroys the API instance. */
+    virtual ~BillingPortalConfigurations() = default;
+
+    /**
+     * Creates a portal configuration. Use an idempotency key for safe retries.
+     *
+     * @param request Features and wording for the portal.
+     * @param options Per-request settings.
+     *
+     * @return A task producing the created configuration.
+     *
+     * @throws ConfigurationException The request had invalid feature settings.
+     *
+     * @throws StripeApiException Stripe rejected the request.
+     */
+    virtual Task<BillingPortalConfiguration>
+    create_async(const CreateBillingPortalConfigurationRequest& request,
+                 const RequestOptions& options = {}) = 0;
+
+    /**
+     * Creates a billing portal configuration, reporting the result through a callback.
+     *
+     * The callback is invoked exactly once. Invalid requests are reported
+     * through the callback too.
+     *
+     * @param request Features and wording for the portal.
+     * @param options Per-request settings.
+     * @param completion Receives the created configuration or the failure.
+     */
+    virtual void create(const CreateBillingPortalConfigurationRequest& request,
+                        const RequestOptions& options,
+                        Completion completion) = 0;
+
+    /**
+     * Fetches a portal configuration.
+     *
+     * @param configuration_id Configuration ID, of the form "bpc_...".
+     * @param options Per-request settings.
+     *
+     * @return A task producing the configuration.
+     *
+     * @throws ConfigurationException The configuration ID was empty.
+     *
+     * @throws StripeApiException No such configuration, or Stripe rejected the request.
+     */
+    virtual Task<BillingPortalConfiguration> retrieve_async(std::string configuration_id,
+                                                            const RequestOptions& options = {}) = 0;
+
+    /**
+     * Fetches a billing portal configuration, reporting the result through a callback.
+     *
+     * The callback is invoked exactly once.
+     *
+     * @param configuration_id Configuration ID, of the form "bpc_...".
+     * @param options Per-request settings.
+     * @param completion Receives the configuration or the failure.
+     */
+    virtual void retrieve(std::string configuration_id,
+                          const RequestOptions& options,
+                          Completion completion) = 0;
+
+    /**
+     * Changes a portal configuration, or deactivates it.
+     *
+     * Changes apply to portal sessions created afterwards.
+     *
+     * @param configuration_id Configuration ID, of the form "bpc_...".
+     * @param request The fields to change.
+     * @param options Per-request settings.
+     *
+     * @return A task producing the updated configuration.
+     *
+     * @throws ConfigurationException The ID was empty or the request had
+     *         invalid feature settings.
+     *
+     * @throws StripeApiException Stripe rejected the request.
+     */
+    virtual Task<BillingPortalConfiguration>
+    update_async(std::string configuration_id,
+                 const UpdateBillingPortalConfigurationRequest& request,
+                 const RequestOptions& options = {}) = 0;
+
+    /**
+     * Changes a billing portal configuration, reporting the result through a callback.
+     *
+     * The callback is invoked exactly once. Invalid requests are reported
+     * through the callback too.
+     *
+     * @param configuration_id Configuration ID, of the form "bpc_...".
+     * @param request The fields to change.
+     * @param options Per-request settings.
+     * @param completion Receives the updated configuration or the failure.
+     */
+    virtual void update(std::string configuration_id,
+                        const UpdateBillingPortalConfigurationRequest& request,
+                        const RequestOptions& options,
+                        Completion completion) = 0;
 };
 
 /**
@@ -673,6 +979,14 @@ public:
      *         client does.
      */
     virtual BillingPortalSessions& sessions() = 0;
+
+    /**
+     * Returns the billing portal configuration operations.
+     *
+     * @return A reference owned by the client; it stays valid as long as the
+     *         client does.
+     */
+    virtual BillingPortalConfigurations& configurations() = 0;
 };
 
 /**
@@ -730,6 +1044,14 @@ public:
      *         client does.
      */
     virtual Subscriptions& subscriptions() = 0;
+
+    /**
+     * Returns the invoice operations.
+     *
+     * @return A reference owned by the client; it stays valid as long as the
+     *         client does.
+     */
+    virtual Invoices& invoices() = 0;
 
     /**
      * Returns the billing portal operations.

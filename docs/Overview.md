@@ -6,9 +6,9 @@ StripeKit is a C++ toolkit for the parts of Stripe most applications actually
 need: charging customers for subscriptions, letting them manage their own
 billing, and reacting to what Stripe tells you afterwards.
 
-It supports hosted Checkout, customer billing portal sessions, reusable products
-and fixed prices, subscription retrieval, price changes and cancellation, and
-verified webhooks.
+It supports hosted Checkout, customer billing portal sessions and portal
+configurations, reusable products and fixed prices, subscription retrieval,
+price changes and cancellation, invoice retrieval, and verified webhooks.
 It does not cover every Stripe operation. Webhook events include the original
 JSON for reading fields not exposed by the supplied models; this does not add
 outbound API operations that StripeKit does not yet support.
@@ -130,5 +130,6 @@ all instances agree on which events are done.
 
 - @ref quickstart — a working integration, step by step.
 - @ref products_and_prices — create reusable prices and preserve existing pricing.
+- @ref billing_portal_and_invoices — self-service billing, plan changes, and invoices.
 - @ref application_api — the full reference for the types above.
 - @ref writing_an_adapter — supporting a framework other than Drogon.

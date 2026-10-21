@@ -329,6 +329,7 @@ A few things to check before switching from a test key to a live one:
 @section quickstart_next Where to go next
 
 - @ref products_and_prices — reusable pricing, lookup keys, and keeping old prices.
+- @ref billing_portal_and_invoices — letting customers fix payments and change plans.
 - @ref application_api — full reference for everything used on this page.
 - @ref overview — a step back, to see how the pieces fit together.
 - @ref writing_an_adapter — using a web framework other than Drogon.

@@ -23,6 +23,8 @@ control, and other business logic are up to you.
 
 Start with the [Quickstart](docs/Quickstart.md) and [runnable examples](examples/README.md).
 For reusable pricing and price changes, see [Products and Prices](docs/ProductsAndPrices.md).
+For self-service billing and invoices, see
+[Billing Portal and Invoices](docs/BillingPortalAndInvoices.md).
 For adding support for other web frameworks, see [Writing an Adapter](docs/WritingAnAdapter.md).
 
 ## Roadmap

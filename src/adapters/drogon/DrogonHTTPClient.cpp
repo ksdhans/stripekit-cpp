@@ -100,6 +100,11 @@ public:
         return client.subscriptions();
     }
 
+    /** Return the underlying client's invoice operations. */
+    Invoices& invoices() override {
+        return client.invoices();
+    }
+
     BillingPortal& billing_portal() override {
         return client.billing_portal();
     }

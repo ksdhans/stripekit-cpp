@@ -115,6 +115,35 @@ public:
     parse_billing_portal_session(const HttpResponse& response) const = 0;
 
     /**
+     * Reads an invoice out of a successful response.
+     *
+     * The default decodes Stripe's JSON with JsonStripeResponseParser, so
+     * parsers written before invoices were supported keep working.
+     *
+     * @param response The response body and status from Stripe.
+     *
+     * @return The parsed invoice.
+     *
+     * @throws ConfigurationException The body was not a valid invoice object.
+     */
+    virtual Invoice parse_invoice(const HttpResponse& response) const;
+
+    /**
+     * Reads a billing portal configuration out of a successful response.
+     *
+     * The default decodes Stripe's JSON with JsonStripeResponseParser, so
+     * parsers written before configurations were supported keep working.
+     *
+     * @param response The response body and status from Stripe.
+     *
+     * @return The parsed configuration.
+     *
+     * @throws ConfigurationException The body was not a valid configuration object.
+     */
+    virtual BillingPortalConfiguration
+    parse_billing_portal_configuration(const HttpResponse& response) const;
+
+    /**
      * Reads the error details out of a failed response.
      *
      * Must not throw: it is already handling a failure. Fall back to a
@@ -214,6 +243,32 @@ public:
     BillingPortalSession parse_billing_portal_session(const HttpResponse& response) const override;
 
     /**
+     * Reads an invoice out of a successful JSON response.
+     *
+     * Accepts invoices from both older and current Stripe API versions, which
+     * report the subscription and paid state in different places.
+     *
+     * @param response The response body and status from Stripe.
+     *
+     * @return The parsed invoice.
+     *
+     * @throws ConfigurationException The body was not valid JSON, or not an invoice.
+     */
+    Invoice parse_invoice(const HttpResponse& response) const override;
+
+    /**
+     * Reads a billing portal configuration out of a successful JSON response.
+     *
+     * @param response The response body and status from Stripe.
+     *
+     * @return The parsed configuration.
+     *
+     * @throws ConfigurationException The body was not valid JSON, or not a configuration.
+     */
+    BillingPortalConfiguration
+    parse_billing_portal_configuration(const HttpResponse& response) const override;
+
+    /**
      * Reads the error details out of a failed response.
      *
      * @param response The response body and status from Stripe.
@@ -291,6 +346,13 @@ public:
      * @return A reference valid for the lifetime of this client.
      */
     BillingPortal& billing_portal() override;
+
+    /**
+     * Returns the invoice operations.
+     *
+     * @return A reference valid for the lifetime of this client.
+     */
+    Invoices& invoices() override;
 
     /** Return the product operations owned by this client. */
     Products& products() override;
@@ -446,10 +508,66 @@ private:
         StripeApiClient& owner;
     };
 
+    /** Retrieves Stripe invoices. */
+    class InvoiceOperations final : public Invoices {
+    public:
+        /** Retain the owning client for the lifetime of the group. */
+        explicit InvoiceOperations(StripeApiClient& owner);
+
+        /** Retrieve an invoice by ID. */
+        Task<Invoice> retrieve_async(std::string, const RequestOptions&) override;
+
+        /** Retrieve an invoice and deliver its result once. */
+        void retrieve(std::string, const RequestOptions&, Completion) override;
+
+    private:
+        StripeApiClient& owner;
+    };
+
+    /** Creates, retrieves, and updates billing portal configurations. */
+    class BillingPortalConfigurationOperations final : public BillingPortalConfigurations {
+    public:
+        /** Retain the owning client for the lifetime of the group. */
+        explicit BillingPortalConfigurationOperations(StripeApiClient& owner);
+
+        /** Create a configuration from explicit feature settings. */
+        Task<BillingPortalConfiguration>
+        create_async(const CreateBillingPortalConfigurationRequest&,
+                     const RequestOptions&) override;
+
+        /** Create a configuration and deliver its result once. */
+        void create(const CreateBillingPortalConfigurationRequest&,
+                    const RequestOptions&,
+                    Completion) override;
+
+        /** Retrieve a configuration by ID. */
+        Task<BillingPortalConfiguration> retrieve_async(std::string,
+                                                        const RequestOptions&) override;
+
+        /** Retrieve a configuration and deliver its result once. */
+        void retrieve(std::string, const RequestOptions&, Completion) override;
+
+        /** Update or deactivate a configuration. */
+        Task<BillingPortalConfiguration>
+        update_async(std::string,
+                     const UpdateBillingPortalConfigurationRequest&,
+                     const RequestOptions&) override;
+
+        /** Update a configuration and deliver its result once. */
+        void update(std::string,
+                    const UpdateBillingPortalConfigurationRequest&,
+                    const RequestOptions&,
+                    Completion) override;
+
+    private:
+        StripeApiClient& owner;
+    };
+
     class BillingPortalOperations final : public BillingPortal {
     public:
         explicit BillingPortalOperations(StripeApiClient& owner);
         BillingPortalSessions& sessions() override;
+        BillingPortalConfigurations& configurations() override;
 
     private:
         StripeApiClient& owner;
@@ -467,6 +585,8 @@ private:
     BillingPortalOperations billing_portal_operations;
     ProductOperations product_operations;
     PriceOperations price_operations;
+    InvoiceOperations invoice_operations;
+    BillingPortalConfigurationOperations billing_portal_configuration_operations;
 };
 
 /** @} */

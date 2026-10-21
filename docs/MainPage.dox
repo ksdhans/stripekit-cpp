@@ -23,11 +23,12 @@
  * - @ref overview — what StripeKit does and how the pieces fit together.
  * - @ref quickstart — a working integration, step by step.
  * - @ref products_and_prices — reusable products, prices, and pricing changes.
+ * - @ref billing_portal_and_invoices — self-service billing, plan changes, and invoices.
  *
  * @section main_reference Reference
  *
  * - @ref application_api — the API applications use to talk to Stripe.
- *   - @ref client — products, prices, customers, Checkout, subscriptions, billing portal.
+ *   - @ref client — products, prices, customers, Checkout, subscriptions, invoices, billing portal.
  *   - @ref models — the Stripe objects StripeKit returns.
  *   - @ref webhooks — verifying deliveries and handling each event once.
  *   - @ref errors — the exceptions StripeKit throws.

@@ -5,6 +5,14 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Add invoice retrieval, with more invoice fields (e.g., hosted payment link)
+- Billing portal sessions can set the configuration and language, and open
+  directly at a specific task (e.g., updating the payment method)
+- Add billing portal configuration management
+- Custom StripeClient and BillingPortal implementations now need `invoices()`
+  and `configurations()`
+- Add a Billing Portal and Invoices guide
+
 
 ## 0.2.1 2026-10-15
 

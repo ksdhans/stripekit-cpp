@@ -34,6 +34,7 @@ if(STRIPEKIT_BUILD_DOCS)
         docs/Overview.md
         docs/Quickstart.md
         docs/ProductsAndPrices.md
+        docs/BillingPortalAndInvoices.md
         docs/WritingAnAdapter.md
         docs/versioning.md
     )

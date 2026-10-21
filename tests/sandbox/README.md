@@ -162,6 +162,7 @@ sets `resource_group` so two pipelines cannot drive the same sandbox at once.
 | Test file | Coverage |
 | --- | --- |
 | `TestCatalog.cpp` | Product creation, retrieval, updates, default-price selection and rejection of invalid defaults; price creation, mutable updates, clearing fields, lookup-key transfers, archiving and reactivation; filtering and pagination; Checkout using catalog prices; grandfathered subscriptions; migrations preserving quantities and other items; all four payment behaviors, failed-payment recovery, authentication-required payments, deterministic proration amounts, idempotent retries, and related invoice/subscription webhooks. |
+| `TestBillingPortalAndInvoices.cpp` | Invoice retrieval for a declined invoice before and after payment, an invoice awaiting authentication with its hosted payment page, and a missing invoice, read with both the account's default and an older Stripe API version; billing portal configuration creation, retrieval, updates, and deactivation; portal sessions for every task type; and Stripe's rejection of plan changes to prices outside the configuration. |
 | `TestSubscriptionLifecycle.cpp` | Checkout Session creation; typed retrieval of a real trial subscription's trial end and item billing-period dates; an active subscription emitting `invoice.paid`; a declined card emitting `invoice.payment_failed`; and subscription cancellation. |
 | `TestDisputeAndRefund.cpp` | `charge.refunded`, and the dispute lifecycle through `charge.dispute.created` and `charge.dispute.closed`. |
 | `TestWebhookDelivery.cpp` | Live signed delivery, duplicate delivery handling, retryable-failure recovery, and rejection of a tampered payload. |
@@ -259,8 +260,8 @@ before challenge completion, but it cancels its subscription during cleanup.
 Do not use its invoice as a manual recovery fixture after the test exits.
 The existing Checkout demo does not provide a subscription price-change or
 invoice-recovery screen. Use your application or Stripe's API for these steps;
-StripeKit does not expose payment-method setup, invoice retrieval, or
-PaymentIntent confirmation.
+StripeKit can retrieve the invoice and its `hosted_invoice_url`, but does not
+expose payment-method setup or PaymentIntent confirmation.
 
 Paying with a different working card checks payment recovery, **not** completion
 of the original 3D Secure challenge.

@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(stripekit_unit_tests
     unit/Main.cpp
+    unit/TestBillingPortalAndInvoices.cpp
     unit/TestCatalog.cpp
     unit/TestLogging.cpp
     unit/TestModelsAndParser.cpp
@@ -137,6 +138,7 @@ if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
         add_executable(stripekit_sandbox_tests
             sandbox/Main.cpp
             sandbox/SandboxEnvironment.cpp
+            sandbox/TestBillingPortalAndInvoices.cpp
             sandbox/TestCatalog.cpp
             sandbox/TestDisputeAndRefund.cpp
             sandbox/TestSubscriptionLifecycle.cpp
