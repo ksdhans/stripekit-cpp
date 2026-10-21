@@ -196,6 +196,13 @@ event stream quiet and lets you clear test data independently.
   clear product defaults before archiving their prices and products, including
   after an assertion fails. Test clocks and their customers are deleted.
   Archived objects and test customers remain in the sandbox for inspection.
+- **Billing portal configurations cannot be deleted.** The portal tests
+  deactivate their configurations instead. If the sandbox has no default portal
+  configuration, the suite first creates one named "StripeKit sandbox default"
+  and leaves it active. Stripe makes the first configuration in an account the
+  default and will not deactivate it, so without this the tests' own
+  configurations could not be checked or cleaned up. You can edit this default
+  in the Dashboard.
 - **Authentication completion needs a browser.** The automated test verifies the
   `requires_action` payment state and signed action-required webhook. Completing
   the 3D Secure challenge through your payment or recovery page remains a manual

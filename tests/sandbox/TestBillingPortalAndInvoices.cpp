@@ -169,9 +169,37 @@ protected:
         return features;
     }
 
+    /**
+     * Makes sure the sandbox has a default portal configuration.
+     *
+     * Stripe makes the first configuration created in an account its default,
+     * and a default configuration cannot be deactivated. In a new sandbox this
+     * creates a small configuration that stays as the account's default, so the
+     * configurations made by the tests are never the default.
+     */
+    void ensure_default_portal_configuration() {
+        static bool checked = false;
+        if (checked) return;
+        auto& api = environment->stripe_api();
+        const auto existing = api.get("/v1/billing_portal/configurations?is_default=true&limit=1");
+        if (!existing.ok()) {
+            throw std::runtime_error("Stripe rejected the default portal configuration lookup - " +
+                                     existing.describe());
+        }
+        if (existing.body["data"].empty()) {
+            api.require_post("/v1/billing_portal/configurations",
+                             { { "name", "StripeKit sandbox default" },
+                               { "features[invoice_history][enabled]", "true" },
+                               { "features[payment_method_update][enabled]", "true" },
+                               { "default_return_url", "https://example.com/billing" } });
+        }
+        checked = true;
+    }
+
     /** Creates a run-specific portal configuration and records it for deactivation. */
     BillingPortalConfiguration create_portal_configuration(const Product& product,
                                                            const std::vector<Price>& plan_prices) {
+        ensure_default_portal_configuration();
         const auto configuration =
             environment->stripe_client()
                 .billing_portal()
