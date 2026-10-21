@@ -5,6 +5,11 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Fixed the billing portal sandbox tests failing in a new sandbox that has no
+  default portal configuration
+
+## 0.3.0 2026-10-21
+
 - Add invoice retrieval, with more invoice fields (e.g., hosted payment link)
 - Billing portal sessions can set the configuration and language, and open
   directly at a specific task (e.g., updating the payment method)
