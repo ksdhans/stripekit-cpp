@@ -70,7 +70,10 @@ exact commands they need.
 - [CheckoutSessionCli](CheckoutSessionCli/README.md) creates one hosted
 	subscription-mode Checkout Session and prints the Stripe-hosted URL.
 - [BillingPortalCli](BillingPortalCli/README.md) creates one Billing Portal
-	session and prints the hosted portal URL.
+	session and prints the hosted portal URL, optionally opening it at a specific
+	task such as updating the payment method or confirming a plan change.
+- [InvoiceStatusCli](InvoiceStatusCli/README.md) reads an invoice and prints
+	what is owed, when Stripe will retry, and the link where the customer can pay.
 
 The examples pin `Stripe-Version: 2024-06-20` on outbound calls. When testing
 webhooks locally, use `stripe listen --all-snapshot --latest` to forward all

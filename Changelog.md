@@ -12,6 +12,8 @@ version section when a release is tagged.
 - Custom StripeClient and BillingPortal implementations now need `invoices()`
   and `configurations()`
 - Add a Billing Portal and Invoices guide
+- BillingPortalCli can now open the portal at a specific task
+- Added a new InvoiceStatusCli example shows what an invoice still owes
 
 
 ## 0.2.1 2026-10-15
