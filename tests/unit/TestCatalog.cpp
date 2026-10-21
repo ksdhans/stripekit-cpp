@@ -7,6 +7,9 @@
 #include "TestHelpers.h"
 #include "StripeKit/StripeApiClient.h"
 
+#include <optional>
+#include <variant>
+
 using namespace stripekit;
 using namespace stripekit::testing;
 
@@ -665,24 +668,30 @@ TEST_F(CatalogTest, SubscriptionPendingUpdatesAreNotReportedAsAppliedPrices) {
 TEST_F(CatalogTest, PricingUpdateApiTransportAndParsingErrorsPropagate) {
     http.set_response(
         { .status_code = 402,
-          .headers = { { "Request-Id", "req_payment" } },
+          .headers = { { "request-id", "req_payment" } },
           .body = R"({"error":{"type":"card_error","message":"Authentication required"}})" });
     auto request = subscription_request();
     request.payment_behavior = PaymentBehavior::ErrorIfIncomplete;
     EXPECT_THROW(client.subscriptions().update_async("sub_test", request).result(),
                  StripeApiException);
     int calls = 0;
+    std::optional<CallbackResult<Subscription>> rejected;
     client.subscriptions().update(
         "sub_test", request, {}, [&](CallbackResult<Subscription> result) {
             ++calls;
-            try {
-                std::rethrow_exception(std::get<std::exception_ptr>(result));
-            } catch (const StripeApiException& error) {
-                EXPECT_EQ(error.payload().http_status, 402);
-                EXPECT_EQ(error.payload().request_id, "req_payment");
-            }
+            rejected = std::move(result);
         });
     EXPECT_EQ(calls, 1);
+    // Check the result after the callback returns, because StripeKit swallows
+    // exceptions thrown inside callbacks, which would hide a failed check.
+    ASSERT_TRUE(rejected.has_value());
+    ASSERT_TRUE(std::holds_alternative<std::exception_ptr>(*rejected));
+    try {
+        std::rethrow_exception(std::get<std::exception_ptr>(*rejected));
+    } catch (const StripeApiException& error) {
+        EXPECT_EQ(error.payload().http_status, 402);
+        EXPECT_EQ(error.payload().request_id, "req_payment");
+    }
     EXPECT_THROW(client.prices().update_async("price_test", { .active = false }).result(),
                  StripeApiException);
     http.set_exception(std::make_exception_ptr(std::runtime_error("Offline")));
