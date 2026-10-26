@@ -83,6 +83,13 @@ TEST_F(CatalogTest, ProductCreateEncodesFieldsAndOptions) {
     EXPECT_EQ(sent.options.timeout, options.timeout);
 }
 
+TEST_F(CatalogTest, ProductCreateOmitsEmptyDescription) {
+    http.set_response({ .status_code = 200, .body = product_json });
+    client.products().create_async({ .name = "Standard" }).result();
+    const auto sent = http.get_recorded_requests().at(0);
+    EXPECT_EQ(sent.body.find("description="), std::string::npos);
+}
+
 TEST_F(CatalogTest, ProductUpdateDistinguishesUnsetEmptyAndFalse) {
     http.set_response({ .status_code = 200, .body = product_json });
     UpdateProductRequest request;

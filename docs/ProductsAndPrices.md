@@ -59,6 +59,7 @@ Set `recurring_interval_count` to charge every several intervals, such as
 three months; one-time prices require a count of one.
 
 The caller-assigned product ID is optional. If you omit it, Stripe assigns one.
+The description is optional too; leave it empty to omit it from the request.
 Choose IDs, lookup keys, and idempotency keys from stable identifiers in your
 application, not a new random value on each retry. The values above assume one
 offering and pricing version; use distinct values for other offerings or versions.

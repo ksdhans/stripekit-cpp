@@ -173,7 +173,7 @@ std::string product_body(const CreateProductRequest& request) {
     std::string body;
     if (!request.id.empty()) append_form_value(body, "id", request.id);
     append_form_value(body, "name", request.name);
-    append_form_value(body, "description", request.description);
+    if (!request.description.empty()) append_form_value(body, "description", request.description);
     append_form_value(body, "active", request.active ? "true" : "false");
     append_metadata(body, request.metadata);
     return body;
