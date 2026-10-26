@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.3.1 2026-10-26
+
 - Omit empty product descriptions when creating products
 - Fixed the billing portal sandbox tests failing in a new sandbox that has no
   default portal configuration
