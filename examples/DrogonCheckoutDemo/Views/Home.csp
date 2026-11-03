@@ -50,6 +50,11 @@ auto data = @@.get<stripekit::examples::CheckoutDemoViewData>("data");
         table { width: 100%; border-collapse: collapse; }
         th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #ddd4c7; vertical-align: top; }
         th { color: #5c6871; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
+        .events { overflow-x: auto; }
+        summary { cursor: pointer; font-weight: 700; }
+        .event-details dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; }
+        .event-details dd { margin: 0; overflow-wrap: anywhere; }
+        .event-details pre { max-height: 360px; max-width: 100%; overflow: auto; background: #eee5d8; padding: 12px; }
         @media (max-width: 820px) { .layout, .grid { grid-template-columns: 1fr; } main { padding-top: 24px; } }
     </style>
 </head>
@@ -156,10 +161,32 @@ auto data = @@.get<stripekit::examples::CheckoutDemoViewData>("data");
             <tbody>
             <%c++ for(auto iter = data.events.rbegin(); iter != data.events.rend(); ++iter) { %>
                 <tr>
-                    <td>{% iter->id %}</td>
-                    <td>{% iter->type %}</td>
-                    <td>{% iter->api_version %}</td>
+                    <td>{% drogon::HttpViewData::htmlTranslate(iter->id) %}</td>
+                    <td>{% drogon::HttpViewData::htmlTranslate(iter->type) %}</td>
+                    <td>{% drogon::HttpViewData::htmlTranslate(iter->api_version) %}</td>
                     <td><%c++ $$ << (iter->livemode ? "live" : "test"); %></td>
+                </tr>
+                <tr>
+                    <td colspan="4">
+                        <details class="event-details">
+                            <summary>Details</summary>
+                            <p class="muted">Event snapshot, not necessarily the current billing state.</p>
+                            <%c++ if(!iter->details.empty()) { %>
+                            <dl>
+                                <%c++ for(const auto& [label, value] : iter->details) { %>
+                                <dt>{% drogon::HttpViewData::htmlTranslate(label) %}</dt>
+                                <dd>{% drogon::HttpViewData::htmlTranslate(value) %}</dd>
+                                <%c++ } %>
+                            </dl>
+                            <%c++ } else { %>
+                            <p>No subscription or payment summary fields in this event.</p>
+                            <%c++ } %>
+                            <details>
+                                <summary>View event JSON</summary>
+                                <pre>{% drogon::HttpViewData::htmlTranslate(iter->json) %}</pre>
+                            </details>
+                        </details>
+                    </td>
                 </tr>
             <%c++ } %>
             </tbody>

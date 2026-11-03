@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace stripekit::examples {
@@ -21,6 +22,8 @@ struct EventRecord {
     std::string type;
     std::string api_version;
     bool livemode = false;
+    std::vector<std::pair<std::string, std::string>> details;
+    std::string json;
 };
 
 /** Values rendered by the checkout demo home page template. */

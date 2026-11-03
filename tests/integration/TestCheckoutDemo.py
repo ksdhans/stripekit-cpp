@@ -2,10 +2,12 @@
 
 import concurrent.futures
 import hashlib
+import html
 import hmac
 import http.client
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -149,19 +151,58 @@ def main():
                 page = follow_home(
                     port, post_form(port, "/setup", api_key="", webhook_secret=""), "Setup saved.")
                 assert "Secret key and webhook signing secret are configured." in page
-                payload = json.dumps({"id": "evt_demo_test", "type": "invoice.paid",
-                                      "data": {"object": {}}, "livemode": False})
-                timestamp = str(int(time.time()))
-                signature = hmac.new(b"whsec_test_listener",
-                                     f"{timestamp}.{payload}".encode(),
-                                     hashlib.sha256).hexdigest()
-                headers = {"Content-Type": "application/json",
-                           "Stripe-Signature": f"t={timestamp},v1={signature}"}
-                for _ in range(2):
-                    assert request(port, "POST", "/webhook", payload, headers)[0] == 200
-                assert request(port, "GET", "/")[2].count("evt_demo_test") == 1
-                headers["Stripe-Signature"] = f"t={timestamp},v1=bad"
-                assert request(port, "POST", "/webhook", payload, headers)[0] == 400
+                def deliver(identity, kind, value, valid=True):
+                    """Send one signed event without making Stripe API calls."""
+                    event = {"id": identity, "type": kind, "livemode": False,
+                             "data": {"object": value}}
+                    payload = json.dumps(event)
+                    timestamp = str(int(time.time()))
+                    signature = hmac.new(b"whsec_test_listener",
+                                         f"{timestamp}.{payload}".encode(),
+                                         hashlib.sha256).hexdigest() if valid else "bad"
+                    headers = {"Content-Type": "application/json",
+                               "Stripe-Signature": f"t={timestamp},v1={signature}"}
+                    assert request(port, "POST", "/webhook", payload, headers)[0] == (
+                        200 if valid else 400)
+                    return event
+
+                invoice = {"id": "in_demo", "customer": {"id": "cus_demo"},
+                           "parent": {"subscription_details": {"subscription": "sub_demo"}},
+                           "status": "paid", "amount_paid": 0, "currency": "usd",
+                           "metadata": {"note": "</pre><script>alert('test')</script>"}}
+                event = deliver("evt_demo_test", "invoice.paid", invoice)
+                deliver("evt_demo_test", "invoice.paid", invoice)
+                page = request(port, "GET", "/")[2]
+                snapshots = re.findall(r"<pre>(.*?)</pre>", page, re.S)
+                assert len(snapshots) == 1
+                assert json.loads(html.unescape(snapshots[0])) == event
+                assert "\n" in snapshots[0] and "<script>" not in page
+                assert "<dt>Paid (smallest currency unit)</dt>" in page and "<dd>0</dd>" in page
+                assert "<dd>cus_demo</dd>" in page and "<dd>sub_demo</dd>" in page
+                assert "Event snapshot, not necessarily the current billing state." in page
+                assert '<details class="event-details">' in page and "<details open" not in page
+                assert "View event JSON" in page
+                trial = {"id": "sub_trial", "status": "trialing",
+                         "trial_start": 1798790400, "trial_end": 1800000000,
+                         "cancel_at_period_end": False}
+                deliver("evt_trial", "customer.subscription.created", trial)
+                deliver("evt_checkout", "checkout.session.completed",
+                        {"id": "cs_demo", "subscription": {"id": "sub_trial"},
+                         "payment_status": "no_payment_required", "amount_total": 0})
+                deliver("evt_empty", "customer.created", {})
+                deliver("evt_rejected", "invoice.paid", invoice, valid=False)
+                page = request(port, "GET", "/")[2]
+                assert "<dd>trialing</dd>" in page
+                assert "<dt>Trial start</dt>" in page and "<dd>2027-01-01 08:00:00 UTC</dd>" in page
+                assert "<dt>Trial end</dt>" in page and "<dd>2027-01-15 08:00:00 UTC</dd>" in page
+                assert "<dd>false</dd>" in page and "<dd>no_payment_required</dd>" in page
+                assert "<dd>sub_trial</dd>" in page and "evt_rejected" not in page
+                assert "No subscription or payment summary fields in this event." in page
+                for index in range(20):
+                    deliver(f"evt_history_{index}", "customer.created", {})
+                page = request(port, "GET", "/")[2]
+                assert page.count('<details class="event-details">') == 20
+                assert "evt_demo_test" not in page and "evt_history_19" in page
                 assert "does not confirm a subscription or payment" in request(
                     port, "GET", "/return?session_id=cs_example")[2]
                 print("PASS: setup, trial controls, responsive listener, and verified webhooks")

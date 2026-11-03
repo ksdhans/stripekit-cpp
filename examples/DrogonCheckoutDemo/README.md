@@ -86,6 +86,13 @@ After Checkout, Stripe returns you to the demo. Go back to the home page and
 refresh it to see the verified webhook deliveries. Use the Stripe sandbox
 Dashboard to view the resulting subscription and invoices.
 
+Click **Details** beneath an event to see the subscription, payment, and trial
+fields present in that event. Amounts are shown in the currency's smallest unit;
+trial dates are shown in UTC. **View event JSON** expands the formatted
+payload. These are event snapshots, not necessarily the current billing state.
+Only the latest 20 verified events are kept. Payloads can include customer
+details, so take care when sharing screenshots or copied JSON.
+
 ## Try A Card-Required Trial
 
 1. Configure the key, pricing, and webhook forwarding as described above.

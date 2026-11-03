@@ -18,10 +18,12 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -234,6 +236,68 @@ std::shared_ptr<stripekit::StripeClient> make_client(std::string api_key) {
     auto response = ::drogon::HttpResponse::newHttpViewResponse("ErrorPage", view_data);
     response->setStatusCode(::drogon::k500InternalServerError);
     return response;
+}
+
+/** Formats a Stripe timestamp as a UTC date and time. */
+std::string format_event_date(std::int64_t unix_seconds) {
+    const auto time = static_cast<std::time_t>(unix_seconds);
+    std::tm utc{};
+    if (::gmtime_r(&time, &utc) == nullptr)
+        throw std::runtime_error("Could not format the webhook date");
+    std::ostringstream text;
+    text << std::put_time(&utc, "%Y-%m-%d %H:%M:%S UTC");
+    return text.str();
+}
+
+/** Summarizes fields present in a verified event snapshot, without fetching current billing state. */
+EventRecord make_event_record(const stripekit::webhooks::Event& event) {
+    Json::Value payload;
+    Json::CharReaderBuilder reader;
+    std::istringstream input(event.payload_json);
+    std::string errors;
+    if (!Json::parseFromStream(reader, input, &payload, &errors))
+        throw std::runtime_error("Could not parse verified event JSON: " + errors);
+
+    EventRecord record{ .id = event.id, .type = event.type,
+                        .api_version = event.api_version, .livemode = event.livemode };
+    const auto& object = payload["data"]["object"];
+    if (object.isObject()) {
+        for (const auto& [field, label] :
+             { std::pair{ "id", "Object ID" }, { "customer", "Customer" },
+               { "subscription", "Subscription" }, { "payment_intent", "Payment intent" },
+               { "status", "Status" }, { "payment_status", "Payment status" },
+               { "trial_start", "Trial start" },
+               { "trial_end", "Trial end" },
+               { "cancel_at_period_end", "Cancel at period end" },
+               { "amount", "Amount (smallest currency unit)" },
+               { "amount_total", "Total (smallest currency unit)" },
+               { "amount_due", "Due (smallest currency unit)" },
+               { "amount_paid", "Paid (smallest currency unit)" },
+               { "amount_remaining", "Remaining (smallest currency unit)" },
+               { "currency", "Currency" } }) {
+            const auto& value = object[field];
+            if ((std::string_view(field) == "trial_start" ||
+                 std::string_view(field) == "trial_end") && value.isInt64())
+                record.details.emplace_back(label, format_event_date(value.asInt64()));
+            else if (value.isString() || value.isNumeric() || value.isBool())
+                record.details.emplace_back(label, value.asString());
+            else if (value.isObject() && value["id"].isString())
+                record.details.emplace_back(label, value["id"].asString());
+        }
+        const auto& parent = object["parent"];
+        if (object["subscription"].isNull() && parent.isObject() &&
+            parent["subscription_details"].isObject()) {
+            const auto& subscription = parent["subscription_details"]["subscription"];
+            if (subscription.isString())
+                record.details.emplace_back("Subscription", subscription.asString());
+            else if (subscription.isObject() && subscription["id"].isString())
+                record.details.emplace_back("Subscription", subscription["id"].asString());
+        }
+    }
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "  ";
+    record.json = Json::writeString(writer, payload);
+    return record;
 }
 
 } // namespace
@@ -485,12 +549,10 @@ int main(int argc, char** argv) {
                     // and claims the event id in the de-duplication store.
                     [state](const stripekit::webhooks::Event& event)
                         -> stripekit::Task<stripekit::webhooks::ProcessResult> {
+                        auto record = make_event_record(event);
                         {
                             std::lock_guard<std::mutex> lock(state->mutex);
-                            state->events.push_back(EventRecord{ .id = event.id,
-                                                                 .type = event.type,
-                                                                 .api_version = event.api_version,
-                                                                 .livemode = event.livemode });
+                            state->events.push_back(std::move(record));
                             if (state->events.size() > 20) {
                                 state->events.erase(
                                     state->events.begin(),
