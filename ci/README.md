@@ -7,11 +7,24 @@ All pipeline jobs use Ubuntu 26.04.
 ## C++ Formatting
 
 The `verify:format` job uses clang-format 21 and the repository's `.clang-format`
-configuration. To run the same check locally from the repository root:
+configuration. Before committing, run this from the repository root:
 
 ```sh
-find include src tests examples -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0 | xargs -0 clang-format-21 --dry-run --Werror
+./format.sh
 ```
+
+To fix formatting in place, then check it again:
+
+```sh
+./format.sh --fix
+./format.sh --check
+```
+
+The script checks all C++ headers and source files under `include`, `src`,
+`tests`, and `examples`, just like CI. It exits with a nonzero status if formatting
+needs fixing or the formatter is unavailable. `--fix` updates working-tree files;
+review and stage those changes before committing. You can also run the script
+by its full path from another directory.
 
 On Ubuntu 26.04, install it with `sudo apt install clang-format-21`.
 Configure your editor to use `clang-format-21` as well.
@@ -19,7 +32,6 @@ The VS Code workspace settings use `/usr/bin/clang-format-21` with Microsoft's
 C/C++ extension and format C++ files on save. If the executable is installed
 elsewhere, update `C_Cpp.clang_format_path` in the workspace settings.
 
-To apply the formatting, replace `--dry-run --Werror` with `-i`.
 Use a trailing comma after the last member of a multiline initializer list to
 keep its closing brace on a separate line.
 

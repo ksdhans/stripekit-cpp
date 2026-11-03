@@ -36,7 +36,7 @@ verify:format:
     - apt-get update
     - apt-get install -y --no-install-recommends clang-format-21
   script:
-    - find include src tests examples -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0 | xargs -0 clang-format-21 --dry-run --Werror
+    - bash format.sh --check
 
 build:cmake:
   stage: build
