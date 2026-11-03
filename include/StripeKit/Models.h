@@ -247,8 +247,10 @@ struct Subscription {
 /**
  * A Stripe invoice: the bill for one subscription period.
  *
- * A paid invoice is the signal that a period has been paid for, and is
- * normally what access should be granted from. An open invoice that still has
+ * A paid invoice has no outstanding balance; it does not prove that a card was
+ * charged. A trial can start with a zero-value paid invoice. Decide access
+ * using current subscription state, trial dates, and your application's policy.
+ * An open invoice that still has
  * an amount remaining needs the customer's attention; send them to
  * `hosted_invoice_url` to pay it or to complete extra authentication such as
  * 3D Secure.

@@ -47,6 +47,9 @@ namespace {
 constexpr const char* forwarded_event_types = "customer.created,"
                                               "customer.subscription.created,"
                                               "customer.subscription.updated,"
+                                              "customer.subscription.deleted,"
+                                              "customer.subscription.trial_will_end,"
+                                              "checkout.session.expired,"
                                               "invoice.paid,"
                                               "invoice.payment_failed,"
                                               "invoice.payment_action_required,"
@@ -865,6 +868,37 @@ Json::Value json_path(const Json::Value& root, std::string_view dotted_path) {
 
 std::string sandbox_email(const SandboxEnvironment& environment, std::string_view label) {
     return "stripekit+" + std::string(label) + "-" + environment.run_id() + "@example.com";
+}
+
+std::string create_sandbox_clock(SandboxEnvironment& environment, std::int64_t frozen_time) {
+    return environment.stripe_api()
+        .require_post("/v1/test_helpers/test_clocks",
+                      { { "frozen_time", std::to_string(frozen_time) },
+                        { "name", "StripeKit " + environment.run_id() } })
+        .id();
+}
+
+void advance_sandbox_clock(SandboxEnvironment& environment,
+                           const std::string& clock_id,
+                           std::int64_t frozen_time) {
+    const auto path = "/v1/test_helpers/test_clocks/" + clock_id;
+    environment.stripe_api().require_post(path + "/advance",
+                                          { { "frozen_time", std::to_string(frozen_time) } });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto state = environment.stripe_api().get(path);
+        if (!state.ok()) throw std::runtime_error(state.describe());
+        const auto status = state.body["status"].asString();
+        if (status == "ready") {
+            if (state.body["frozen_time"].asInt64() != frozen_time)
+                throw std::runtime_error("Stripe test clock reached the wrong time");
+            return;
+        }
+        if (status != "advancing")
+            throw std::runtime_error("Unexpected test clock status: " + status);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    throw std::runtime_error("Stripe test clock did not finish advancing");
 }
 
 std::string create_customer_with_card(SandboxEnvironment& environment,

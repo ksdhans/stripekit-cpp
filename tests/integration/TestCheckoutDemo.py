@@ -1,4 +1,4 @@
-"""Check demo setup and listener behavior without Stripe credentials or network calls."""
+"""Check demo setup, trial controls, and webhooks without contacting Stripe."""
 
 import concurrent.futures
 import hashlib
@@ -26,9 +26,9 @@ def request(port, method, path, body="", headers=None, timeout=2):
         connection.close()
 
 
-def save_setup(port, **values):
-    """Submit setup values to the demo."""
-    return request(port, "POST", "/setup", urllib.parse.urlencode(values),
+def post_form(port, path, **values):
+    """Submit form values to the demo."""
+    return request(port, "POST", path, urllib.parse.urlencode(values),
                    {"Content-Type": "application/x-www-form-urlencoded"})
 
 
@@ -43,7 +43,7 @@ def follow_home(port, response, notice):
 
 
 def wait_for_file(path, server):
-    """Wait briefly for the stub to report progress, checking the server is alive."""
+    """Wait briefly for the CLI stub, checking that the demo is still alive."""
     deadline = time.monotonic() + 5
     while not path.exists():
         assert server.poll() is None, "Demo exited unexpectedly"
@@ -53,7 +53,7 @@ def wait_for_file(path, server):
 
 
 def main():
-    """Exercise setup, delayed listener startup, and credential preservation."""
+    """Exercise setup, trial controls, delayed listener startup, and signed webhooks."""
     executable = Path(sys.argv[1]).resolve()
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
@@ -98,17 +98,16 @@ def main():
                         status, _, home = request(port, "GET", "/")
                         assert status == 200
                         assert 'href="https://docs.stripe.com/testing"' in home
-                        assert "4000 0027 6000 3184" in home
-                        assert "<li>Success: <code>4242 4242 4242 4242</code></li>" in home
-                        assert "<li>Decline: <code>4000 0000 0000 0002</code></li>" in home
-                        assert "<li>Always authenticate (3D Secure): <code>4000 0027 6000 3184</code></li>" in home
+                        for card in ("4242 4242 4242 4242", "4000 0000 0000 0002",
+                                     "4000 0027 6000 3184"):
+                            assert card in home
                         break
                     except ConnectionRefusedError:
                         if time.monotonic() >= deadline:
                             raise TimeoutError("Demo did not start")
                         time.sleep(0.02)
 
-                # Hold the stub until requests on the same event loop have completed.
+                # Hold the listener while checking responsiveness on the same event loop.
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     startup = executor.submit(request, port, "POST", "/stripe-cli/start",
                                               timeout=8)
@@ -120,20 +119,25 @@ def main():
                         follow_home(port, request(port, "POST", "/stripe-cli/start"),
                                     "already in progress")
                         page = follow_home(
-                            port, save_setup(port, api_key="sk_test_demo",
-                                             product_name="Saved membership", unit_amount="1500"),
+                            port, post_form(port, "/setup", api_key="sk_test_demo",
+                                            product_name="Saved membership", unit_amount="1500"),
                             "Setup saved.")
                         assert "Saved membership" in page
                         assert 'value="sk_test_' not in page
+                        assert 'name="trial" value="0">Continue to Checkout' in page
+                        assert 'name="trial" value="14">Start a 14-day free trial' in page
+                        assert "A card is required" in page
+                        for values in ({"email": "trial@example.com", "trial": "invalid"},
+                                       {"email": "", "trial": "14"}):
+                            assert post_form(port, "/checkout", **values)[0] == 400
 
                         for amount in ("0", "-1", "bad", "12x", "9999999999999999999999"):
-                            status, _, page = save_setup(
-                                port, product_name="Must not be saved", unit_amount=amount)
+                            status, _, page = post_form(
+                                port, "/setup", product_name="Must not be saved", unit_amount=amount)
                             assert status == 400 and "positive integer" in page
-                            assert "Saved membership" in page
-                            assert "Must not be saved" not in page
+                            assert "Saved membership" in page and "Must not be saved" not in page
                         for key in ("sk_live_rejected", "invalid"):
-                            assert save_setup(port, api_key=key)[0] == 400
+                            assert post_form(port, "/setup", api_key=key)[0] == 400
                     finally:
                         (root / "Release").touch()
                     page = follow_home(port, startup.result(),
@@ -142,9 +146,8 @@ def main():
                 wait_for_file(root / "Finished", server)
                 assert (root / "Calls").read_text() == "listen\n"
 
-                # Blank credential fields must preserve the listener's signing secret.
-                page = follow_home(port, save_setup(port, api_key="", webhook_secret=""),
-                                   "Setup saved.")
+                page = follow_home(
+                    port, post_form(port, "/setup", api_key="", webhook_secret=""), "Setup saved.")
                 assert "Secret key and webhook signing secret are configured." in page
                 payload = json.dumps({"id": "evt_demo_test", "type": "invoice.paid",
                                       "data": {"object": {}}, "livemode": False})
@@ -152,14 +155,16 @@ def main():
                 signature = hmac.new(b"whsec_test_listener",
                                      f"{timestamp}.{payload}".encode(),
                                      hashlib.sha256).hexdigest()
-                status, _, _ = request(
-                    port, "POST", "/webhook", payload,
-                    {"Content-Type": "application/json",
-                     "Stripe-Signature": f"t={timestamp},v1={signature}"})
-                assert status == 200, status
-                assert "evt_demo_test" in request(port, "GET", "/")[2]
-                print("PASS: responsive setup, atomic validation, redirects, concurrent listener "
-                      "startup, and saved credentials")
+                headers = {"Content-Type": "application/json",
+                           "Stripe-Signature": f"t={timestamp},v1={signature}"}
+                for _ in range(2):
+                    assert request(port, "POST", "/webhook", payload, headers)[0] == 200
+                assert request(port, "GET", "/")[2].count("evt_demo_test") == 1
+                headers["Stripe-Signature"] = f"t={timestamp},v1=bad"
+                assert request(port, "POST", "/webhook", payload, headers)[0] == 400
+                assert "does not confirm a subscription or payment" in request(
+                    port, "GET", "/return?session_id=cs_example")[2]
+                print("PASS: setup, trial controls, responsive listener, and verified webhooks")
             finally:
                 (root / "Release").touch()
                 server.terminate()

@@ -225,31 +225,14 @@ protected:
 
     /** Freezes billing on 1 January 2026 so prorations have deterministic amounts. */
     std::string create_clock() {
-        const auto clock = environment->stripe_api().require_post(
-            "/v1/test_helpers/test_clocks",
-            { { "frozen_time", "1767225600" }, { "name", "StripeKit " + environment->run_id() } });
-        clocks.push_back(clock.id());
-        return clock.id();
+        const auto clock = create_sandbox_clock(*environment, 1767225600);
+        clocks.push_back(clock);
+        return clock;
     }
 
     /** Advances to 16 January and waits for Stripe to finish processing the test clock. */
     void advance_clock(const std::string& clock) {
-        const auto path = "/v1/test_helpers/test_clocks/" + clock;
-        environment->stripe_api().require_post(path + "/advance",
-                                               { { "frozen_time", "1768521600" } });
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-        while (std::chrono::steady_clock::now() < deadline) {
-            const auto state = get_object(path);
-            if (state["status"].asString() == "ready") {
-                EXPECT_EQ(state["frozen_time"].asInt64(), 1768521600);
-                return;
-            }
-            if (state["status"].asString() != "advancing")
-                throw std::runtime_error("Unexpected test clock status: " +
-                                         state["status"].asString());
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
-        throw std::runtime_error("Stripe test clock did not finish advancing");
+        advance_sandbox_clock(*environment, clock, 1768521600);
     }
 
     SandboxEnvironment* environment = nullptr;

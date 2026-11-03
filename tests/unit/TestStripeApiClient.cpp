@@ -202,6 +202,12 @@ TEST_F(StripeApiClientTest, CreateCheckoutSessionAsyncSuccess) {
         EXPECT_NE(req.body.find("cancel_url=https%3A%2F%2Fexample.com%2Fcancel"),
                   std::string::npos);
         EXPECT_NE(req.body.find("metadata%5Bplan%5D=starter"), std::string::npos);
+        EXPECT_EQ(req.body.find("trial_period_days"), std::string::npos);
+        EXPECT_EQ(req.body.find("subscription_data"), std::string::npos);
+        EXPECT_EQ(req.body.find("payment_method_collection"), std::string::npos);
+        EXPECT_EQ(req.body.find("payment_method_types"), std::string::npos);
+        EXPECT_EQ(req.body.find("customer_email"), std::string::npos);
+        EXPECT_EQ(req.body.find("expires_at"), std::string::npos);
 
         return HttpResponse{ .status_code = 200, .headers = {}, .body = R"({
                 "id": "cs_test_session_1",
@@ -518,6 +524,74 @@ TEST_F(StripeApiClientTest, RejectConflictingCheckoutTrialSettings) {
     request.trial_period_days = 731;
     EXPECT_THROW(client->checkout().sessions().create_async(request).result(),
                  ConfigurationException);
+    request.trial_period_days = -1;
+    EXPECT_THROW(client->checkout().sessions().create_async(request).result(),
+                 ConfigurationException);
+    EXPECT_TRUE(http_client.get_recorded_requests().empty());
+}
+
+TEST_F(StripeApiClientTest, TrialBoundariesWorkForCallbacksAndCoroutines) {
+    http_client.set_response({ .status_code = 200, .body = R"({"id":"cs_boundary"})" });
+    CreateCheckoutSessionRequest request;
+    request.customer_id = "cus_existing";
+    request.price_id = "price_monthly";
+    for (const auto days : { 1, 730 }) {
+        request.trial_period_days = days;
+        const auto session = client->checkout().sessions().create_async(request).result();
+        EXPECT_EQ(session.id, "cs_boundary");
+        int calls = 0;
+        client->checkout().sessions().create(
+            request, {}, [&](CallbackResult<CheckoutSession> result) {
+                ++calls;
+                EXPECT_TRUE(std::holds_alternative<CheckoutSession>(result));
+            });
+        EXPECT_EQ(calls, 1);
+        for (const auto& sent : http_client.get_recorded_requests()) {
+            EXPECT_NE(sent.body.find("trial_period_days%5D=" + std::to_string(days)),
+                      std::string::npos);
+            EXPECT_NE(sent.body.find("customer=cus_existing"), std::string::npos);
+            EXPECT_EQ(sent.body.find("customer_email"), std::string::npos);
+        }
+        http_client.clear_recorded_requests();
+    }
+    request.customer_id.clear();
+    request.trial_period_days = 14;
+    client->checkout().sessions().create_async(request).result();
+    const auto unprefilled = http_client.get_recorded_requests().front();
+    EXPECT_EQ(unprefilled.body.find("customer="), std::string::npos);
+    EXPECT_EQ(unprefilled.body.find("customer_email="), std::string::npos);
+    http_client.clear_recorded_requests();
+    request.trial_period_days = -1;
+    int calls = 0;
+    client->checkout().sessions().create(
+        request, {}, [&](CallbackResult<CheckoutSession> result) {
+            ++calls;
+            EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+            EXPECT_THROW(std::rethrow_exception(std::get<std::exception_ptr>(result)),
+                         ConfigurationException);
+        });
+    EXPECT_EQ(calls, 1);
+    EXPECT_TRUE(http_client.get_recorded_requests().empty());
+}
+
+TEST_F(StripeApiClientTest, RetrieveCheckoutPreservesReferencesAndExpiryStates) {
+    for (const auto* status : { "open", "complete", "expired" }) {
+        http_client.set_response(
+            { .status_code = 200,
+              .body = std::string(R"({"id":"cs_saved","status":")") + status +
+                      R"(","customer":{"id":"cus_saved"},"subscription":{"id":"sub_saved"},
+                         "expires_at":1800000000})" });
+        const auto session = client->checkout().sessions().retrieve_async("cs_saved").result();
+        EXPECT_EQ(session.status, status);
+        EXPECT_EQ(session.customer_id, "cus_saved");
+        EXPECT_EQ(session.subscription_id, "sub_saved");
+        EXPECT_EQ(session.expires_at_unix, 1800000000);
+    }
+    http_client.set_response(
+        { .status_code = 404,
+          .body = R"({"error":{"type":"invalid_request_error","message":"No such session"}})" });
+    EXPECT_THROW(client->checkout().sessions().retrieve_async("cs_missing").result(),
+                 StripeApiException);
 }
 
 TEST_F(StripeApiClientTest, CreateBillingPortalSessionCallbackSuccess) {

@@ -1,36 +1,36 @@
 # Drogon Checkout Demo
 
-This example is a minimal hosted Checkout app built with Drogon and StripeKit.
-It serves plain HTML/CSS through Drogon CSP templates, creates a test-mode
-customer, creates a subscription-mode Checkout Session with inline demo product
-data, redirects to Stripe-hosted Checkout, and shows recent verified webhook
-deliveries.
+A small web app demonstrating Stripe-hosted subscription Checkout, with or
+without a card-required 14-day trial. It shows verified webhook deliveries
+and redirects back to a simple return page after Checkout.
 
-## Build
+Use Stripe test-mode keys and test cards only. The demo rejects live keys.
+
+## Build And Run
 
 ```bash
 cmake -S . -B build -DSTRIPEKIT_BUILD_EXAMPLES=ON
 cmake --build build --target stripekit_drogon_checkout_demo
-```
-
-Standalone example builds enable Drogon's `drogon_ctl` target so CI can compile
-the CSP templates from the fetched Drogon build.
-
-Run the demo:
-
-```bash
 ./build/bin/stripekit_drogon_checkout_demo
 ```
 
-Or load local values from `.env.live` without leaving them in your shell:
+Open `http://127.0.0.1:4242` and enter your `sk_test_...` secret key.
+
+The demo provides a monthly product and price by default, so you do not need to
+create them in Stripe first. To use your own pricing, enter an existing recurring
+`price_...` ID in the setup form.
+
+### Optional Environment Settings
+
+You can preconfigure the demo with a git-ignored `.env.live` file at the
+repository root. Despite the filename, use test-mode values:
 
 ```bash
-# .env.live
 STRIPE_SECRET_KEY=sk_test_your_secret_key
-# Optional: preconfigure if you do not want the app to start Stripe CLI.
-# STRIPE_WEBHOOK_SECRET=whsec_your_cli_secret
-# Optional: use a dashboard-managed recurring Price instead of inline demo data.
-# STRIPE_PRICE_ID=price_your_recurring_price_id
+# Optional: an existing recurring Price.
+STRIPE_PRICE_ID=price_your_recurring_price_id
+# Optional: the signing secret from your local Stripe CLI listener.
+STRIPE_WEBHOOK_SECRET=whsec_your_cli_secret
 ```
 
 Restrict the file so only your user can read it:
@@ -42,7 +42,7 @@ chown "$(id -un):$(id -gn)" .env.live
 stat -c '%A %U:%G %n' .env.live
 ```
 
-The expected permissions are `-rw-------`.
+The expected permissions are `-rw-------`. Load the settings in a subshell:
 
 ```bash
 (
@@ -53,39 +53,25 @@ The expected permissions are `-rw-------`.
 )
 ```
 
-Open `http://127.0.0.1:4242`, enter your `sk_test_...` secret key, then set up
-webhook forwarding. The app rejects `sk_live_...` keys. By default, Checkout
-uses inline demo product data, so you do not need to create a Product or Price
-in Stripe first. You can still enter an existing recurring `price_...` id if you
-want to test a dashboard-managed Price.
+## Receive Webhooks
 
-## Event Loop Use
-
-This example runs StripeKit requests on Drogon's framework event loop by using
-`EventLoopOptions::drogon_framework()` when creating the Stripe client. The
-checkout handler is a Drogon coroutine, so it can `co_await` `create_async()`
-without blocking the server thread. Standalone CLI examples use StripeKit's
-default own event loop so they can call `create_async().result()` without
-starting a Drogon app.
-
-## Webhooks
-
-The setup page checks whether the Stripe CLI is installed. Click **Start Stripe
-CLI listener** to run this local listener:
+Install and log in to the Stripe CLI, then click **Start Stripe CLI listener**.
+The demo starts this listener and fills in its signing secret:
 
 ```bash
 stripe listen --all-snapshot --latest --forward-to http://127.0.0.1:4242/webhook
 ```
 
-The app reads the `whsec_...` signing secret from `stripe-listener.log` and keeps
-it in memory. If Stripe CLI is not logged in, or if the listener does not print a
-secret quickly enough, the setup page shows the full listener log path. Open that
-file, copy the `whsec_...` value, and paste it into the setup form.
+You can also run the command yourself and paste its `whsec_...` value into the
+setup form. If automatic setup fails, the page shows the listener log path.
+Open that file for the error message or signing secret.
 
 ## Try Checkout
 
-Use the mock sales page to enter an email address and start Checkout. Pay with a
-Stripe test card with any future expiry and a valid-format CVC:
+Enter an email address and click **Continue to Checkout** to start a subscription
+without a trial. Stripe collects payment on its hosted page.
+
+Use a test card with any future expiry and a valid-format CVC:
 
 | Scenario | Test card number |
 | --- | --- |
@@ -93,35 +79,36 @@ Stripe test card with any future expiry and a valid-format CVC:
 | Declined payment | `4000 0000 0000 0002` |
 | Always authenticate (3D Secure) | `4000 0027 6000 3184` |
 
-See [Stripe's testing documentation](https://docs.stripe.com/testing) for the
-complete list of test cards and their expected behavior. Never use real card
-details in this demo.
+See [Stripe's test cards](https://docs.stripe.com/testing) for other options.
+Never use real card details.
 
-Stripe redirects back to `/return?session_id=...` after the hosted checkout
-page completes.
+After Checkout, Stripe returns you to the demo. Go back to the home page and
+refresh it to see the verified webhook deliveries. Use the Stripe sandbox
+Dashboard to view the resulting subscription and invoices.
 
-The return page is only user feedback. Treat verified webhook events, especially
-`checkout.session.completed`, `invoice.paid`, and `invoice.payment_failed`, as
-the source of truth for fulfillment and entitlement changes.
+## Try A Card-Required Trial
 
-## Manually Check 3D Secure
+1. Configure the key, pricing, and webhook forwarding as described above.
+   Enter an email address and click **Start a 14-day free trial**.
+2. Complete Checkout with `4242 4242 4242 4242`. Stripe requires a card and shows
+   no charge today, the recurring price, and the first billing date.
+3. Return to the demo's home page and refresh it to see the verified webhooks.
+   In the Stripe sandbox Dashboard, open the new subscription to see its
+   `trialing` status and trial end. A zero-value paid invoice is normal at the
+   start of a trial; it does not mean a card was charged.
+4. To end the trial before billing starts, cancel the subscription in the
+   Stripe sandbox Dashboard.
 
-1. Configure a test-mode key and webhook forwarding as described above.
-2. Start a new Checkout session and enter the **always authenticate** card,
-   `4000 0027 6000 3184`, with any future expiry and a valid-format CVC.
-3. Submit payment and choose the successful authentication option on Stripe's
-   test challenge screen.
-4. Confirm that Checkout completes, a verified `invoice.paid` event appears,
-   and the resulting subscription is `active` in the Stripe sandbox Dashboard.
-5. Start a fresh Checkout session and choose the failed authentication option.
-   Repeat with another fresh session and close or cancel the challenge.
-   Confirm that these unpaid attempts do not grant access in your application.
+Unless canceled, monthly billing starts after the 14-day trial. A saved card
+can still be declined or require authentication when billing begins.
 
-Closing a challenge does not necessarily cancel the subscription immediately
-or produce a particular failure event. Check the invoice and subscription in
-the Dashboard; do not treat reaching a return page as proof of payment.
-The demo displays events but does not grant application access.
+The trial request uses `trial_period_days = 14`,
+`payment_method_collection = "always"`, and `payment_method_types = {"card"}`.
+Both buttons create a test customer from the email entered, then create a
+subscription-mode Checkout Session.
 
-This checks authentication during initial Checkout, not recovery after an
-existing subscription's price changes. For that separate procedure, see
-[manual subscription payment recovery](../../tests/sandbox/README.md#manually-check-3d-secure-payment-recovery).
+This example demonstrates card-required trials, not cardless trials.
+
+The demo runs locally and keeps its settings and webhook history only until
+it exits. Each submission starts a new Checkout flow. Tenant access and trial
+eligibility remain the application's responsibility.

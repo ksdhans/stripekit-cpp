@@ -24,7 +24,8 @@ auto data = @@.get<stripekit::examples::ReturnPageViewData>("data");
 <main>
     <h1>Returned From Checkout</h1>
     <p>Checkout redirected back with session id <code>{% data.session_id %}</code>.</p>
-    <p class="muted">This example records fulfillment signals from verified webhooks. Refresh the home page to see the event log.</p>
+    <p class="muted">This redirect does not confirm a subscription or payment.
+        Refresh the home page to see verified webhook deliveries.</p>
     <a class="button" href="/">View webhooks</a>
 </main>
 </body>

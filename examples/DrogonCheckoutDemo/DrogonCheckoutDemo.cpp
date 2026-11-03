@@ -211,10 +211,7 @@ stripekit::RequestOptions api_options(std::string idempotency_key = {}) {
 
 /** Generates a unique idempotency key with the supplied prefix. */
 std::string idempotency_key(std::string_view prefix) {
-    const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
-                         std::chrono::system_clock::now().time_since_epoch())
-                         .count();
-    return std::string(prefix) + "_" + std::to_string(now);
+    return std::string(prefix) + "_" + ::drogon::utils::getUuid();
 }
 
 /** Creates a short-lived Stripe client for requests handled by the Drogon app. */
@@ -233,7 +230,7 @@ std::shared_ptr<stripekit::StripeClient> make_client(std::string api_key) {
 ::drogon::HttpResponsePtr error_response(std::string_view title, const std::exception& error) {
     ::drogon::HttpViewData view_data;
     view_data.insert("title", std::string(title));
-    view_data.insert("message", std::string(error.what()));
+    view_data.insert("message", stripekit::redact_sensitive_text(error.what()));
     auto response = ::drogon::HttpResponse::newHttpViewResponse("ErrorPage", view_data);
     response->setStatusCode(::drogon::k500InternalServerError);
     return response;
@@ -252,6 +249,10 @@ int main(int argc, char** argv) {
         state->api_key = env_or("STRIPE_SECRET_KEY", "");
         state->price_id = env_or("STRIPE_PRICE_ID", "");
         state->webhook_secret = env_or("STRIPE_WEBHOOK_SECRET", "");
+    }
+    if (!state->api_key.empty() && !state->api_key.starts_with("sk_test_")) {
+        std::cerr << "This example requires a test-mode sk_test_ secret key.\n";
+        return 1;
     }
 
     // Handler to show the current setup, checkout form, and recent verified webhook events.
@@ -401,19 +402,22 @@ int main(int argc, char** argv) {
                     state, port, "Configure the secret key first.", ::drogon::k400BadRequest);
             }
 
-            const std::string email = parameter_or(request, "email");
-            auto client = make_client(api_key);
+            const auto email = parameter_or(request, "email");
+            const auto trial_choice = parameter_or(request, "trial", "0");
+            if (email.empty() || (trial_choice != "0" && trial_choice != "14")) {
+                co_return home_response(state, port, "Enter an email and choose paid Checkout or a 14-day trial.",
+                                        ::drogon::k400BadRequest);
+            }
             try {
-                // Create a test Customer first, then create a subscription-mode
-                // Checkout Session for that Customer and redirect to Stripe.
-                stripekit::CreateCustomerRequest customer_request = {
+                auto client = make_client(api_key);
+                const stripekit::CreateCustomerRequest customer_request{
                     .email = email, .name = "StripeKit demo customer"
                 };
                 const auto customer = co_await client->customers().create_async(
                     customer_request, api_options(idempotency_key("customer")));
 
                 const std::string domain = "http://127.0.0.1:" + std::to_string(port);
-                stripekit::CreateCheckoutSessionRequest session_request = {
+                stripekit::CreateCheckoutSessionRequest session_request{
                     .customer_id = customer.id,
                     .price_id = price_id,
                     .product_name = product_name,
@@ -425,6 +429,11 @@ int main(int argc, char** argv) {
                     .quantity = 1,
                     .metadata = { { "example", "drogon-checkout-demo" } }
                 };
+                if (trial_choice == "14") {
+                    session_request.trial_period_days = 14;
+                    session_request.payment_method_collection = "always";
+                    session_request.payment_method_types = { "card" };
+                }
                 const auto session = co_await client->checkout().sessions().create_async(
                     session_request, api_options(idempotency_key("checkout")));
 
@@ -453,8 +462,7 @@ int main(int argc, char** argv) {
     // Verifies webhook signatures, records fresh events, and acknowledges Stripe.
     ::drogon::app().registerHandler(
         "/webhook",
-        [state](const ::drogon::HttpRequestPtr& request,
-                std::function<void(const ::drogon::HttpResponsePtr&)>&& callback) {
+        [state](::drogon::HttpRequestPtr request) -> ::drogon::Task<::drogon::HttpResponsePtr> {
             std::string webhook_secret;
             {
                 std::lock_guard<std::mutex> lock(state->mutex);
@@ -464,12 +472,11 @@ int main(int argc, char** argv) {
             auto response = ::drogon::HttpResponse::newHttpResponse();
             if (webhook_secret.empty()) {
                 response->setStatusCode(::drogon::k400BadRequest);
-                callback(response);
-                return;
+                co_return response;
             }
 
             try {
-                auto task = stripekit::webhooks::process_event_once(
+                const auto result = co_await stripekit::webhooks::process_event_once(
                     request->body(),
                     request->getHeader("stripe-signature"),
                     webhook_secret,
@@ -493,17 +500,20 @@ int main(int argc, char** argv) {
                         }
                         co_return stripekit::webhooks::ProcessResult::Handled;
                     });
-                const auto result = task.result();
                 response->setStatusCode(result.response_action ==
                                                 stripekit::WebhookResponseAction::AcknowledgeSuccess
                                             ? ::drogon::k200OK
                                             : ::drogon::k500InternalServerError);
+                if (result.response_action != stripekit::WebhookResponseAction::AcknowledgeSuccess)
+                    std::cerr << "Webhook handling failed; Stripe should retry event "
+                              << result.event_id << '\n';
             } catch (const stripekit::SignatureVerificationException&) {
                 response->setStatusCode(::drogon::k400BadRequest);
-            } catch (const std::exception&) {
-                response->setStatusCode(::drogon::k400BadRequest);
+            } catch (const std::exception& error) {
+                std::cerr << "Webhook failed: " << stripekit::redact_sensitive_text(error.what()) << '\n';
+                response->setStatusCode(::drogon::k500InternalServerError);
             }
-            callback(response);
+            co_return response;
         },
         { ::drogon::Post });
 

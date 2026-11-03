@@ -11,6 +11,13 @@ An **invoice** is Stripe's bill for one billing period or plan change. Reading
 an invoice tells your application how much is still owed, whether Stripe will
 retry the payment, and where the customer can pay it.
 
+A zero-value trial invoice can be `paid` without a card charge. Check the
+subscription's status and trial end when deciding trial access; a paid
+invoice alone is not proof of money collected. At trial end, a saved card can
+still need authentication. For an open invoice with money remaining, use its
+`hosted_invoice_url` to let the customer pay or authenticate, then wait for
+verified billing updates before restoring paid access.
+
 Use these features when you want customers to fix their own payment problems
 and change their own plans, instead of building those pages yourself.
 

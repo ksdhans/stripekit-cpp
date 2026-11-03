@@ -100,8 +100,8 @@ struct CreateCheckoutSessionRequest {
      * Where Stripe sends the customer's browser after a successful checkout.
      *
      * Reaching this URL is not proof of payment; the customer may close the tab
-     * first, and anyone can visit the URL directly. Grant access from the
-     * `checkout.session.completed` or `invoice.paid` webhook instead.
+     * first, and anyone can visit the URL directly. Use verified webhooks and
+     * current subscription state to decide access, including trial eligibility.
      */
     std::string success_url;
 
@@ -116,11 +116,22 @@ struct CreateCheckoutSessionRequest {
 
     /** Email for a new customer; do not combine with customer_id. */
     std::string customer_email;
-    /** Subscription trial duration in days; absent means no trial. */
+    /**
+     * Subscription trial duration, from 1 to 730 days; absent means no trial.
+     *
+     * Only valid in subscription mode. For a card-required trial, also set
+     * payment_method_collection to "always" and payment_method_types to {"card"}.
+     */
     std::optional<std::int64_t> trial_period_days;
     /** Metadata on the resulting subscription, included in subscription webhooks. */
     std::unordered_map<std::string, std::string> subscription_metadata;
-    /** always or if_required; empty uses Stripe's default. */
+    /**
+     * "always" or "if_required"; empty uses Stripe's default.
+     *
+     * The documented trial flow requires a card. Cardless trials also need a
+     * missing-payment-method policy at trial end; StripeKit does not expose
+     * trial_settings.end_behavior for configuring that policy.
+     */
     std::string payment_method_collection;
     /** Allowed payment methods; empty uses the Stripe account's defaults. */
     std::vector<std::string> payment_method_types;

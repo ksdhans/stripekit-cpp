@@ -1160,12 +1160,19 @@ Task<CheckoutSession> StripeApiClient::CheckoutSessionOperations::create_async(
 void StripeApiClient::CheckoutSessionOperations::create(const CreateCheckoutSessionRequest& request,
                                                         const RequestOptions& options,
                                                         CreateCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(
+            HttpMethod::Post, "/v1/checkout/sessions", checkout_session_body(request), options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
     send_and_parse<CheckoutSession>(
         owner.http_client,
         owner.response_parser,
         owner.callback_lifetime,
-        make_request(
-            HttpMethod::Post, "/v1/checkout/sessions", checkout_session_body(request), options),
+        std::move(http),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_checkout_session(response);
         },

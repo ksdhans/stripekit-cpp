@@ -5,6 +5,10 @@ products, prices, customers, subscriptions, payments, and disputes. They check
 catalog operations against Stripe and verify that StripeKit verifies,
 de-duplicates, and dispatches the webhook events Stripe sends back.
 
+The suite checks the requests, returned billing data, and webhook signals that
+applications need. Tenant access, trial eligibility, and grace-period policies
+belong to the application and are not tested here.
+
 No money moves, but the tests do talk to Stripe over the network, so they are
 opt-in and are not part of the default `ctest` run.
 
@@ -164,6 +168,7 @@ sets `resource_group` so two pipelines cannot drive the same sandbox at once.
 | `TestCatalog.cpp` | Product creation, retrieval, updates, default-price selection and rejection of invalid defaults; price creation, mutable updates, clearing fields, lookup-key transfers, archiving and reactivation; filtering and pagination; Checkout using catalog prices; grandfathered subscriptions; migrations preserving quantities and other items; all four payment behaviors, failed-payment recovery, authentication-required payments, deterministic proration amounts, idempotent retries, and related invoice/subscription webhooks. |
 | `TestBillingPortalAndInvoices.cpp` | Invoice retrieval for a declined invoice before and after payment, an invoice awaiting authentication with its hosted payment page, and a missing invoice, read with both the account's default and an older Stripe API version; billing portal configuration creation, retrieval, updates, and deactivation; portal sessions for every task type; and Stripe's rejection of plan changes to prices outside the configuration. |
 | `TestSubscriptionLifecycle.cpp` | Checkout Session creation; typed retrieval of a real trial subscription's trial end and item billing-period dates; an active subscription emitting `invoice.paid`; a declined card emitting `invoice.payment_failed`; and subscription cancellation. |
+| `TestSubscriptionTrials.cpp` | Card-required trial Checkout for existing and Checkout-created customers; idempotent retries, session retrieval and expiry; old/default API-version subscription retrieval; zero-value trial invoices; trial reminders; clock-driven first-charge success, decline recovery, and authentication-required invoices; immediate and scheduled cancellation before billing. |
 | `TestDisputeAndRefund.cpp` | `charge.refunded`, and the dispute lifecycle through `charge.dispute.created` and `charge.dispute.closed`. |
 | `TestWebhookDelivery.cpp` | Live signed delivery, duplicate delivery handling, retryable-failure recovery, and rejection of a tampered payload. |
 
@@ -212,6 +217,11 @@ event stream quiet and lets you clear test data independently.
   and drives the subscription itself through the API to produce the invoice
   events. Use the Drogon Checkout demo below to cover the part the automated
   suite cannot reach.
+- **Trial Checkout needs a browser check too.** Automated trial Checkout tests
+  verify the session and payment-method settings. Stripe does not return the
+  resulting trial dates or subscription metadata until Checkout completes.
+  Clock-driven lifecycle tests create subscriptions directly, so they do not
+  replace the browser trial walkthrough below.
 - **Stripe's server-side retry schedule is not exercised.** The Stripe CLI
   forwards events but does not reproduce Stripe's backoff behaviour for a failing
   endpoint. Testing that would require a publicly reachable endpoint registered
@@ -225,9 +235,119 @@ event stream quiet and lets you clear test data independently.
 The sandbox suite checks Checkout Session creation, not the browser-hosted
 payment flow. Before releases that touch Checkout, follow the
 [DrogonCheckoutDemo README](../../examples/DrogonCheckoutDemo/README.md)
-for setup, test cards, and webhook checks. Its
-[manual 3D Secure checks](../../examples/DrogonCheckoutDemo/README.md#manually-check-3d-secure)
-cover successful, failed, and canceled authentication during initial Checkout.
+for setup and test cards, then perform the browser checks below.
+
+### Manually Check 3D Secure During Checkout
+
+1. Start the demo with a sandbox key and webhook forwarding.
+2. Start a non-trial Checkout and enter `4000 0027 6000 3184`, with any future
+   expiry and a valid-format CVC.
+3. Choose successful authentication on Stripe's challenge screen. Confirm that
+   Checkout completes, a verified `invoice.paid` event arrives, and the resulting
+   subscription is `active` in the sandbox Dashboard.
+4. Repeat with fresh sessions, choosing failed authentication and closing or
+   canceling the challenge. Inspect each invoice and subscription in Stripe;
+   the return URL alone does not establish a successful payment.
+
+Closing a challenge does not guarantee immediate cancellation or a particular
+failure event. These checks cover initial Checkout; the
+[payment recovery checks](#manually-check-3d-secure-payment-recovery) below cover
+an existing subscription.
+
+## Trial Coverage And Browser Checks
+
+Run just the live trial tests with the same environment as the full suite:
+
+```bash
+./build/tests/stripekit_sandbox_tests SandboxTrialTest
+```
+
+The tests use seven-day trials and Stripe Test Clocks. They check the initial
+zero-value paid invoice separately from the first nonzero invoice, including
+its ID, subscription, amount, billing reason, billing-period start, and verified
+event. A failed first charge is paid with a replacement card to check recovery.
+Both immediate cancellation and cancellation scheduled for trial end must
+prevent a nonzero invoice. Clocks and their customers are deleted after each
+test; open Checkout Sessions are expired and catalog objects archived.
+
+Before releasing trial changes, also complete the
+[demo trial walkthrough](../../examples/DrogonCheckoutDemo/README.md#try-a-card-required-trial).
+Check card collection, the 14-day duration, the resulting subscription's status
+and trial end in the Dashboard, and verified webhook delivery in the demo.
+Cancel the subscription in the Dashboard after the walkthrough.
+
+The automated sandbox tests separately cover idempotent API retries, session
+expiry, and cancellation. The demo intentionally starts a new Checkout flow on
+each submission; it does not track signup attempts or manage subscriptions.
+To check `subscription_metadata` through hosted Checkout, create a session using
+StripeKit with distinct session and subscription metadata, complete it in the
+browser, and retrieve the resulting subscription to check those values.
+
+### Manually Check First-Charge Authentication After A Trial
+
+Use the sandbox key through the Stripe CLI environment, never a command-line
+key argument. Create a clock at the current Unix time and copy its `clock_...`
+ID:
+
+```bash
+stripe test_helpers test_clocks create -d frozen_time="$(date +%s)"
+stripe customers create -d test_clock=clock_your_clock_id
+```
+
+Copy the `cus_...` ID. Create a recurring Price with ProductCatalogCli or copy
+one from the sandbox Dashboard. In the browser, complete a card-required trial
+Checkout for this existing customer (from your app or a session created below):
+
+```bash
+stripe checkout sessions create \
+  -d mode=subscription \
+  -d customer=cus_your_customer_id \
+  -d 'line_items[0][price]=price_your_price_id' \
+  -d 'line_items[0][quantity]=1' \
+  -d 'subscription_data[trial_period_days]=7' \
+  -d payment_method_collection=always \
+  -d 'payment_method_types[0]=card' \
+  -d 'success_url=http://127.0.0.1:4242/return?session_id={CHECKOUT_SESSION_ID}' \
+  -d 'cancel_url=http://127.0.0.1:4242/'
+```
+
+After completing signup, copy the subscription ID and attach a fresh
+authentication-required payment method. Select the returned `pm_...` ID as the
+subscription's default:
+
+```bash
+stripe payment_methods attach pm_card_authenticationRequired \
+  -d customer=cus_your_customer_id
+stripe subscriptions update sub_your_subscription_id \
+  -d default_payment_method=pm_returned_by_attach
+```
+
+Read `trial_end` from the subscription. Advance the clock to that Unix time,
+wait until its status is `ready`, then advance another 3600 seconds to allow
+invoice collection, again waiting for `ready`:
+
+```bash
+stripe test_helpers test_clocks advance clock_your_clock_id -d frozen_time=TRIAL_END_UNIX
+stripe test_helpers test_clocks retrieve clock_your_clock_id
+stripe test_helpers test_clocks advance clock_your_clock_id -d frozen_time=TRIAL_END_PLUS_3600
+```
+
+Expect a new nonzero invoice, `invoice.payment_action_required`, a
+`requires_action` PaymentIntent, and a `past_due` subscription. Open that
+invoice's hosted URL from the Dashboard and complete authentication successfully.
+Check the same invoice becomes paid and the subscription becomes active.
+Repeat with fresh subscriptions and choose failed or canceled authentication:
+neither is proof of payment. To check a decline instead, attach
+`pm_card_chargeCustomerFail` before advancing; recover through the hosted invoice
+page with `4242 4242 4242 4242`.
+
+The return page above is feedback only; use the Dashboard to inspect the
+subscription and invoice. Delete
+each test clock when finished; that also deletes its customers and subscriptions:
+
+```bash
+stripe test_helpers test_clocks delete clock_your_clock_id --confirm
+```
 
 ## Manually Check 3D Secure Payment Recovery
 
@@ -256,17 +376,16 @@ Use a separate sandbox subscription and keep webhook forwarding running.
    confirm that it is `active`, retains the replacement price, and has the
    expected quantity.
 7. On fresh test subscriptions, repeat with failed or canceled authentication.
-   Verify that an unpaid attempt does not grant paid access. With
-   `AllowIncomplete`, failure must not restore the old price. Your application's
-   grace-period and recovery policy determines continued access.
+   Verify the invoice's unpaid state and the subscription's returned status.
+   With `AllowIncomplete`, failure must not restore the old price.
 8. Cancel the test subscriptions when finished and archive unused catalog
    objects. Change or clear a product's default before archiving that price.
 
 The automated authentication-required sandbox test already covers the state
 before challenge completion, but it cancels its subscription during cleanup.
 Do not use its invoice as a manual recovery fixture after the test exits.
-The existing Checkout demo does not provide a subscription price-change or
-invoice-recovery screen. Use your application or Stripe's API for these steps;
+The Checkout demo does not provide subscription price-change or payment-method
+setup screens. Use your application or Stripe's API for these steps;
 StripeKit can retrieve the invoice and its `hosted_invoice_url`, but does not
 expose payment-method setup or PaymentIntent confirmation.
 
@@ -279,8 +398,8 @@ Locally signed, simulated webhook events can test delivery of
 `invoice.payment_action_required`, `invoice.payment_failed`, and `invoice.paid`
 through the HTTP endpoint, including payload preservation and duplicate handling.
 Simulated API responses can test parsing of outstanding and recovered subscription
-states. Applications should also test their access policy against duplicate and
-out-of-order events.
+states. The demo regression test checks setup, trial controls, signature
+verification, and duplicate event handling without contacting Stripe.
 
 These tests do not prove that Stripe's challenge UI works or that authentication
 actually completed. Pair them with the live sandbox authentication-required test

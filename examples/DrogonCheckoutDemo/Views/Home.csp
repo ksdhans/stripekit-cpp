@@ -46,6 +46,7 @@ auto data = @@.get<stripekit::examples::CheckoutDemoViewData>("data");
         .pill { border: 1px solid #cfc4b4; border-radius: 999px; padding: 6px 10px; background: #fffefa; font-size: 0.86rem; }
         .product { min-height: 260px; display: grid; align-content: space-between; background: linear-gradient(145deg, rgba(255,255,255,0.9), rgba(238,247,242,0.86)); }
         .price { font-family: "Iowan Old Style", Georgia, serif; font-size: 2.4rem; margin-bottom: 16px; }
+        .trial-description { margin: 24px 0 8px; }
         table { width: 100%; border-collapse: collapse; }
         th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #ddd4c7; vertical-align: top; }
         th { color: #5c6871; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
@@ -134,7 +135,10 @@ auto data = @@.get<stripekit::examples::CheckoutDemoViewData>("data");
                 <label>Email
                     <input name="email" type="email" required placeholder="customer@example.com">
                 </label>
-                <button type="submit">Continue to Checkout</button>
+                <button type="submit" name="trial" value="0">Continue to Checkout</button>
+                <p class="trial-description">No charge today with the trial. A card is required; monthly billing starts
+                    after 14 days unless canceled. Stripe Checkout shows the price and first billing date.</p>
+                <button class="secondary" type="submit" name="trial" value="14">Start a 14-day free trial</button>
             </form>
             <%c++ } else { %>
             <p class="muted">Save a test secret key to enable Checkout.</p>

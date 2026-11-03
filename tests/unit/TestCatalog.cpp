@@ -541,6 +541,38 @@ TEST_F(CatalogTest, SubscriptionParserPreservesTrialAndItemBillingPeriods) {
     EXPECT_FALSE(absent.items.front().current_period_end_unix.has_value());
 }
 
+TEST(CatalogParser, TrialPeriodsSupportOlderAndNewerApiShapes) {
+    JsonStripeResponseParser parser;
+    const auto older = parser.parse_subscription(
+        { .status_code = 200,
+          .body = R"({"id":"sub_old","status":"trialing","trial_end":1800000000,
+                     "current_period_start":1799395200,"current_period_end":1800000000,
+                     "items":{"has_more":false,"data":[
+                         {"id":"si_old","price":"price_test","quantity":1}]}})" });
+    EXPECT_EQ(older.trial_end_unix.value(), 1800000000);
+    EXPECT_EQ(older.current_period_end_unix, 1800000000);
+    EXPECT_FALSE(older.items.front().current_period_end_unix.has_value());
+    const auto newer = parser.parse_subscription(
+        { .status_code = 200,
+          .body = R"({"id":"sub_new","status":"trialing","trial_end":1800000000,
+                     "items":{"has_more":false,"data":[
+                         {"id":"si_new","price":{"id":"price_test"},"quantity":1,
+                          "current_period_start":1799395200,"current_period_end":1800000000}]}})" });
+    EXPECT_EQ(newer.trial_end_unix.value(), 1800000000);
+    EXPECT_EQ(newer.current_period_end_unix, 0);
+    EXPECT_EQ(newer.items.front().current_period_end_unix.value(), 1800000000);
+    const auto no_trial = parser.parse_subscription(
+        { .status_code = 200, .body = R"({"id":"sub_paid","status":"active"})" });
+    EXPECT_FALSE(no_trial.trial_end_unix.has_value());
+    for (const auto* value : { "-1", "\"later\"", "true", "1.5" }) {
+        EXPECT_THROW(parser.parse_subscription(
+                         { .status_code = 200,
+                           .body = std::string(R"({"id":"sub_bad","status":"trialing","trial_end":)") +
+                                   value + "}" }),
+                     ConfigurationException);
+    }
+}
+
 TEST_F(CatalogTest, AllSubscriptionPoliciesAreEncodedForCallbacksAndCoroutines) {
     http.set_response({ .status_code = 200, .body = subscription_json });
     const std::vector<std::pair<ProrationBehavior, std::string>> prorations{

@@ -5,7 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
-- Add support for subscription trial periods
+- Add support for subscription trial periods, including in the DrogonCheckoutDemo
+- Added tests for trial periods
 - Add Checkout session retrieval and parse its expiry. Custom CheckoutSessions
   implementations now need `retrieve_async()`.
 

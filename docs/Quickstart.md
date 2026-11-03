@@ -201,6 +201,48 @@ A `complete` session does not prove that payment succeeded or confirm trial
 access. Verify the subscription using Stripe webhooks before granting access.
 Stripe bills the subscription after the trial unless it is canceled.
 
+**Supported trial flow.** This guide covers card-required Checkout trials,
+lasting 1 to 730 days. Trials are not valid in one-time payment mode.
+Although `payment_method_collection` also accepts `if_required`, a cardless
+trial needs a policy for a missing payment method when the trial ends.
+StripeKit does not yet expose `trial_settings.end_behavior`; cardless trial
+setup is outside this guide's supported flow.
+
+**Decide trial access separately from payment.** After a verified
+`checkout.session.completed` or subscription webhook, retrieve the subscription
+and check that it belongs to your user, is `trialing`, and has a future
+`trial_end_unix`. Use that date to limit trial access. Do not grant access
+for an open, abandoned, or expired Checkout session. A trial can create a
+zero-value invoice and emit `invoice.paid` without charging the card; that
+event alone does not establish a paid subscription.
+
+Billing-period dates may be on `Subscription` with older Stripe API versions,
+or on each `SubscriptionItem` with newer versions. Prefer the item's optional
+dates when present; use the subscription dates only when nonzero. Neither
+the trial end nor an item's period end proves a payment succeeded.
+
+At trial end, check the current subscription and the specific new invoice.
+Handle `invoice.payment_failed` and `invoice.payment_action_required`:
+collecting a card during signup does not guarantee that the first charge
+succeeds without extra authentication. Send the customer to the invoice's
+`hosted_invoice_url` to pay or authenticate, or to the Billing Portal to
+update their payment method. Wait for verified payment/subscription updates
+before restoring paid access. Your application chooses any grace period.
+
+Offer cancellation before billing starts. The Billing Portal's
+`SubscriptionCancel` flow can do this; ensure cancellation is enabled in the
+portal configuration. Check `cancel_at_period_end` as well as `status`:
+a subscription can remain `trialing` while cancellation is scheduled.
+See @ref billing_portal_and_invoices.
+
+**Retry and expire safely.** Persist the request inputs and signup-attempt
+idempotency key before contacting Stripe. A retry must reuse both, even if your
+price configuration has changed. Stripe may return the original cached
+creation response, so retrieve the saved session to check its current state.
+After expiry, start a new attempt with a new key; never interpret an expired
+session as completed signup. Stripe can prune idempotency keys after 24 hours,
+so do not use an old key as a permanent duplicate-subscription guard.
+
 @section quickstart_webhook Step 4: Find out when the customer has paid
 
 This is the step that actually matters: your server needs to hear from
@@ -220,7 +262,7 @@ stripekit::drogon::register_webhook_handler({
     .handler = [](const stripekit::webhooks::Event& event)
         -> stripekit::Task<stripekit::webhooks::ProcessResult> {
         if (event.type == "invoice.paid") {
-            // A payment succeeded: give the customer access here.
+            // Check the current subscription, invoice, and access policy here.
             co_return stripekit::webhooks::ProcessResult::Handled;
         }
         co_return stripekit::webhooks::ProcessResult::Ignored;
@@ -329,15 +371,20 @@ matter:
 | Event | What it means |
 | --- | --- |
 | `checkout.session.completed` | The customer finished Checkout and now has a subscription. |
-| `invoice.paid` | A payment for a billing period succeeded. This is usually where you grant or extend access. |
+| `invoice.paid` | An invoice has no outstanding balance. Trial invoices can be zero; check the subscription and invoice before granting or extending access. |
 | `invoice.payment_failed` | A payment failed. Stripe will automatically retry it a few times. |
 | `customer.subscription.updated` | Something about the subscription changed, for example its plan or status. |
 | `customer.subscription.deleted` | The subscription has ended. This is usually where you take access away. |
+| `customer.subscription.trial_will_end` | A trial ends in about three days; remind the customer and check billing readiness. |
+| `invoice.payment_action_required` | The customer must complete authentication before payment can succeed. |
+| `checkout.session.expired` | Checkout expired without completion; no trial or paid access should be granted. |
 
-It is best to base access on `invoice.paid` and `customer.subscription.deleted`
-rather than on the Checkout redirect from step 3. Renewals happen automatically,
-weeks or months later, with no browser involved at all — the webhook is the
-only way to find out about them.
+Base access on verified billing webhooks and current subscription state,
+rather than on the Checkout redirect from step 3. For trial access, check
+`trialing` and the trial end; for paid access, follow your invoice and subscription
+policy. Events can be duplicated or arrive out of order, so fetch current state
+rather than replacing it with an older event snapshot. Renewals happen
+automatically, weeks or months later, with no browser involved.
 
 Stripe's own [list of event types](https://docs.stripe.com/api/events/types)
 covers everything Stripe can send, including things outside subscription

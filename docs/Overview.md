@@ -104,7 +104,7 @@ auto result = co_await stripekit::webhooks::process_event_once(
     [&](const stripekit::webhooks::Event& event)
         -> stripekit::Task<stripekit::webhooks::ProcessResult> {
         if (event.type == "invoice.paid") {
-            // Extend the customer's access here.
+            // Check subscription state and your access policy, including trials.
             co_return stripekit::webhooks::ProcessResult::Handled;
         }
         co_return stripekit::webhooks::ProcessResult::Ignored;

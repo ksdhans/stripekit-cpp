@@ -1,9 +1,13 @@
+<%c++
+const auto title = @@.get<std::string>("title");
+const auto message = @@.get<std::string>("message");
+%>
 <!doctype html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>[[ title ]]</title>
+    <title>{% title %}</title>
     <style>
         :root { font-family: "Aptos", "Segoe UI", sans-serif; background: #f4efe6; color: #20242a; }
         body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: linear-gradient(135deg, #fff5ea, #e7f0ea); }
@@ -15,8 +19,8 @@
 </head>
 <body>
 <main>
-    <h1>[[ title ]]</h1>
-    <p class="warning">[[ message ]]</p>
+    <h1>{% title %}</h1>
+    <p class="warning">{% message %}</p>
     <a class="button" href="/">Back</a>
 </main>
 </body>

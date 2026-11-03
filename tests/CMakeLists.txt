@@ -142,6 +142,7 @@ if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
             sandbox/TestCatalog.cpp
             sandbox/TestDisputeAndRefund.cpp
             sandbox/TestSubscriptionLifecycle.cpp
+            sandbox/TestSubscriptionTrials.cpp
             sandbox/TestWebhookDelivery.cpp
         )
 

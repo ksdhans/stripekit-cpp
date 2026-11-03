@@ -64,7 +64,8 @@ exact commands they need.
 - [DrogonCheckoutDemo](DrogonCheckoutDemo/README.md) is the main end-to-end
 	hosted Checkout example. It serves a small HTML/CSS UI, creates a customer,
 	creates a subscription-mode Checkout Session, redirects to Stripe-hosted
-	Checkout, receives webhooks, and shows recent verified webhook deliveries.
+	Checkout, optionally starts a card-required 14-day trial, receives webhooks,
+	and shows recent verified webhook deliveries.
 - [WebhookSignature](WebhookSignature/README.md) is a tiny Drogon webhook
 	endpoint that verifies `Stripe-Signature` and logs the event id and type.
 - [CheckoutSessionCli](CheckoutSessionCli/README.md) creates one hosted

@@ -232,6 +232,14 @@ Json::Value json_path(const Json::Value& root, std::string_view dotted_path);
 /** Returns an email address unique to this run, for creating sandbox customers. */
 std::string sandbox_email(const SandboxEnvironment& environment, std::string_view label);
 
+/** Creates a billing test clock frozen at the supplied Unix time. Delete it after use. */
+std::string create_sandbox_clock(SandboxEnvironment& environment, std::int64_t frozen_time);
+
+/** Advances a test clock and waits for Stripe to finish, throwing on failure or timeout. */
+void advance_sandbox_clock(SandboxEnvironment& environment,
+                           const std::string& clock_id,
+                           std::int64_t frozen_time);
+
 /**
  * Creates a sandbox customer with a test card attached as the default payment method.
  *
