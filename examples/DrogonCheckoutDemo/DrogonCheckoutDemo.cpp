@@ -249,7 +249,8 @@ std::string format_event_date(std::int64_t unix_seconds) {
     return text.str();
 }
 
-/** Summarizes fields present in a verified event snapshot, without fetching current billing state. */
+/** Summarizes fields present in a verified event snapshot, without fetching current billing state.
+ */
 EventRecord make_event_record(const stripekit::webhooks::Event& event) {
     Json::Value payload;
     Json::CharReaderBuilder reader;
@@ -258,14 +259,19 @@ EventRecord make_event_record(const stripekit::webhooks::Event& event) {
     if (!Json::parseFromStream(reader, input, &payload, &errors))
         throw std::runtime_error("Could not parse verified event JSON: " + errors);
 
-    EventRecord record{ .id = event.id, .type = event.type,
-                        .api_version = event.api_version, .livemode = event.livemode };
+    EventRecord record{ .id = event.id,
+                        .type = event.type,
+                        .api_version = event.api_version,
+                        .livemode = event.livemode };
     const auto& object = payload["data"]["object"];
     if (object.isObject()) {
         for (const auto& [field, label] :
-             { std::pair{ "id", "Object ID" }, { "customer", "Customer" },
-               { "subscription", "Subscription" }, { "payment_intent", "Payment intent" },
-               { "status", "Status" }, { "payment_status", "Payment status" },
+             { std::pair{ "id", "Object ID" },
+               { "customer", "Customer" },
+               { "subscription", "Subscription" },
+               { "payment_intent", "Payment intent" },
+               { "status", "Status" },
+               { "payment_status", "Payment status" },
                { "trial_start", "Trial start" },
                { "trial_end", "Trial end" },
                { "cancel_at_period_end", "Cancel at period end" },
@@ -277,7 +283,8 @@ EventRecord make_event_record(const stripekit::webhooks::Event& event) {
                { "currency", "Currency" } }) {
             const auto& value = object[field];
             if ((std::string_view(field) == "trial_start" ||
-                 std::string_view(field) == "trial_end") && value.isInt64())
+                 std::string_view(field) == "trial_end") &&
+                value.isInt64())
                 record.details.emplace_back(label, format_event_date(value.asInt64()));
             else if (value.isString() || value.isNumeric() || value.isBool())
                 record.details.emplace_back(label, value.asString());
@@ -469,8 +476,11 @@ int main(int argc, char** argv) {
             const auto email = parameter_or(request, "email");
             const auto trial_choice = parameter_or(request, "trial", "0");
             if (email.empty() || (trial_choice != "0" && trial_choice != "14")) {
-                co_return home_response(state, port, "Enter an email and choose paid Checkout or a 14-day trial.",
-                                        ::drogon::k400BadRequest);
+                co_return home_response(
+                    state,
+                    port,
+                    "Enter an email and choose paid Checkout or a 14-day trial.",
+                    ::drogon::k400BadRequest);
             }
             try {
                 auto client = make_client(api_key);
@@ -572,7 +582,8 @@ int main(int argc, char** argv) {
             } catch (const stripekit::SignatureVerificationException&) {
                 response->setStatusCode(::drogon::k400BadRequest);
             } catch (const std::exception& error) {
-                std::cerr << "Webhook failed: " << stripekit::redact_sensitive_text(error.what()) << '\n';
+                std::cerr << "Webhook failed: " << stripekit::redact_sensitive_text(error.what())
+                          << '\n';
                 response->setStatusCode(::drogon::k500InternalServerError);
             }
             co_return response;

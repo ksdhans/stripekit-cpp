@@ -563,13 +563,12 @@ TEST_F(StripeApiClientTest, TrialBoundariesWorkForCallbacksAndCoroutines) {
     http_client.clear_recorded_requests();
     request.trial_period_days = -1;
     int calls = 0;
-    client->checkout().sessions().create(
-        request, {}, [&](CallbackResult<CheckoutSession> result) {
-            ++calls;
-            EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
-            EXPECT_THROW(std::rethrow_exception(std::get<std::exception_ptr>(result)),
-                         ConfigurationException);
-        });
+    client->checkout().sessions().create(request, {}, [&](CallbackResult<CheckoutSession> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+        EXPECT_THROW(std::rethrow_exception(std::get<std::exception_ptr>(result)),
+                     ConfigurationException);
+    });
     EXPECT_EQ(calls, 1);
     EXPECT_TRUE(http_client.get_recorded_requests().empty());
 }

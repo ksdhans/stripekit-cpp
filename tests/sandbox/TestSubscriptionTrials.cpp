@@ -22,12 +22,19 @@ protected:
     /** Creates a recurring price belonging only to this test. */
     void SetUp() override {
         environment = &SandboxEnvironment::get();
-        const auto product = environment->stripe_client().products().create_async(
-            { .name = "StripeKit trial " + environment->run_id() }).result();
+        const auto product =
+            environment->stripe_client()
+                .products()
+                .create_async({ .name = "StripeKit trial " + environment->run_id() })
+                .result();
         product_id = product.id;
-        const auto price = environment->stripe_client().prices().create_async(
-            { .product_id = product_id, .currency = "usd", .unit_amount = 1500,
-              .recurring_interval = "month" }).result();
+        const auto price = environment->stripe_client()
+                               .prices()
+                               .create_async({ .product_id = product_id,
+                                               .currency = "usd",
+                                               .unit_amount = 1500,
+                                               .recurring_interval = "month" })
+                               .result();
         price_id = price.id;
     }
 
@@ -60,7 +67,10 @@ protected:
         if (!price_id.empty()) {
             const auto id = std::exchange(price_id, {});
             cleanup(id, [&] {
-                environment->stripe_client().prices().update_async(id, { .active = false }).result();
+                environment->stripe_client()
+                    .prices()
+                    .update_async(id, { .active = false })
+                    .result();
             });
         }
         if (!product_id.empty()) {
@@ -85,17 +95,21 @@ protected:
         request.payment_method_types = { "card" };
         request.metadata = { { "session_only", environment->run_id() } };
         request.subscription_metadata = { { "app_user_id", environment->run_id() } };
-        request.expires_at =
-            std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count() + 3600;
+        request.expires_at = std::chrono::duration_cast<std::chrono::seconds>(
+                                 std::chrono::system_clock::now().time_since_epoch())
+                                 .count() +
+                             3600;
         return request;
     }
 
     /** Creates a session and records it for expiry even when a later assertion fails. */
     CheckoutSession create_session(const CreateCheckoutSessionRequest& request,
-                                    const RequestOptions& options = {}) {
-        const auto session =
-            environment->stripe_client().checkout().sessions().create_async(request, options).result();
+                                   const RequestOptions& options = {}) {
+        const auto session = environment->stripe_client()
+                                 .checkout()
+                                 .sessions()
+                                 .create_async(request, options)
+                                 .result();
         sessions.push_back(session.id);
         return session;
     }
@@ -110,7 +124,8 @@ protected:
     /** Creates a clock-bound trial with a successful default card and verifies its zero invoice. */
     Subscription create_trial() {
         frozen_time = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count();
         clock_id = create_sandbox_clock(*environment, frozen_time);
         const auto customer = environment->stripe_api().require_post(
             "/v1/customers",
@@ -120,7 +135,8 @@ protected:
               { "invoice_settings[default_payment_method]", "pm_card_visa" } });
         const auto created = environment->stripe_api().require_post(
             "/v1/subscriptions",
-            { { "customer", customer.id() }, { "items[0][price]", price_id },
+            { { "customer", customer.id() },
+              { "items[0][price]", price_id },
               { "trial_period_days", "7" },
               { "metadata[app_user_id]", environment->run_id() } });
         const auto subscription =
@@ -140,8 +156,10 @@ protected:
         for (const auto& options :
              { RequestOptions{ .headers = { { "Stripe-Version", "2024-06-20" } } },
                RequestOptions{} }) {
-            const auto saved = environment->stripe_client().subscriptions()
-                                   .retrieve_async(subscription.id, options).result();
+            const auto saved = environment->stripe_client()
+                                   .subscriptions()
+                                   .retrieve_async(subscription.id, options)
+                                   .result();
             EXPECT_EQ(saved.trial_end_unix, subscription.trial_end_unix);
             ASSERT_EQ(saved.items.size(), 1U);
             EXPECT_EQ(saved.items.front().price_id, price_id);
@@ -167,15 +185,16 @@ protected:
     }
 
     /** Advances through the reminder, trial expiry, and automatic invoice collection. */
-    Invoice bill_trial(const Subscription& subscription, const std::string& method,
-                       const std::string& event_type, const std::string& expected_status) {
+    Invoice bill_trial(const Subscription& subscription,
+                       const std::string& method,
+                       const std::string& event_type,
+                       const std::string& expected_status) {
         if (method != "pm_card_visa") {
             const auto attached = environment->stripe_api().require_post(
                 "/v1/payment_methods/" + method + "/attach",
                 { { "customer", subscription.customer_id } });
-            environment->stripe_api().require_post(
-                "/v1/subscriptions/" + subscription.id,
-                { { "default_payment_method", attached.id() } });
+            environment->stripe_api().require_post("/v1/subscriptions/" + subscription.id,
+                                                   { { "default_payment_method", attached.id() } });
         }
         const auto trial_end = subscription.trial_end_unix.value();
         advance_sandbox_clock(*environment, clock_id, trial_end - 3 * 86400);
@@ -187,8 +206,10 @@ protected:
         EXPECT_EQ(saved.status, expected_status);
         EXPECT_NE(saved.latest_invoice_id, initial_invoice_id);
         check_event(event_type, saved.latest_invoice_id);
-        const auto invoice =
-            environment->stripe_client().invoices().retrieve_async(saved.latest_invoice_id).result();
+        const auto invoice = environment->stripe_client()
+                                 .invoices()
+                                 .retrieve_async(saved.latest_invoice_id)
+                                 .result();
         EXPECT_EQ(invoice.subscription_id, subscription.id);
         EXPECT_EQ(invoice.customer_id, subscription.customer_id);
         EXPECT_EQ(invoice.amount_due, 1500);
@@ -215,21 +236,28 @@ TEST_F(SandboxTrialTest, CheckoutTrialSettingsRetrievalAndIdempotentRetry) {
     for (const bool existing_customer : { false, true }) {
         auto request = checkout_request();
         if (existing_customer) {
-            request.customer_id = create_customer_with_card(*environment, "pm_card_visa", "trial_checkout");
+            request.customer_id =
+                create_customer_with_card(*environment, "pm_card_visa", "trial_checkout");
         } else {
             request.customer_email = sandbox_email(*environment, "trial_checkout_new");
         }
-        const RequestOptions options{
-            .idempotency_key = environment->run_id() +
-                               (existing_customer ? "_trial_existing" : "_trial_new"),
-            .headers = { { "Stripe-Version", "2024-06-20" } } };
+        const RequestOptions options{ .idempotency_key =
+                                          environment->run_id() +
+                                          (existing_customer ? "_trial_existing" : "_trial_new"),
+                                      .headers = { { "Stripe-Version", "2024-06-20" } } };
         const auto session = create_session(request, options);
-        const auto retry =
-            environment->stripe_client().checkout().sessions().create_async(request, options).result();
+        const auto retry = environment->stripe_client()
+                               .checkout()
+                               .sessions()
+                               .create_async(request, options)
+                               .result();
         EXPECT_EQ(retry.id, session.id);
         EXPECT_EQ(retry.url, session.url);
-        const auto saved =
-            environment->stripe_client().checkout().sessions().retrieve_async(session.id, options).result();
+        const auto saved = environment->stripe_client()
+                               .checkout()
+                               .sessions()
+                               .retrieve_async(session.id, options)
+                               .result();
         EXPECT_EQ(saved.status, "open");
         EXPECT_EQ(saved.mode, "subscription");
         EXPECT_EQ(saved.expires_at_unix, request.expires_at.value());
@@ -240,8 +268,7 @@ TEST_F(SandboxTrialTest, CheckoutTrialSettingsRetrievalAndIdempotentRetry) {
         EXPECT_EQ(raw["payment_method_collection"].asString(), "always");
         ASSERT_EQ(raw["payment_method_types"].size(), 1U);
         EXPECT_EQ(raw["payment_method_types"][0].asString(), "card");
-        if (!existing_customer)
-            EXPECT_EQ(raw["customer_email"].asString(), request.customer_email);
+        if (!existing_customer) EXPECT_EQ(raw["customer_email"].asString(), request.customer_email);
         // Stripe exposes subscription_data only when the subscription is created.
         // The browser walkthrough checks trial duration and subscription metadata.
     }
@@ -263,8 +290,9 @@ TEST_F(SandboxTrialTest, AbandonedExpiredCheckoutCanStartANewAttempt) {
     const auto retry =
         environment->stripe_client().checkout().sessions().create_async(request, options).result();
     EXPECT_EQ(retry.id, session.id);
-    EXPECT_EQ(environment->stripe_client().checkout().sessions()
-                  .retrieve_async(retry.id).result().status, "expired");
+    EXPECT_EQ(
+        environment->stripe_client().checkout().sessions().retrieve_async(retry.id).result().status,
+        "expired");
     const auto replacement = create_session(
         request, { .idempotency_key = environment->run_id() + "_trial_replacement" });
     EXPECT_NE(replacement.id, expired.id);
@@ -284,8 +312,8 @@ TEST_F(SandboxTrialTest, TrialEndCollectsTheFirstNonzeroInvoice) {
 
 TEST_F(SandboxTrialTest, TrialEndDeclineCanRecoverWithANewPaymentMethod) {
     const auto subscription = create_trial();
-    const auto invoice =
-        bill_trial(subscription, "pm_card_chargeCustomerFail", "invoice.payment_failed", "past_due");
+    const auto invoice = bill_trial(
+        subscription, "pm_card_chargeCustomerFail", "invoice.payment_failed", "past_due");
     EXPECT_EQ(invoice.status, "open");
     EXPECT_EQ(invoice.amount_paid, 0);
     EXPECT_EQ(invoice.amount_remaining, 1500);
@@ -307,8 +335,10 @@ TEST_F(SandboxTrialTest, TrialEndDeclineCanRecoverWithANewPaymentMethod) {
 
 TEST_F(SandboxTrialTest, TrialEndAuthenticationNeedsCustomerAction) {
     const auto subscription = create_trial();
-    const auto invoice = bill_trial(subscription, "pm_card_authenticationRequired",
-                                    "invoice.payment_action_required", "past_due");
+    const auto invoice = bill_trial(subscription,
+                                    "pm_card_authenticationRequired",
+                                    "invoice.payment_action_required",
+                                    "past_due");
     EXPECT_EQ(invoice.status, "open");
     EXPECT_FALSE(invoice.paid);
     EXPECT_EQ(invoice.amount_remaining, 1500);
@@ -338,8 +368,8 @@ TEST_F(SandboxTrialTest, CancelingDuringTrialPreventsTheFirstCharge) {
 
 TEST_F(SandboxTrialTest, ScheduledTrialCancellationDoesNotStartPaidBilling) {
     const auto subscription = create_trial();
-    environment->stripe_api().require_post(
-        "/v1/subscriptions/" + subscription.id, { { "cancel_at_period_end", "true" } });
+    environment->stripe_api().require_post("/v1/subscriptions/" + subscription.id,
+                                           { { "cancel_at_period_end", "true" } });
     const auto scheduled =
         environment->stripe_client().subscriptions().retrieve_async(subscription.id).result();
     EXPECT_EQ(scheduled.status, "trialing");

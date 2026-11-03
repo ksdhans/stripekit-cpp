@@ -544,8 +544,7 @@ TEST_F(CatalogTest, SubscriptionParserPreservesTrialAndItemBillingPeriods) {
 TEST(CatalogParser, TrialPeriodsSupportOlderAndNewerApiShapes) {
     JsonStripeResponseParser parser;
     const auto older = parser.parse_subscription(
-        { .status_code = 200,
-          .body = R"({"id":"sub_old","status":"trialing","trial_end":1800000000,
+        { .status_code = 200, .body = R"({"id":"sub_old","status":"trialing","trial_end":1800000000,
                      "current_period_start":1799395200,"current_period_end":1800000000,
                      "items":{"has_more":false,"data":[
                          {"id":"si_old","price":"price_test","quantity":1}]}})" });
@@ -553,8 +552,7 @@ TEST(CatalogParser, TrialPeriodsSupportOlderAndNewerApiShapes) {
     EXPECT_EQ(older.current_period_end_unix, 1800000000);
     EXPECT_FALSE(older.items.front().current_period_end_unix.has_value());
     const auto newer = parser.parse_subscription(
-        { .status_code = 200,
-          .body = R"({"id":"sub_new","status":"trialing","trial_end":1800000000,
+        { .status_code = 200, .body = R"({"id":"sub_new","status":"trialing","trial_end":1800000000,
                      "items":{"has_more":false,"data":[
                          {"id":"si_new","price":{"id":"price_test"},"quantity":1,
                           "current_period_start":1799395200,"current_period_end":1800000000}]}})" });
@@ -565,11 +563,12 @@ TEST(CatalogParser, TrialPeriodsSupportOlderAndNewerApiShapes) {
         { .status_code = 200, .body = R"({"id":"sub_paid","status":"active"})" });
     EXPECT_FALSE(no_trial.trial_end_unix.has_value());
     for (const auto* value : { "-1", "\"later\"", "true", "1.5" }) {
-        EXPECT_THROW(parser.parse_subscription(
-                         { .status_code = 200,
-                           .body = std::string(R"({"id":"sub_bad","status":"trialing","trial_end":)") +
-                                   value + "}" }),
-                     ConfigurationException);
+        EXPECT_THROW(
+            parser.parse_subscription(
+                { .status_code = 200,
+                  .body = std::string(R"({"id":"sub_bad","status":"trialing","trial_end":)") +
+                          value + "}" }),
+            ConfigurationException);
     }
 }
 
