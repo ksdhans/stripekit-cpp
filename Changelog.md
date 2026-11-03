@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.4.0 2026-11-03
+
 - Add support for subscription trial periods, including in the DrogonCheckoutDemo
 - Added displaying key webhook info (e.g., trial /subscription start & end dates) to the DrogonCheckoutDemo.
 - Added tests for trial periods
