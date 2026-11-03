@@ -163,6 +163,44 @@ The `CheckoutSessionCli` example in the source tree is this same code as a
 complete, runnable program; `DrogonCheckoutDemo` shows it wired into an
 actual web page.
 
+### Starting a subscription with a trial
+
+For a recurring price, add a trial duration to the Checkout request. This
+example starts a 14-day trial, collects a card before the trial begins, and
+adds your user ID to the resulting subscription:
+
+@code
+request.trial_period_days = 14;
+request.payment_method_collection = "always";
+request.payment_method_types = { "card" };
+request.subscription_metadata["app_user_id"] = "42";
+
+const auto session = co_await stripe->checkout().sessions().create_async(
+    request, stripekit::RequestOptions{ .idempotency_key = "saved_signup_attempt_id" });
+@endcode
+
+**Choose the customer.** If you already created a Stripe customer in Step 2,
+set `request.customer_id` as shown earlier. Otherwise, leave both customer
+fields empty: for a subscription, Checkout creates a Stripe customer using the
+details the customer enters. Checkout asks for an email address if you do not
+set `request.customer_email`; set it only to prefill an email you already know.
+Do not set both customer fields.
+
+**Retry safely.** Save the idempotency key and reuse it with the same request
+values if you retry session creation. `metadata` belongs to the Checkout
+session; use `subscription_metadata` for information you need on the
+subscription, such as in subscription webhooks.
+
+**Check the session and confirm the subscription.** Retrieve a saved session
+with `stripe->checkout().sessions().retrieve_async(session.id)`. Its `status`
+can be `open`, `complete`, or `expired`; `expires_at_unix` gives its expiry
+time in Unix seconds. You can set `request.expires_at` when creating a session,
+but Stripe requires it to be 30 minutes to 24 hours in the future.
+
+A `complete` session does not prove that payment succeeded or confirm trial
+access. Verify the subscription using Stripe webhooks before granting access.
+Stripe bills the subscription after the trial unless it is canceled.
+
 @section quickstart_webhook Step 4: Find out when the customer has paid
 
 This is the step that actually matters: your server needs to hear from

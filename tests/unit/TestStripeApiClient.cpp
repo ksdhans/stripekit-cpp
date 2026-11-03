@@ -455,6 +455,71 @@ TEST_F(StripeApiClientTest, CreateCheckoutSessionCallbackSuccess) {
     EXPECT_TRUE(checkout_cb_invoked);
 }
 
+TEST_F(StripeApiClientTest, CreateCardRequiredSubscriptionTrial) {
+    http_client.set_handler([](const HttpRequest& req) {
+        EXPECT_EQ(req.path, "/v1/checkout/sessions");
+        EXPECT_EQ(req.headers.at("Idempotency-Key"), "trial_attempt");
+        EXPECT_NE(req.body.find("customer_email=buyer%40example.com"), std::string::npos);
+        EXPECT_NE(req.body.find("subscription_data%5Btrial_period_days%5D=14"), std::string::npos);
+        EXPECT_NE(req.body.find("subscription_data%5Bmetadata%5D%5Btenant_id%5D=tenant_1"),
+                  std::string::npos);
+        EXPECT_NE(req.body.find("payment_method_collection=always"), std::string::npos);
+        EXPECT_NE(req.body.find("payment_method_types%5B0%5D=card"), std::string::npos);
+        EXPECT_NE(req.body.find("expires_at=1800000000"), std::string::npos);
+        return HttpResponse{ .status_code = 200,
+                             .body =
+                                 R"({"id":"cs_trial","status":"open","expires_at":1800000000})" };
+    });
+    CreateCheckoutSessionRequest request;
+    request.price_id = "price_monthly";
+    request.mode.clear();
+    request.customer_email = "buyer@example.com";
+    request.trial_period_days = 14;
+    request.subscription_metadata = { { "tenant_id", "tenant_1" } };
+    request.payment_method_collection = "always";
+    request.payment_method_types = { "card" };
+    request.expires_at = 1800000000;
+    const auto session =
+        client->checkout()
+            .sessions()
+            .create_async(request, RequestOptions{ .idempotency_key = "trial_attempt" })
+            .result();
+    EXPECT_EQ(session.id, "cs_trial");
+    EXPECT_EQ(session.expires_at_unix, 1800000000);
+}
+
+TEST_F(StripeApiClientTest, RetrieveCheckoutSessionEncodesIdentifier) {
+    http_client.set_handler([](const HttpRequest& req) {
+        EXPECT_EQ(req.method, HttpMethod::Get);
+        EXPECT_EQ(req.path, "/v1/checkout/sessions/cs_special%2Fid");
+        EXPECT_TRUE(req.body.empty());
+        return HttpResponse{ .status_code = 200,
+                             .body = R"({"id":"cs_special/id","status":"complete"})" };
+    });
+    const auto session = client->checkout().sessions().retrieve_async("cs_special/id").result();
+    EXPECT_EQ(session.status, "complete");
+}
+
+TEST_F(StripeApiClientTest, RejectConflictingCheckoutTrialSettings) {
+    CreateCheckoutSessionRequest request;
+    request.customer_id = "cus_existing";
+    request.customer_email = "buyer@example.com";
+    EXPECT_THROW(client->checkout().sessions().create_async(request).result(),
+                 ConfigurationException);
+    request.customer_id.clear();
+    request.mode = "payment";
+    request.trial_period_days = 14;
+    EXPECT_THROW(client->checkout().sessions().create_async(request).result(),
+                 ConfigurationException);
+    request.mode = "subscription";
+    request.trial_period_days = 0;
+    EXPECT_THROW(client->checkout().sessions().create_async(request).result(),
+                 ConfigurationException);
+    request.trial_period_days = 731;
+    EXPECT_THROW(client->checkout().sessions().create_async(request).result(),
+                 ConfigurationException);
+}
+
 TEST_F(StripeApiClientTest, CreateBillingPortalSessionCallbackSuccess) {
     http_client.set_response(HttpResponse{
         .status_code = 200,

@@ -450,6 +450,9 @@ private:
     class CheckoutSessionOperations final : public CheckoutSessions {
     public:
         explicit CheckoutSessionOperations(StripeApiClient& owner);
+        /** Retrieve the current state of a checkout session. */
+        Task<CheckoutSession> retrieve_async(std::string session_id,
+                                             const RequestOptions& options = {}) override;
         Task<CheckoutSession> create_async(const CreateCheckoutSessionRequest& request,
                                            const RequestOptions& options = {}) override;
         void create(const CreateCheckoutSessionRequest& request,

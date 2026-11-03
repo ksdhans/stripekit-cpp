@@ -113,6 +113,19 @@ struct CreateCheckoutSessionRequest {
 
     /** Free-form key/value pairs to store on the session. */
     std::unordered_map<std::string, std::string> metadata;
+
+    /** Email for a new customer; do not combine with customer_id. */
+    std::string customer_email;
+    /** Subscription trial duration in days; absent means no trial. */
+    std::optional<std::int64_t> trial_period_days;
+    /** Metadata on the resulting subscription, included in subscription webhooks. */
+    std::unordered_map<std::string, std::string> subscription_metadata;
+    /** always or if_required; empty uses Stripe's default. */
+    std::string payment_method_collection;
+    /** Allowed payment methods; empty uses the Stripe account's defaults. */
+    std::vector<std::string> payment_method_types;
+    /** Session expiry as Unix seconds; absent uses Stripe's default. */
+    std::optional<std::int64_t> expires_at;
 };
 
 /** Which task a billing portal session should take the customer straight to. */
@@ -607,6 +620,20 @@ public:
     virtual void create(const CreateCheckoutSessionRequest& request,
                         const RequestOptions& options,
                         CreateCompletion completion) = 0;
+
+    /**
+     * Retrieves a Checkout Session so callers can check whether it is open,
+     * complete, or expired.
+     *
+     * @param session_id Stripe session identifier.
+     * @param options Per-request settings.
+     *
+     * @return Current session state. Completion alone is not proof of payment.
+     *
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<CheckoutSession> retrieve_async(std::string session_id,
+                                                 const RequestOptions& options = {}) = 0;
 };
 
 /**

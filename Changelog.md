@@ -5,6 +5,10 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Add support for subscription trial periods
+- Add Checkout session retrieval and parse its expiry. Custom CheckoutSessions
+  implementations now need `retrieve_async()`.
+
 ## 0.3.1 2026-10-26
 
 - Omit empty product descriptions when creating products

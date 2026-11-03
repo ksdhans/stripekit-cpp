@@ -375,8 +375,15 @@ bool is_success(const HttpResponse& response) {
 }
 
 std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
-    std::string body;
     const std::string session_mode = request.mode.empty() ? "subscription" : request.mode;
+    if ((!request.customer_id.empty() && !request.customer_email.empty()) ||
+        (request.trial_period_days.has_value() &&
+         (session_mode != "subscription" || *request.trial_period_days <= 0 ||
+          *request.trial_period_days > 730))) {
+        throw ConfigurationException(
+            "Checkout customer or subscription trial settings are invalid");
+    }
+    std::string body;
     append_form_value(body, "mode", session_mode);
     if (!request.customer_id.empty()) {
         append_form_value(body, "customer", request.customer_id);
@@ -398,6 +405,22 @@ std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
     append_form_value(body, "success_url", request.success_url);
     append_form_value(body, "cancel_url", request.cancel_url);
     append_metadata(body, request.metadata);
+    if (!request.customer_email.empty())
+        append_form_value(body, "customer_email", request.customer_email);
+    if (request.trial_period_days.has_value())
+        append_form_value(body,
+                          "subscription_data[trial_period_days]",
+                          std::to_string(*request.trial_period_days));
+    for (const auto& [key, value] : request.subscription_metadata)
+        append_form_value(body, "subscription_data[metadata][" + key + "]", value);
+    if (!request.payment_method_collection.empty())
+        append_form_value(body, "payment_method_collection", request.payment_method_collection);
+    for (std::size_t i = 0; i < request.payment_method_types.size(); ++i)
+        append_form_value(body,
+                          "payment_method_types[" + std::to_string(i) + "]",
+                          request.payment_method_types[i]);
+    if (request.expires_at.has_value())
+        append_form_value(body, "expires_at", std::to_string(*request.expires_at));
     return body;
 }
 
@@ -848,7 +871,8 @@ JsonStripeResponseParser::parse_checkout_session(const HttpResponse& response) c
                             .currency = json_value::string(object, "currency"),
                             .amount_total = json_value::integer(object, "amount_total"),
                             .livemode = json_value::boolean(object, "livemode"),
-                            .metadata = metadata_value(object) };
+                            .metadata = metadata_value(object),
+                            .expires_at_unix = json_value::integer(object, "expires_at") };
 }
 
 Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& response) const {
@@ -1107,6 +1131,19 @@ void StripeApiClient::CustomerOperations::retrieve(std::string customer_id,
 
 StripeApiClient::CheckoutSessionOperations::CheckoutSessionOperations(StripeApiClient& owner)
     : owner(owner) {}
+
+Task<CheckoutSession>
+StripeApiClient::CheckoutSessionOperations::retrieve_async(std::string session_id,
+                                                           const RequestOptions& options) {
+    return send_and_parse_async<CheckoutSession>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(
+            HttpMethod::Get, "/v1/checkout/sessions/" + url_encode(session_id), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_checkout_session(response);
+        });
+}
 
 Task<CheckoutSession> StripeApiClient::CheckoutSessionOperations::create_async(
     const CreateCheckoutSessionRequest& request, const RequestOptions& options) {

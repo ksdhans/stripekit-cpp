@@ -168,6 +168,8 @@ struct CheckoutSession {
 
     /** Free-form metadata key/value pairs attached to this session. */
     std::unordered_map<std::string, std::string> metadata;
+    /** Session expiry as Unix seconds; zero when absent. */
+    std::int64_t expires_at_unix = 0;
 };
 
 /** A current subscription item, or a proposed item in a pending update. */
