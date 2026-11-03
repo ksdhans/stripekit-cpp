@@ -1,6 +1,6 @@
-@page billing_portal_and_invoices Billing Portal and Invoices
+# Billing Portal and Invoices {#billing_portal_and_invoices}
 
-@tableofcontents
+[TOC]
 
 The **billing portal** is a Stripe-hosted page where customers manage their own
 billing: they can update their card, download past invoices, switch plans, or

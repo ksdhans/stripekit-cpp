@@ -1,6 +1,6 @@
-@page products_and_prices Products and Prices
+# Products and Prices {#products_and_prices}
 
-@tableofcontents
+[TOC]
 
 A **product** describes what you sell, such as a Standard subscription.
 A **price** describes how much it costs, in which currency, and how often the

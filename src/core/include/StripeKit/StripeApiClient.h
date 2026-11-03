@@ -354,10 +354,18 @@ public:
      */
     Invoices& invoices() override;
 
-    /** Return the product operations owned by this client. */
+    /**
+     * Returns the product operations.
+     *
+     * @return A reference valid for the lifetime of this client.
+     */
     Products& products() override;
 
-    /** Return the price operations owned by this client. */
+    /**
+     * Returns the price operations.
+     *
+     * @return A reference valid for the lifetime of this client.
+     */
     Prices& prices() override;
 
 private:

@@ -27,7 +27,8 @@ if(STRIPEKIT_BUILD_DOCS)
     set(STRIPEKIT_DOXYGEN_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/docs)
 
     # Add new documentation pages and public headers here so Doxygen picks them
-    # up and the target rebuilds when they change.
+    # up and the target rebuilds when they change. The changelog and example
+    # READMEs are included so Markdown links to them resolve as pages.
     set(stripekit_doc_pages
         docs/MainPage.dox
         docs/Topics.dox
@@ -37,6 +38,14 @@ if(STRIPEKIT_BUILD_DOCS)
         docs/BillingPortalAndInvoices.md
         docs/WritingAnAdapter.md
         docs/versioning.md
+        Changelog.md
+        examples/README.md
+        examples/BillingPortalCli/README.md
+        examples/CheckoutSessionCli/README.md
+        examples/DrogonCheckoutDemo/README.md
+        examples/InvoiceStatusCli/README.md
+        examples/ProductCatalogCli/README.md
+        examples/WebhookSignature/README.md
     )
 
     set(stripekit_doc_headers

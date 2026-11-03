@@ -433,21 +433,55 @@ public:
      */
     virtual Task<Product> create_async(const CreateProductRequest& request,
                                        const RequestOptions& options = {}) = 0;
-    /** Create a product; completion receives the product or failure. */
+    /**
+     * Create a product, reporting the result through a callback.
+     *
+     * @param request Product details.
+     * @param options Request settings.
+     * @param completion Receives the created product or the failure exactly once.
+     */
     virtual void create(const CreateProductRequest& request,
                         const RequestOptions& options,
                         Completion completion) = 0;
-    /** Retrieve a product by ID; deleted products have deleted=true. */
+    /**
+     * Retrieve a product by ID; deleted products have deleted=true.
+     *
+     * @param product_id Existing Stripe product ID.
+     * @param options Request settings.
+     *
+     * @return The product.
+     */
     virtual Task<Product> retrieve_async(std::string product_id,
                                          const RequestOptions& options = {}) = 0;
-    /** Retrieve a product; completion receives the product or failure. */
+    /**
+     * Retrieve a product, reporting the result through a callback.
+     *
+     * @param product_id Existing Stripe product ID.
+     * @param options Request settings.
+     * @param completion Receives the product or the failure exactly once.
+     */
     virtual void
     retrieve(std::string product_id, const RequestOptions& options, Completion completion) = 0;
-    /** Update display details, availability, or default price, not existing subscriptions. */
+    /**
+     * Update display details, availability, or default price, not existing subscriptions.
+     *
+     * @param product_id Existing Stripe product ID.
+     * @param request Supplied fields to change.
+     * @param options Request settings.
+     *
+     * @return The updated product.
+     */
     virtual Task<Product> update_async(std::string product_id,
                                        const UpdateProductRequest& request,
                                        const RequestOptions& options = {}) = 0;
-    /** Update a product; completion receives the product or failure. */
+    /**
+     * Update a product, reporting the result through a callback.
+     *
+     * @param product_id Existing Stripe product ID.
+     * @param request Supplied fields to change.
+     * @param options Request settings.
+     * @param completion Receives the updated product or the failure exactly once.
+     */
     virtual void update(std::string product_id,
                         const UpdateProductRequest& request,
                         const RequestOptions& options,
@@ -469,10 +503,23 @@ public:
     using ListCompletion = std::function<void(CallbackResult<PriceList>)>;
     /** Destroy the operation group. */
     virtual ~Prices() = default;
-    /** Create a new price; does not replace prices on existing subscriptions. */
+    /**
+     * Create a new price; does not replace prices on existing subscriptions.
+     *
+     * @param request Price details.
+     * @param options Request settings.
+     *
+     * @return The created price.
+     */
     virtual Task<Price> create_async(const CreatePriceRequest& request,
                                      const RequestOptions& options = {}) = 0;
-    /** Create a price; completion receives the price or failure. */
+    /**
+     * Create a price, reporting the result through a callback.
+     *
+     * @param request Price details.
+     * @param options Request settings.
+     * @param completion Receives the created price or the failure exactly once.
+     */
     virtual void create(const CreatePriceRequest& request,
                         const RequestOptions& options,
                         Completion completion) = 0;
@@ -497,16 +544,42 @@ public:
                         const UpdatePriceRequest& request,
                         const RequestOptions& options,
                         Completion completion) = 0;
-    /** Retrieve an active or archived price by its ID. */
+    /**
+     * Retrieve an active or archived price by its ID.
+     *
+     * @param price_id Existing Price ID.
+     * @param options Request settings.
+     *
+     * @return The price.
+     */
     virtual Task<Price> retrieve_async(std::string price_id,
                                        const RequestOptions& options = {}) = 0;
-    /** Retrieve a price; completion receives the price or failure. */
+    /**
+     * Retrieve a price, reporting the result through a callback.
+     *
+     * @param price_id Existing Price ID.
+     * @param options Request settings.
+     * @param completion Receives the price or the failure exactly once.
+     */
     virtual void
     retrieve(std::string price_id, const RequestOptions& options, Completion completion) = 0;
-    /** Retrieve one filtered page, including lookup-key results. */
+    /**
+     * Retrieve one filtered page, including lookup-key results.
+     *
+     * @param request Filters and pagination settings.
+     * @param options Request settings.
+     *
+     * @return One page of matching prices.
+     */
     virtual Task<PriceList> list_async(const ListPricesRequest& request = {},
                                        const RequestOptions& options = {}) = 0;
-    /** List one page; completion receives the page or failure. */
+    /**
+     * List one page, reporting the result through a callback.
+     *
+     * @param request Filters and pagination settings.
+     * @param options Request settings.
+     * @param completion Receives the page or the failure exactly once.
+     */
     virtual void list(const ListPricesRequest& request,
                       const RequestOptions& options,
                       ListCompletion completion) = 0;
@@ -1053,10 +1126,20 @@ public:
      */
     virtual ~StripeClient() = default;
 
-    /** Return catalog product operations, valid for this client's lifetime. */
+    /**
+     * Returns the catalog product operations.
+     *
+     * @return A reference owned by the client; it stays valid as long as the
+     *         client does.
+     */
     virtual Products& products() = 0;
 
-    /** Return catalog price operations, valid for this client's lifetime. */
+    /**
+     * Returns the catalog price operations.
+     *
+     * @return A reference owned by the client; it stays valid as long as the
+     *         client does.
+     */
     virtual Prices& prices() = 0;
 
     /**
