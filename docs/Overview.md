@@ -126,6 +126,30 @@ default for a single-host deployment. Applications running several instances
 should implement stripekit::WebhookDedupStore against their shared database so
 all instances agree on which events are done.
 
+SQLite stores use WAL mode for file-backed databases, a five-second lock timeout,
+and `FULL` commit durability by default. To change the timeout or allow faster
+commits with weaker power-loss durability, pass
+stripekit::SqliteWebhookDedupStoreOptions:
+
+@code
+stripekit::SqliteWebhookDedupStoreOptions options;
+options.busy_timeout = std::chrono::seconds(2);
+options.synchronous_mode = stripekit::SqliteSynchronousMode::Normal;
+stripekit::SqliteWebhookDedupStore store("stripe-webhooks.sqlite3", options);
+@endcode
+
+`Normal` may lose recent committed records on power failure, so an event could
+be processed again after recovery. Keep the default `Full` unless that trade-off
+is acceptable. These operations remain synchronous; lock waits block the caller.
+
+If an external checkpoint manager, such as Litestream, is configured and running
+for this database, set `options.auto_checkpointing = false` before creating the
+store. This disables automatic WAL checkpoints so the external manager can handle
+them. It does not start Litestream or change commit durability. Leave it true
+without external checkpoint management, or the WAL may grow without limit.
+Disabling automatic checkpoints requires a file-backed database; `":memory:"`
+and temporary databases cannot disable this option or use WAL mode.
+
 @section overview_next Where to go next
 
 - @ref quickstart — a working integration, step by step.

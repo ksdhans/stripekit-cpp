@@ -5,19 +5,53 @@
  *
  * @author Hans de Ruiter
  *
- * @license See LICENSE.md for details.
+ * @License See LICENSE for details.
  */
 
 #pragma once
 
 #include "StripeKit/WebhookDedupStore.h"
 
+#include <chrono>
 #include <mutex>
 #include <string>
 
 struct sqlite3;
 
 namespace stripekit {
+
+/** @ingroup webhooks
+ * Durability of committed SQLite webhook records.
+ */
+enum class SqliteSynchronousMode {
+    Full,  /**< Sync every commit to disk, subject to the storage system's guarantees. */
+    Normal /**< Faster WAL commits; a power failure may lose recent committed records. */
+};
+
+/** @ingroup webhooks
+ * Settings applied whenever a SQLite webhook store opens a connection.
+ */
+struct SqliteWebhookDedupStoreOptions {
+    /**
+     * Whether SQLite automatically checkpoints the WAL.
+     *
+     * Disable only when an external checkpoint manager, such as Litestream,
+     * is configured and running, or the WAL may grow without limit. Disabling
+     * requires a file-backed database and does not change commit durability.
+     */
+    bool auto_checkpointing = true;
+
+    /**
+     * How long SQLite may wait for a database lock before reporting failure.
+     *
+     * Zero disables waiting. Must fit in a non-negative int number of milliseconds.
+     * Store operations are synchronous, so this wait blocks the calling thread.
+     */
+    std::chrono::milliseconds busy_timeout{ 5000 };
+
+    /** Commit durability. Normal allows recent records to be lost on power failure. */
+    SqliteSynchronousMode synchronous_mode = SqliteSynchronousMode::Full;
+};
 
 /**
  * @ingroup webhooks
@@ -45,7 +79,9 @@ public:
     /**
      * Opens or creates the database.
      *
-     * Missing tables are created, so a fresh path just works.
+     * Uses default SqliteWebhookDedupStoreOptions. Missing tables are created.
+     * File-backed databases use WAL mode; in-memory and temporary databases
+     * retain their journal mode.
      *
      * @param database_path Path to the SQLite file. Its directory must exist
      *        and be writable, and the file must be on local storage; network
@@ -54,6 +90,21 @@ public:
      *         prepared, or this build has no SQLite support.
      */
     explicit SqliteWebhookDedupStore(std::string database_path);
+
+    /**
+     * Opens or creates the database with explicit connection settings.
+     *
+     * File-backed databases use WAL mode. Automatic checkpoints remain enabled
+     * unless options.auto_checkpointing is false. Settings are applied and checked
+     * before the store can be used.
+     *
+     * @param database_path Local database path, ":memory:", or an empty string
+     *        for a temporary database. The parent directory must exist and be writable.
+     * @param options Lock timeout, durability, and automatic checkpoint settings.
+     * @throws ConfigurationException Options are invalid, the database cannot be
+     *         opened or configured, or SQLite support is unavailable.
+     */
+    SqliteWebhookDedupStore(std::string database_path, SqliteWebhookDedupStoreOptions options);
 
     /**
      * Closes the database and destroys the store.

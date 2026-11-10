@@ -9,8 +9,11 @@
 
 #include <chrono>
 #include <cstdint>
+#include <limits>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 
 #if defined(STRIPEKIT_WITH_SQLITE3)
 #include <sqlite3.h>
@@ -18,16 +21,98 @@
 
 namespace stripekit {
 
-SqliteWebhookDedupStore::SqliteWebhookDedupStore(std::string database_path) {
 #if defined(STRIPEKIT_WITH_SQLITE3)
-    if (sqlite3_open(database_path.c_str(), &db) != SQLITE_OK) {
+namespace {
+
+/** Runs an initialization command, reporting SQLite failures to the caller. */
+void execute_initialization(sqlite3* db, const char* sql) {
+    if (sqlite3_exec(db, sql, nullptr, nullptr, nullptr) != SQLITE_OK) {
+        throw ConfigurationException(std::string("Failed SQLite initialization (") + sql +
+                                     "): " + sqlite3_errmsg(db));
+    }
+}
+
+/** Reads a single PRAGMA value so requested settings can be checked. */
+std::string read_pragma(sqlite3* db, const char* sql) {
+    sqlite3_stmt* raw_statement = nullptr;
+    const int prepared = sqlite3_prepare_v2(db, sql, -1, &raw_statement, nullptr);
+    const std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement(raw_statement,
+                                                                               sqlite3_finalize);
+    if (prepared != SQLITE_OK || sqlite3_step(statement.get()) != SQLITE_ROW) {
+        throw ConfigurationException(std::string("Failed to read SQLite setting (") + sql +
+                                     "): " + sqlite3_errmsg(db));
+    }
+    const auto* value = sqlite3_column_text(statement.get(), 0);
+    if (value == nullptr) {
+        throw ConfigurationException(std::string("Missing SQLite setting value: ") + sql);
+    }
+    return reinterpret_cast<const char*>(value);
+}
+
+/** Rejects initialization when SQLite did not retain a requested setting. */
+void require_pragma(sqlite3* db, const char* sql, const std::string& expected) {
+    const auto actual = read_pragma(db, sql);
+    if (actual != expected) {
+        throw ConfigurationException(std::string("Unexpected SQLite setting (") + sql +
+                                     "): expected " + expected + ", got " + actual);
+    }
+}
+
+} // namespace
+#endif
+
+SqliteWebhookDedupStore::SqliteWebhookDedupStore(std::string database_path)
+    : SqliteWebhookDedupStore(std::move(database_path), {}) {}
+
+SqliteWebhookDedupStore::SqliteWebhookDedupStore(std::string database_path,
+                                                 SqliteWebhookDedupStoreOptions options) {
+#if defined(STRIPEKIT_WITH_SQLITE3)
+    if (options.busy_timeout.count() < 0 ||
+        options.busy_timeout.count() > std::numeric_limits<int>::max()) {
+        throw ConfigurationException("SQLite busy_timeout must fit in a non-negative int");
+    }
+    if (options.synchronous_mode != SqliteSynchronousMode::Full &&
+        options.synchronous_mode != SqliteSynchronousMode::Normal) {
+        throw ConfigurationException("Invalid SQLite synchronous_mode");
+    }
+
+    sqlite3* raw_connection = nullptr;
+    const int opened = sqlite3_open(database_path.c_str(), &raw_connection);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> connection(raw_connection, sqlite3_close);
+    if (opened != SQLITE_OK) {
         const std::string message =
-            db != nullptr ? sqlite3_errmsg(db) : "unknown sqlite open error";
-        if (db != nullptr) {
-            sqlite3_close(db);
-            db = nullptr;
-        }
+            connection != nullptr ? sqlite3_errmsg(connection.get()) : "unknown sqlite open error";
         throw ConfigurationException("Failed to open SQLite database: " + message);
+    }
+
+    if (sqlite3_busy_timeout(connection.get(), static_cast<int>(options.busy_timeout.count())) !=
+        SQLITE_OK) {
+        throw ConfigurationException("Failed to set SQLite busy_timeout: " +
+                                     std::string(sqlite3_errmsg(connection.get())));
+    }
+    require_pragma(
+        connection.get(), "PRAGMA busy_timeout;", std::to_string(options.busy_timeout.count()));
+
+    const char* filename = sqlite3_db_filename(connection.get(), "main");
+    const bool file_backed = filename != nullptr && *filename != '\0';
+    if (!options.auto_checkpointing && !file_backed) {
+        throw ConfigurationException(
+            "Disabling automatic checkpoints requires a file-backed SQLite database");
+    }
+    if (file_backed) {
+        if (read_pragma(connection.get(), "PRAGMA journal_mode;") != "wal") {
+            execute_initialization(connection.get(), "PRAGMA journal_mode=WAL;");
+        }
+        require_pragma(connection.get(), "PRAGMA journal_mode;", "wal");
+    }
+
+    const bool full = options.synchronous_mode == SqliteSynchronousMode::Full;
+    execute_initialization(connection.get(),
+                           full ? "PRAGMA synchronous=FULL;" : "PRAGMA synchronous=NORMAL;");
+    require_pragma(connection.get(), "PRAGMA synchronous;", full ? "2" : "1");
+    if (!options.auto_checkpointing) {
+        execute_initialization(connection.get(), "PRAGMA wal_autocheckpoint=0;");
+        require_pragma(connection.get(), "PRAGMA wal_autocheckpoint;", "0");
     }
 
     const char* schema_sql = "CREATE TABLE IF NOT EXISTS stripekit_webhook_dedup ("
@@ -39,19 +124,11 @@ SqliteWebhookDedupStore::SqliteWebhookDedupStore(std::string database_path) {
                              "CREATE INDEX IF NOT EXISTS stripekit_webhook_dedup_processed_idx "
                              "ON stripekit_webhook_dedup(processed, processed_at_unix);";
 
-    char* error_message = nullptr;
-    if (sqlite3_exec(db, schema_sql, nullptr, nullptr, &error_message) != SQLITE_OK) {
-        const std::string message =
-            error_message != nullptr ? error_message : "unknown sqlite schema error";
-        if (error_message != nullptr) {
-            sqlite3_free(error_message);
-        }
-        sqlite3_close(db);
-        db = nullptr;
-        throw ConfigurationException("Failed to initialize SQLite schema: " + message);
-    }
+    execute_initialization(connection.get(), schema_sql);
+    db = connection.release();
 #else
     (void)database_path;
+    (void)options;
     throw ConfigurationException("StripeKit was built without SQLite support");
 #endif
 }
