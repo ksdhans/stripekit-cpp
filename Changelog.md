@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.6.0 2026-11-11
+
 - Add subscription schedule creation, retrieval, and updates, plus subscription
   schedule, discount, and tax settings, with unit and Sandbox tests.
 - Add Checkout session expiry and paginated listing with a payment intent filter,
