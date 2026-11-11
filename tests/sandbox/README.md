@@ -13,6 +13,7 @@ walkthrough; the automated suite does not complete hosted Checkout.
 Payment tests cover charge retrieval and customer-filtered pagination, invoice
 allocations filtered by payment intent, and allocation pagination. They verify
 charge-to-invoice relationships on both legacy and modern Stripe API versions.
+Declined and disputed charges are checked through both retrieval and listing.
 
 The suite checks the requests, returned billing data, and webhook signals that
 applications need. Tenant access, trial eligibility, and grace-period policies
@@ -21,6 +22,10 @@ belong to the application and are not tested here.
 Refund tests create partial refunds, retry with the same idempotency key, recover
 operation metadata through charge-filtered pages, refund the remaining balance,
 and verify that Stripe rejects excessive or already-refunded amounts.
+Stripe's `pm_card_pendingRefund` and `pm_card_refundFail` fixtures also exercise
+real pending-to-succeeded and succeeded-to-failed transitions. These tests poll
+refund history for up to seven minutes, checking preserved payment references,
+amounts, metadata, failure reasons, and the resulting charge refund totals.
 
 No money moves, but the tests do talk to Stripe over the network, so they are
 opt-in and are not part of the default `ctest` run.

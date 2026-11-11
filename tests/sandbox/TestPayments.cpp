@@ -10,6 +10,7 @@
 #include <future>
 #include <set>
 #include <stdexcept>
+#include <thread>
 
 using namespace stripekit;
 using namespace stripekit::testing;
@@ -47,14 +48,14 @@ protected:
         if (!failures.empty()) throw std::runtime_error("Payment test cleanup failed:" + failures);
     }
 
-    /** Charge the fixture's customer using a real sandbox PaymentIntent. */
-    std::string create_charge() {
+    /** Charge the fixture's customer using the requested Stripe sandbox card fixture. */
+    std::string create_charge(const std::string& payment_method = "pm_card_visa") {
         const auto intent = environment->stripe_api().require_post(
             "/v1/payment_intents",
             { { "amount", "1500" },
               { "currency", "usd" },
               { "customer", customer_id },
-              { "payment_method", "pm_card_visa" },
+              { "payment_method", payment_method },
               { "payment_method_types[]", "card" },
               { "confirm", "true" },
               { "metadata[stripekit_run_id]", environment->run_id() } });
@@ -88,6 +89,117 @@ protected:
     std::string customer_id;
     std::vector<std::string> invoices;
 };
+
+TEST_F(SandboxPaymentsTest, DeclinedChargeIsReturnedAsFailedAndUnpaid) {
+    const auto intent =
+        environment->stripe_api().require_post("/v1/payment_intents",
+                                               { { "amount", "1500" },
+                                                 { "currency", "usd" },
+                                                 { "customer", customer_id },
+                                                 { "payment_method_types[]", "card" } });
+    const auto declined =
+        environment->stripe_api().post("/v1/payment_intents/" + intent.id() + "/confirm",
+                                       { { "payment_method", "pm_card_chargeDeclined" } });
+    ASSERT_EQ(declined.status_code, 402);
+    auto& client = environment->stripe_client();
+    const auto page = client.charges().list_async({ .customer_id = customer_id }).result();
+    ASSERT_EQ(page.data.size(), 1U);
+    EXPECT_FALSE(page.has_more);
+    const auto listed = page.data.front();
+    const auto retrieved = client.charges().retrieve_async(listed.id).result();
+    for (const auto& charge : { listed, retrieved }) {
+        EXPECT_EQ(charge.customer_id, customer_id);
+        EXPECT_EQ(charge.payment_intent_id, intent.id());
+        EXPECT_EQ(charge.status, "failed");
+        EXPECT_FALSE(charge.paid);
+        EXPECT_FALSE(charge.disputed);
+        EXPECT_FALSE(charge.livemode);
+        EXPECT_EQ(charge.amount, 1500);
+        EXPECT_EQ(charge.amount_refunded, 0);
+        EXPECT_EQ(charge.currency, "usd");
+    }
+}
+
+TEST_F(SandboxPaymentsTest, DisputedChargeRetainsPaymentAndCustomerReferences) {
+    const auto charge_id = create_charge("pm_card_createDispute");
+    const auto opened = environment->wait_for_event("charge.dispute.created", charge_id);
+    ASSERT_TRUE(opened.has_value());
+    const auto dispute_id = json_path(opened->json(), "data.object.id").asString();
+    ASSERT_FALSE(dispute_id.empty());
+    // Close the sandbox dispute before assertions so a failed read leaves no open case.
+    environment->stripe_api().require_post("/v1/disputes/" + dispute_id + "/close", {});
+    auto& client = environment->stripe_client();
+    const auto retrieved = client.charges().retrieve_async(charge_id).result();
+    const auto page = client.charges().list_async({ .customer_id = customer_id }).result();
+    ASSERT_EQ(page.data.size(), 1U);
+    EXPECT_EQ(page.data.front().id, charge_id);
+    for (const auto& charge : { retrieved, page.data.front() }) {
+        EXPECT_EQ(charge.customer_id, customer_id);
+        EXPECT_FALSE(charge.payment_intent_id.empty());
+        EXPECT_EQ(charge.payment_intent_id, retrieved.payment_intent_id);
+        EXPECT_EQ(charge.status, "succeeded");
+        EXPECT_TRUE(charge.paid);
+        EXPECT_TRUE(charge.disputed);
+        EXPECT_FALSE(charge.livemode);
+        EXPECT_EQ(charge.amount, 1500);
+        EXPECT_EQ(charge.amount_refunded, 0);
+    }
+}
+
+TEST_F(SandboxPaymentsTest, PendingAndInitiallySuccessfulRefundsReachTheirFinalStatuses) {
+    auto& client = environment->stripe_client();
+    const auto pending_charge = create_charge("pm_card_pendingRefund");
+    const auto failing_charge = create_charge("pm_card_refundFail");
+    const auto pending =
+        client.refunds()
+            .create_async({ .charge_id = pending_charge,
+                            .amount = 300,
+                            .metadata = { { "operation", environment->run_id() + "_pending" } } },
+                          { .idempotency_key = environment->run_id() + "_pending" })
+            .result();
+    const auto failing =
+        client.refunds()
+            .create_async({ .charge_id = failing_charge,
+                            .amount = 400,
+                            .metadata = { { "operation", environment->run_id() + "_failing" } } },
+                          { .idempotency_key = environment->run_id() + "_failing" })
+            .result();
+    EXPECT_EQ(pending.status, "pending");
+    EXPECT_EQ(failing.status, "succeeded");
+
+    bool succeeded = false;
+    bool failed = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(7);
+    while ((!succeeded || !failed) && std::chrono::steady_clock::now() < deadline) {
+        for (const auto& original : { pending, failing }) {
+            const auto page =
+                client.refunds().list_async({ .charge_id = original.charge_id }).result();
+            ASSERT_EQ(page.data.size(), 1U);
+            EXPECT_FALSE(page.has_more);
+            const auto& refund = page.data.front();
+            EXPECT_EQ(refund.id, original.id);
+            EXPECT_EQ(refund.charge_id, original.charge_id);
+            EXPECT_EQ(refund.payment_intent_id, original.payment_intent_id);
+            EXPECT_EQ(refund.amount, original.amount);
+            EXPECT_EQ(refund.currency, "usd");
+            EXPECT_EQ(refund.metadata, original.metadata);
+            if (original.id == pending.id) {
+                EXPECT_TRUE(refund.status == "pending" || refund.status == "succeeded");
+                succeeded = refund.status == "succeeded";
+            } else {
+                EXPECT_TRUE(refund.status == "succeeded" || refund.status == "failed");
+                failed = refund.status == "failed";
+                if (failed) EXPECT_FALSE(refund.failure_reason.empty());
+            }
+        }
+        if (!succeeded || !failed) std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
+    if (!succeeded || !failed)
+        FAIL() << "Stripe refund fixtures did not reach succeeded/failed within seven minutes"
+               << " (pending completed: " << succeeded << ", failure observed: " << failed << ")";
+    EXPECT_EQ(client.charges().retrieve_async(pending_charge).result().amount_refunded, 300);
+    EXPECT_EQ(client.charges().retrieve_async(failing_charge).result().amount_refunded, 0);
+}
 
 TEST_F(SandboxPaymentsTest, RefundCreationRetryHistoryAndRemainingBalance) {
     const auto charge_id = create_charge();
