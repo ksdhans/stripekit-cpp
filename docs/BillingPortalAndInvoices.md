@@ -169,6 +169,80 @@ Useful fields:
 customer's action, such as an extra bank authentication. Send the customer
 there, then wait for the `invoice.paid` webhook.
 
+@section collection_controls Schedule cancellation or pause collection
+
+Use period-end cancellation to let an existing subscription finish its current
+billing period. Clear it before that period ends if the customer changes their mind:
+
+@code{.cpp}
+const auto scheduled = co_await stripe->subscriptions().set_cancel_at_period_end_async(
+    subscription_id, true, { .idempotency_key = "saved-cancellation-key" });
+const auto continued = co_await stripe->subscriptions().set_cancel_at_period_end_async(
+    subscription_id, false);
+@endcode
+
+A collection pause stops collecting new invoices without changing the
+subscription's status to `paused`. Choose what happens to invoices created
+during the pause:
+
+| `CollectionPauseBehavior` | New invoices |
+|---------------------------|--------------|
+| `Void` | Voided, so they cannot be collected. |
+| `KeepAsDraft` | Kept as drafts, without automatic collection. |
+| `MarkUncollectible` | Marked as uncollectible. |
+
+@code{.cpp}
+stripekit::PauseSubscriptionCollectionRequest pause;
+pause.behavior = stripekit::CollectionPauseBehavior::Void;
+// Optional positive Unix timestamp; otherwise pause until explicitly resumed.
+pause.resumes_at = resume_timestamp;
+const auto paused = co_await stripe->subscriptions().pause_collection_async(subscription_id, pause);
+const auto resumed = co_await stripe->subscriptions().resume_collection_async(subscription_id);
+@endcode
+
+Read `subscription.pause_collection` to inspect the saved behavior and optional
+`resumes_at_unix`. It is absent when collection is not paused. Resuming affects
+future billing; it does not automatically collect invoices from the pause.
+Existing invoices, including their retries, are not changed by setting a pause.
+Handle them separately when stopping all collection. Application access rules
+also remain your responsibility.
+
+@section invoices_manage List and clear unpaid invoices
+
+Invoice listing returns one page at a time. Set `subscription_id` to limit the
+results to one subscription; omit it to list all invoices:
+
+@code{.cpp}
+stripekit::ListInvoicesRequest filter;
+filter.subscription_id = subscription_id;
+filter.limit = 100;
+auto page = co_await stripe->invoices().list_async(filter);
+if (page.has_more) {
+    filter.starting_after = page.data.back().id;
+    page = co_await stripe->invoices().list_async(filter);
+}
+@endcode
+
+To discard an unpaid invoice, inspect its status first:
+
+- Void an `open` invoice with `invoices().void_async(invoice_id)`.
+- Delete a standalone `draft` with `invoices().delete_async(invoice_id)`.
+- Stripe cannot delete subscription-linked drafts. Use
+  `invoices().finalize_async(invoice_id)` to finalize with `auto_advance=false`,
+  then void the resulting `open` invoice. Finalization alone does not discard it.
+- Do not delete or void paid invoices. Refund a collected payment instead.
+
+Check returned IDs, ownership, and status before proceeding. Finalization returns
+the optional `invoice.auto_advance` setting so callers can confirm automatic
+collection is disabled; deletion returns a `DeletedInvoice` confirmation.
+Use a saved idempotency key for each distinct POST operation, and reuse it only
+when retrying that same operation. Stripe failures throw `StripeApiException`.
+Callbacks receive either the typed result or a failure: `list()`, `finalize()`,
+`void_invoice()`, and `delete_invoice()`.
+
+Applications implementing custom `Subscriptions` or `Invoices` interfaces must
+implement these new methods as well as their coroutine forms.
+
 @section invoice_payments Find the payment behind an invoice
 
 A **charge** is an attempt to collect money. Retrieve one with

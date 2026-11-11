@@ -7,6 +7,7 @@ add_executable(stripekit_unit_tests
     unit/Main.cpp
     unit/TestBillingPortalAndInvoices.cpp
     unit/TestCatalog.cpp
+    unit/TestCollectionAndInvoices.cpp
     unit/TestLogging.cpp
     unit/TestModelsAndParser.cpp
     unit/TestPayments.cpp
@@ -142,6 +143,7 @@ if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
             sandbox/SandboxEnvironment.cpp
             sandbox/TestBillingPortalAndInvoices.cpp
             sandbox/TestCatalog.cpp
+            sandbox/TestCollectionAndInvoices.cpp
             sandbox/TestDisputeAndRefund.cpp
             sandbox/TestPayments.cpp
             sandbox/TestSubscriptionLifecycle.cpp

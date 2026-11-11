@@ -798,17 +798,113 @@ public:
     virtual CheckoutSessions& sessions() = 0;
 };
 
+/** Settings for invoices created during a collection pause; existing invoices are unchanged. */
+struct PauseSubscriptionCollectionRequest {
+    CollectionPauseBehavior behavior = CollectionPauseBehavior::Void;
+    std::optional<std::int64_t>
+        resumes_at; ///< Positive Unix timestamp; absent pauses until explicitly resumed.
+};
+
+/** Filters for one invoice page. Empty subscription_id lists all invoices. */
+struct ListInvoicesRequest {
+    std::string subscription_id;
+    std::int64_t limit = 10;    ///< Page size, from 1 to 100.
+    std::string starting_after; ///< Last invoice ID from the previous page.
+};
+
 /**
- * Retrieves, reprices, and cancels Stripe subscriptions.
+ * Read subscriptions, change prices, control collection, and cancel billing.
  *
  * Reach an instance through StripeClient::subscriptions(). Subscriptions are
- * created by Checkout rather than here; this interface covers inspecting one
- * changing its prices and ending it.
+ * created by Checkout rather than here. Application access decisions remain
+ * separate from Stripe's billing and collection state.
  *
  * @sa https://docs.stripe.com/api/subscriptions
  */
 class Subscriptions {
 public:
+    /**
+     * Set or clear cancellation at the end of the current billing period.
+     * This does not cancel immediately or decide application access.
+     *
+     * @param subscription_id Existing subscription ID.
+     * @param cancel_at_period_end True to schedule cancellation; false to clear it.
+     * @param options Per-request settings, including a retry idempotency key.
+     *
+     * @return Updated subscription; inspect cancel_at_period_end for confirmation.
+     *
+     * @throws ConfigurationException If the ID is empty.
+     * @throws StripeApiException If Stripe rejects the change.
+     */
+    virtual Task<Subscription>
+    set_cancel_at_period_end_async(std::string subscription_id,
+                                   bool cancel_at_period_end,
+                                   const RequestOptions& options = {}) = 0;
+    /**
+     * Schedule or clear cancellation and report its result or failure exactly once.
+     *
+     * @param subscription_id Existing subscription ID.
+     * @param cancel_at_period_end Whether cancellation should occur at period end.
+     * @param options Per-request settings.
+     * @param completion Receives the updated subscription or failure.
+     */
+    virtual void
+    set_cancel_at_period_end(std::string subscription_id,
+                             bool cancel_at_period_end,
+                             const RequestOptions& options,
+                             std::function<void(CallbackResult<Subscription>)> completion) = 0;
+    /**
+     * Pause collection without changing subscription status or existing invoices.
+     *
+     * @param subscription_id Existing subscription ID.
+     * @param request How to handle new invoices and when to resume, if specified.
+     * @param options Per-request settings, including a retry idempotency key.
+     *
+     * @return Updated subscription with pause_collection populated.
+     *
+     * @throws ConfigurationException If the ID, behavior, or resume timestamp is invalid.
+     * @throws StripeApiException If Stripe rejects the change.
+     */
+    virtual Task<Subscription>
+    pause_collection_async(std::string subscription_id,
+                           const PauseSubscriptionCollectionRequest& request,
+                           const RequestOptions& options = {}) = 0;
+    /**
+     * Pause collection and report its result or failure exactly once.
+     *
+     * @param subscription_id Existing subscription ID.
+     * @param request Collection behavior and optional resume date.
+     * @param options Per-request settings.
+     * @param completion Receives the updated subscription or failure.
+     */
+    virtual void pause_collection(std::string subscription_id,
+                                  const PauseSubscriptionCollectionRequest& request,
+                                  const RequestOptions& options,
+                                  std::function<void(CallbackResult<Subscription>)> completion) = 0;
+    /**
+     * Clear a collection pause. Previously paused invoices are not collected automatically.
+     *
+     * @param subscription_id Existing subscription ID.
+     * @param options Per-request settings, including a retry idempotency key.
+     *
+     * @return Updated subscription; pause_collection is absent once resumed.
+     *
+     * @throws ConfigurationException If the ID is empty.
+     * @throws StripeApiException If Stripe rejects the change.
+     */
+    virtual Task<Subscription> resume_collection_async(std::string subscription_id,
+                                                       const RequestOptions& options = {}) = 0;
+    /**
+     * Resume collection and report its result or failure exactly once.
+     *
+     * @param subscription_id Existing subscription ID.
+     * @param options Per-request settings.
+     * @param completion Receives the updated subscription or failure.
+     */
+    virtual void
+    resume_collection(std::string subscription_id,
+                      const RequestOptions& options,
+                      std::function<void(CallbackResult<Subscription>)> completion) = 0;
     /** Completion callback for the callback form of retrieve(). */
     using RetrieveCompletion = std::function<void(CallbackResult<Subscription>)>;
 
@@ -910,7 +1006,7 @@ public:
 };
 
 /**
- * Reads invoices.
+ * Read, finalize, void, and delete invoices.
  *
  * Reach an instance through StripeClient::invoices(). Use it to show what a
  * customer owes, or to fetch the link where they can pay an invoice that
@@ -920,6 +1016,106 @@ public:
  */
 class Invoices {
 public:
+    /** Receives one invoice page or a failure. */
+    using ListCompletion = std::function<void(CallbackResult<InvoiceList>)>;
+    /** Receives draft deletion confirmation or a failure. */
+    using DeleteCompletion = std::function<void(CallbackResult<DeletedInvoice>)>;
+    /**
+     * Read one page, optionally for a specific subscription.
+     *
+     * @param request Subscription filter, page size and cursor.
+     * @param options Per-request settings.
+     *
+     * @return One page; further pages are not fetched automatically.
+     *
+     * @throws ConfigurationException If limit is outside 1 through 100.
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<InvoiceList> list_async(const ListInvoicesRequest& request = {},
+                                         const RequestOptions& options = {}) = 0;
+    /**
+     * Read one page and report its result or failure exactly once.
+     *
+     * @param request Subscription filter and pagination settings.
+     * @param options Per-request settings.
+     * @param completion Receives the page or failure.
+     */
+    virtual void list(const ListInvoicesRequest& request,
+                      const RequestOptions& options,
+                      ListCompletion completion) = 0;
+    /**
+     * Finalize a draft with automatic collection disabled.
+     *
+     * Subscription-linked drafts cannot be deleted. Finalize them before voiding.
+     *
+     * @param invoice_id Existing draft invoice ID.
+     * @param options Per-request settings, including a retry idempotency key.
+     *
+     * @return Finalized invoice; inspect its status before taking further action.
+     *
+     * @throws ConfigurationException If the ID is empty.
+     * @throws StripeApiException If Stripe rejects finalization.
+     */
+    virtual Task<Invoice> finalize_async(std::string invoice_id,
+                                         const RequestOptions& options = {}) = 0;
+    /**
+     * Finalize without automatic collection and report its result or failure exactly once.
+     *
+     * @param invoice_id Existing draft invoice ID.
+     * @param options Per-request settings.
+     * @param completion Receives the finalized invoice or failure.
+     */
+    virtual void finalize(std::string invoice_id,
+                          const RequestOptions& options,
+                          std::function<void(CallbackResult<Invoice>)> completion) = 0;
+    /**
+     * Void a finalized invoice so Stripe cannot collect it. Paid invoices cannot be voided.
+     *
+     * @param invoice_id Existing invoice ID.
+     * @param options Per-request settings, including a retry idempotency key.
+     *
+     * @return Updated invoice; inspect its status for confirmation.
+     *
+     * @throws ConfigurationException If the ID is empty.
+     * @throws StripeApiException If Stripe rejects voiding.
+     */
+    virtual Task<Invoice> void_async(std::string invoice_id,
+                                     const RequestOptions& options = {}) = 0;
+    /**
+     * Void an invoice and report its result or failure exactly once.
+     *
+     * @param invoice_id Existing invoice ID.
+     * @param options Per-request settings.
+     * @param completion Receives the updated invoice or failure.
+     */
+    virtual void void_invoice(std::string invoice_id,
+                              const RequestOptions& options,
+                              std::function<void(CallbackResult<Invoice>)> completion) = 0;
+    /**
+     * Delete a manually created draft invoice.
+     *
+     * Subscription-linked drafts cannot be deleted; finalize and void them instead.
+     *
+     * @param invoice_id Existing draft invoice ID.
+     * @param options Per-request settings.
+     *
+     * @return Stripe's deletion confirmation.
+     *
+     * @throws ConfigurationException If the ID is empty or confirmation is malformed.
+     * @throws StripeApiException If Stripe rejects deletion.
+     */
+    virtual Task<DeletedInvoice> delete_async(std::string invoice_id,
+                                              const RequestOptions& options = {}) = 0;
+    /**
+     * Delete a draft and report its result or failure exactly once.
+     *
+     * @param invoice_id Existing draft invoice ID.
+     * @param options Per-request settings.
+     * @param completion Receives deletion confirmation or failure.
+     */
+    virtual void delete_invoice(std::string invoice_id,
+                                const RequestOptions& options,
+                                DeleteCompletion completion) = 0;
     /** Callback receiving an invoice or the failure. */
     using Completion = std::function<void(CallbackResult<Invoice>)>;
 

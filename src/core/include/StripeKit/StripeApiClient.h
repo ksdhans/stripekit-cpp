@@ -199,6 +199,27 @@ public:
      * @throws ConfigurationException The body was not a valid invoice object.
      */
     virtual Invoice parse_invoice(const HttpResponse& response) const;
+    /**
+     * Decode one page using this parser's invoice decoder.
+     *
+     * @param response Successful invoice list response.
+     *
+     * @return One validated page.
+     *
+     * @throws ConfigurationException If a page or invoice identity is malformed.
+     */
+    virtual InvoiceList parse_invoice_list(const HttpResponse& response) const;
+
+    /**
+     * Decode Stripe's confirmation that a draft invoice was deleted.
+     *
+     * @param response Successful deletion response.
+     *
+     * @return Deleted invoice ID and confirmation.
+     *
+     * @throws ConfigurationException If confirmation is absent or malformed.
+     */
+    virtual DeletedInvoice parse_deleted_invoice(const HttpResponse& response) const;
 
     /**
      * Reads a billing portal configuration out of a successful response.
@@ -630,6 +651,27 @@ private:
 
     class SubscriptionOperations final : public Subscriptions {
     public:
+        /** Set or clear cancellation at period end. */
+        Task<Subscription>
+        set_cancel_at_period_end_async(std::string, bool, const RequestOptions&) override;
+        /** Deliver the cancellation change or failure once. */
+        void set_cancel_at_period_end(std::string,
+                                      bool,
+                                      const RequestOptions&,
+                                      UpdateCompletion) override;
+        /** Pause collection according to the requested invoice behavior. */
+        Task<Subscription> pause_collection_async(std::string,
+                                                  const PauseSubscriptionCollectionRequest&,
+                                                  const RequestOptions&) override;
+        /** Deliver the collection pause or failure once. */
+        void pause_collection(std::string,
+                              const PauseSubscriptionCollectionRequest&,
+                              const RequestOptions&,
+                              UpdateCompletion) override;
+        /** Clear a collection pause without collecting existing invoices. */
+        Task<Subscription> resume_collection_async(std::string, const RequestOptions&) override;
+        /** Deliver the resumed subscription or failure once. */
+        void resume_collection(std::string, const RequestOptions&, UpdateCompletion) override;
         explicit SubscriptionOperations(StripeApiClient& owner);
         /** Replace existing subscription item prices with explicit billing policies. */
         Task<Subscription>
@@ -670,6 +712,22 @@ private:
     /** Retrieves Stripe invoices. */
     class InvoiceOperations final : public Invoices {
     public:
+        /** Read one page of subscription invoices. */
+        Task<InvoiceList> list_async(const ListInvoicesRequest&, const RequestOptions&) override;
+        /** Deliver a page or failure once. */
+        void list(const ListInvoicesRequest&, const RequestOptions&, ListCompletion) override;
+        /** Finalize a draft without automatic collection. */
+        Task<Invoice> finalize_async(std::string, const RequestOptions&) override;
+        /** Deliver the finalized invoice or failure once. */
+        void finalize(std::string, const RequestOptions&, Completion) override;
+        /** Void a finalized unpaid invoice. */
+        Task<Invoice> void_async(std::string, const RequestOptions&) override;
+        /** Deliver the voided invoice or failure once. */
+        void void_invoice(std::string, const RequestOptions&, Completion) override;
+        /** Delete a draft invoice. */
+        Task<DeletedInvoice> delete_async(std::string, const RequestOptions&) override;
+        /** Deliver deletion confirmation or failure once. */
+        void delete_invoice(std::string, const RequestOptions&, DeleteCompletion) override;
         /** Retain the owning client for the lifetime of the group. */
         explicit InvoiceOperations(StripeApiClient& owner);
 

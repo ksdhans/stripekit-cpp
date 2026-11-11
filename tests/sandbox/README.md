@@ -30,6 +30,15 @@ amounts, metadata, failure reasons, and the resulting charge refund totals.
 No money moves, but the tests do talk to Stripe over the network, so they are
 opt-in and are not part of the default `ctest` run.
 
+Collection and invoice tests use isolated test clocks to check cancellation at
+period end and clearing that cancellation, all three collection-pause behaviors
+at real renewals, explicit and timed resumption, and a paid renewal after timed
+resumption. They confirm that pauses leave existing paid and open invoices alone.
+Invoice tests traverse subscription-filtered pages, retry voiding with the same
+idempotency key, delete standalone drafts, and reject changes to paid invoices.
+They also verify Stripe's refusal to delete subscription-linked drafts and the
+safe alternative: finalize without automatic collection, then void.
+
 ## How Inbound Webhooks Reach Your Machine
 
 The suite uses the **Stripe CLI** (`stripe listen`) rather than a public URL.

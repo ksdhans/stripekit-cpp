@@ -273,6 +273,16 @@ struct PendingSubscriptionUpdate {
     std::vector<SubscriptionItem> items;
 };
 
+/** How Stripe handles invoices created while subscription collection is paused. */
+enum class CollectionPauseBehavior { KeepAsDraft, MarkUncollectible, Void };
+
+/** Collection pause reported by Stripe; an absent resume date means paused until cleared. */
+struct SubscriptionCollectionPause {
+    std::string
+        behavior; ///< keep_as_draft, mark_uncollectible, or void; unknown values are preserved.
+    std::optional<std::int64_t> resumes_at_unix;
+};
+
 /**
  * A Stripe subscription: a customer's recurring agreement to pay.
  *
@@ -321,6 +331,9 @@ struct Subscription {
 
     /** Present when a payment-dependent change has not yet been applied. */
     std::optional<PendingSubscriptionUpdate> pending_update;
+
+    /** Present when collection is paused; the subscription can still be active. */
+    std::optional<SubscriptionCollectionPause> pause_collection;
 };
 
 /**
@@ -398,6 +411,21 @@ struct Invoice {
 
     /** Unix timestamp of the next automatic payment attempt, when one is scheduled. */
     std::optional<std::int64_t> next_payment_attempt_unix;
+
+    /** Whether automatic collection is enabled; absent when Stripe omits the setting. */
+    std::optional<bool> auto_advance;
+};
+
+/** One page of invoices; use the last ID as the next cursor when has_more is true. */
+struct InvoiceList {
+    std::vector<Invoice> data;
+    bool has_more = false;
+};
+
+/** Confirmation that Stripe deleted a draft invoice. */
+struct DeletedInvoice {
+    std::string id;
+    bool deleted = false;
 };
 
 /**

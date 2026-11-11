@@ -338,6 +338,40 @@ std::string refunds_path(const ListRefundsRequest& request) {
     return "/v1/refunds?" + query;
 }
 
+/** Build a subscription invoice query with bounded pagination. */
+std::string invoices_path(const ListInvoicesRequest& request) {
+    auto query = payment_page_query(request.limit, request.starting_after);
+    if (!request.subscription_id.empty())
+        append_form_value(query, "subscription", request.subscription_id);
+    return "/v1/invoices?" + query;
+}
+
+/** Encode collection behavior and a positive optional resume timestamp. */
+std::string pause_collection_body(const PauseSubscriptionCollectionRequest& request) {
+    std::string behavior;
+    switch (request.behavior) {
+    case CollectionPauseBehavior::KeepAsDraft:
+        behavior = "keep_as_draft";
+        break;
+    case CollectionPauseBehavior::MarkUncollectible:
+        behavior = "mark_uncollectible";
+        break;
+    case CollectionPauseBehavior::Void:
+        behavior = "void";
+        break;
+    default:
+        throw ConfigurationException("Unknown collection pause behavior");
+    }
+    if (request.resumes_at && *request.resumes_at <= 0)
+        throw ConfigurationException("Collection resume timestamp must be positive");
+    std::string body;
+    append_form_value(body, "pause_collection[behavior]", behavior);
+    if (request.resumes_at)
+        append_form_value(
+            body, "pause_collection[resumes_at]", std::to_string(*request.resumes_at));
+    return body;
+}
+
 /** Build a charge list URL with an optional customer filter. */
 std::string charges_path(const ListChargesRequest& request) {
     auto query = payment_page_query(request.limit, request.starting_after);
@@ -985,6 +1019,24 @@ Invoice StripeResponseParser::parse_invoice(const HttpResponse& response) const 
     return JsonStripeResponseParser{}.parse_invoice(response);
 }
 
+InvoiceList StripeResponseParser::parse_invoice_list(const HttpResponse& response) const {
+    return parse_payment_page<InvoiceList>(response, [this](const HttpResponse& item) {
+        const auto value = json_value::parse(item.body);
+        if (!value.isObject() || value["object"] != "invoice" || !value["status"].isString() ||
+            value["status"].asString().empty())
+            throw ConfigurationException("Stripe returned a malformed invoice list entry");
+        return parse_invoice(item);
+    });
+}
+
+DeletedInvoice StripeResponseParser::parse_deleted_invoice(const HttpResponse& response) const {
+    const auto value = json_value::parse(response.body);
+    if (!value.isObject() || value["object"] != "invoice" || !value["id"].isString() ||
+        value["id"].asString().empty() || !value["deleted"].isBool() || !value["deleted"].asBool())
+        throw ConfigurationException("Stripe did not confirm invoice deletion");
+    return { value["id"].asString(), true };
+}
+
 BillingPortalConfiguration
 StripeResponseParser::parse_billing_portal_configuration(const HttpResponse& response) const {
     return JsonStripeResponseParser{}.parse_billing_portal_configuration(response);
@@ -1106,6 +1158,15 @@ Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& re
                       .livemode = json_value::boolean(object, "livemode"),
                       .metadata = metadata_value(object) };
     subscription.trial_end_unix = optional_unix_timestamp(object["trial_end"]);
+    const auto& pause = object["pause_collection"];
+    if (!pause.isNull()) {
+        if (!pause.isObject() || !pause["behavior"].isString() ||
+            pause["behavior"].asString().empty())
+            throw ConfigurationException("Stripe returned a malformed collection pause");
+        subscription.pause_collection =
+            SubscriptionCollectionPause{ pause["behavior"].asString(),
+                                         optional_unix_timestamp(pause["resumes_at"]) };
+    }
     const auto& items = object["items"];
     if (!items.isNull()) {
         if (!items.isObject() || !items["has_more"].isBool())
@@ -1209,6 +1270,11 @@ Invoice JsonStripeResponseParser::parse_invoice(const HttpResponse& response) co
             invoice.subscription_id = reference_id(parent["subscription_details"]["subscription"]);
     }
     invoice.paid = object["paid"].isBool() ? object["paid"].asBool() : invoice.status == "paid";
+    if (!object["auto_advance"].isNull()) {
+        if (!object["auto_advance"].isBool())
+            throw ConfigurationException("Stripe returned malformed invoice auto_advance");
+        invoice.auto_advance = object["auto_advance"].asBool();
+    }
     return invoice;
 }
 
@@ -2222,6 +2288,243 @@ void StripeApiClient::RefundOperations::list(const ListRefundsRequest& request,
         std::move(http),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_refund_list(response);
+        },
+        std::move(completion));
+}
+
+Task<Subscription> StripeApiClient::SubscriptionOperations::set_cancel_at_period_end_async(
+    std::string id, bool cancel, const RequestOptions& options) {
+    return send_and_parse_async<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post,
+                     catalog_path("subscriptions", id),
+                     cancel ? "cancel_at_period_end=true" : "cancel_at_period_end=false",
+                     options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        });
+}
+
+void StripeApiClient::SubscriptionOperations::set_cancel_at_period_end(
+    std::string id, bool cancel, const RequestOptions& options, UpdateCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            catalog_path("subscriptions", id),
+                            cancel ? "cancel_at_period_end=true" : "cancel_at_period_end=false",
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        },
+        std::move(completion));
+}
+
+Task<Subscription> StripeApiClient::SubscriptionOperations::pause_collection_async(
+    std::string id,
+    const PauseSubscriptionCollectionRequest& request,
+    const RequestOptions& options) {
+    return send_and_parse_async<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post,
+                     catalog_path("subscriptions", id),
+                     pause_collection_body(request),
+                     options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        });
+}
+
+void StripeApiClient::SubscriptionOperations::pause_collection(
+    std::string id,
+    const PauseSubscriptionCollectionRequest& request,
+    const RequestOptions& options,
+    UpdateCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            catalog_path("subscriptions", id),
+                            pause_collection_body(request),
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        },
+        std::move(completion));
+}
+
+Task<Subscription>
+StripeApiClient::SubscriptionOperations::resume_collection_async(std::string id,
+                                                                 const RequestOptions& options) {
+    return send_and_parse_async<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(
+            HttpMethod::Post, catalog_path("subscriptions", id), "pause_collection=", options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        });
+}
+
+void StripeApiClient::SubscriptionOperations::resume_collection(std::string id,
+                                                                const RequestOptions& options,
+                                                                UpdateCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(
+            HttpMethod::Post, catalog_path("subscriptions", id), "pause_collection=", options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        },
+        std::move(completion));
+}
+
+Task<InvoiceList> StripeApiClient::InvoiceOperations::list_async(const ListInvoicesRequest& request,
+                                                                 const RequestOptions& options) {
+    return send_and_parse_async<InvoiceList>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, invoices_path(request), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_invoice_list(response);
+        });
+}
+
+void StripeApiClient::InvoiceOperations::list(const ListInvoicesRequest& request,
+                                              const RequestOptions& options,
+                                              ListCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, invoices_path(request), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<InvoiceList>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_invoice_list(response);
+        },
+        std::move(completion));
+}
+
+Task<Invoice> StripeApiClient::InvoiceOperations::finalize_async(std::string id,
+                                                                 const RequestOptions& options) {
+    return send_and_parse_async<Invoice>(owner.http_client,
+                                         owner.response_parser,
+                                         make_request(HttpMethod::Post,
+                                                      catalog_path("invoices", id) + "/finalize",
+                                                      "auto_advance=false",
+                                                      options),
+                                         parse_invoice_response);
+}
+
+void StripeApiClient::InvoiceOperations::finalize(std::string id,
+                                                  const RequestOptions& options,
+                                                  Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            catalog_path("invoices", id) + "/finalize",
+                            "auto_advance=false",
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Invoice>(owner.http_client,
+                            owner.response_parser,
+                            owner.callback_lifetime,
+                            std::move(http),
+                            parse_invoice_response,
+                            std::move(completion));
+}
+
+Task<Invoice> StripeApiClient::InvoiceOperations::void_async(std::string id,
+                                                             const RequestOptions& options) {
+    return send_and_parse_async<Invoice>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post, catalog_path("invoices", id) + "/void", {}, options),
+        parse_invoice_response);
+}
+
+void StripeApiClient::InvoiceOperations::void_invoice(std::string id,
+                                                      const RequestOptions& options,
+                                                      Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post, catalog_path("invoices", id) + "/void", {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Invoice>(owner.http_client,
+                            owner.response_parser,
+                            owner.callback_lifetime,
+                            std::move(http),
+                            parse_invoice_response,
+                            std::move(completion));
+}
+
+Task<DeletedInvoice>
+StripeApiClient::InvoiceOperations::delete_async(std::string id, const RequestOptions& options) {
+    return send_and_parse_async<DeletedInvoice>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Delete, catalog_path("invoices", id), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_deleted_invoice(response);
+        });
+}
+
+void StripeApiClient::InvoiceOperations::delete_invoice(std::string id,
+                                                        const RequestOptions& options,
+                                                        DeleteCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Delete, catalog_path("invoices", id), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<DeletedInvoice>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_deleted_invoice(response);
         },
         std::move(completion));
 }
