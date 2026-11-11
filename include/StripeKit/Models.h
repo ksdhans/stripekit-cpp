@@ -191,6 +191,28 @@ struct Charge {
     bool livemode = false;
 };
 
+/**
+ * Money returned, or requested to be returned, for a payment.
+ * Amounts use the currency's smallest unit. A refund is not complete until
+ * status is succeeded; pending and requires_action still reserve its amount.
+ */
+struct Refund {
+    std::string id;
+    std::string charge_id;
+    std::string payment_intent_id; ///< Empty when Stripe does not supply a PaymentIntent.
+    std::int64_t amount = 0;
+    std::string currency;
+    std::string status;         ///< succeeded, pending, requires_action, failed, or canceled.
+    std::string failure_reason; ///< Empty unless Stripe explains a failure.
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/** One page of refunds; use the last refund ID as the next cursor when has_more is true. */
+struct RefundList {
+    std::vector<Refund> data;
+    bool has_more = false;
+};
+
 /** One page of charges; use the last ID as starting_after when has_more is true. */
 struct ChargeList {
     std::vector<Charge> data;

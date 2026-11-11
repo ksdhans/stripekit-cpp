@@ -89,6 +89,98 @@ protected:
     std::vector<std::string> invoices;
 };
 
+TEST_F(SandboxPaymentsTest, RefundCreationRetryHistoryAndRemainingBalance) {
+    const auto charge_id = create_charge();
+    auto& client = environment->stripe_client();
+    const std::string operation = environment->run_id() + "_partial_refund";
+    const CreateRefundRequest request{ .charge_id = charge_id,
+                                       .amount = 300,
+                                       .metadata = { { "operation", operation } } };
+    const RequestOptions options{ .idempotency_key = operation,
+                                  .timeout = std::chrono::seconds(30) };
+    const auto first = client.refunds().create_async(request, options).result();
+    EXPECT_EQ(first.charge_id, charge_id);
+    EXPECT_EQ(first.amount, 300);
+    EXPECT_EQ(first.currency, "usd");
+    EXPECT_EQ(first.status, "succeeded");
+    EXPECT_EQ(first.metadata.at("operation"), operation);
+    EXPECT_FALSE(first.payment_intent_id.empty());
+
+    std::promise<CallbackResult<Refund>> completion;
+    auto result = completion.get_future();
+    client.refunds().create(request, options, [&](CallbackResult<Refund> value) {
+        completion.set_value(std::move(value));
+    });
+    const auto retried = result.get();
+    if (std::holds_alternative<std::exception_ptr>(retried))
+        std::rethrow_exception(std::get<std::exception_ptr>(retried));
+    EXPECT_EQ(std::get<Refund>(retried).id, first.id);
+    EXPECT_EQ(client.charges().retrieve_async(charge_id).result().amount_refunded, 300);
+
+    const auto second =
+        client.refunds()
+            .create_async({ .charge_id = charge_id,
+                            .amount = 200,
+                            .metadata = { { "operation", operation + "_second" } } },
+                          { .idempotency_key = operation + "_second" })
+            .result();
+    EXPECT_NE(second.id, first.id);
+    EXPECT_EQ(second.amount, 200);
+    EXPECT_EQ(second.status, "succeeded");
+    EXPECT_EQ(client.charges().retrieve_async(charge_id).result().amount_refunded, 500);
+
+    ListRefundsRequest filter{ .charge_id = charge_id, .limit = 1 };
+    auto page = client.refunds().list_async(filter).result();
+    ASSERT_EQ(page.data.size(), 1U);
+    EXPECT_TRUE(page.has_more);
+    std::set<std::string> ids{ page.data.front().id };
+    EXPECT_EQ(page.data.front().charge_id, charge_id);
+    filter.starting_after = page.data.front().id;
+    std::promise<CallbackResult<RefundList>> page_completion;
+    auto page_result = page_completion.get_future();
+    client.refunds().list(filter, {}, [&](CallbackResult<RefundList> value) {
+        page_completion.set_value(std::move(value));
+    });
+    const auto callback_page = page_result.get();
+    if (std::holds_alternative<std::exception_ptr>(callback_page))
+        std::rethrow_exception(std::get<std::exception_ptr>(callback_page));
+    page = std::get<RefundList>(callback_page);
+    ASSERT_EQ(page.data.size(), 1U);
+    EXPECT_FALSE(page.has_more);
+    EXPECT_TRUE(ids.insert(page.data.front().id).second);
+    EXPECT_TRUE(ids.contains(first.id));
+    EXPECT_TRUE(ids.contains(second.id));
+    EXPECT_EQ(page.data.front().charge_id, charge_id);
+    // Recover the durable operation from history without sending another create request.
+    const auto history =
+        client.refunds().list_async({ .charge_id = charge_id, .limit = 100 }).result();
+    ASSERT_EQ(history.data.size(), 2U);
+    int recovered = 0;
+    for (const auto& refund : history.data) {
+        if (refund.metadata.at("operation") == operation) {
+            ++recovered;
+            EXPECT_EQ(refund.id, first.id);
+            EXPECT_EQ(refund.amount, request.amount.value());
+        }
+    }
+    EXPECT_EQ(recovered, 1);
+    filter.starting_after = page.data.front().id;
+    EXPECT_TRUE(client.refunds().list_async(filter).result().data.empty());
+
+    EXPECT_THROW(client.refunds().create_async({ .charge_id = charge_id, .amount = 1001 }).result(),
+                 StripeApiException);
+    const auto remaining = client.refunds()
+                               .create_async({ .charge_id = charge_id },
+                                             { .idempotency_key = operation + "_remaining" })
+                               .result();
+    EXPECT_EQ(remaining.amount, 1000);
+    EXPECT_EQ(remaining.status, "succeeded");
+    EXPECT_EQ(client.charges().retrieve_async(charge_id).result().amount_refunded, 1500);
+    EXPECT_THROW(client.refunds().create_async({ .charge_id = charge_id, .amount = 1 }).result(),
+                 StripeApiException);
+    EXPECT_EQ(client.refunds().list_async({ .charge_id = charge_id }).result().data.size(), 3U);
+}
+
 TEST_F(SandboxPaymentsTest, ChargeRetrievalAndCustomerFilteredPagination) {
     const auto first = create_charge();
     const auto second = create_charge();

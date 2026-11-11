@@ -18,6 +18,10 @@ The suite checks the requests, returned billing data, and webhook signals that
 applications need. Tenant access, trial eligibility, and grace-period policies
 belong to the application and are not tested here.
 
+Refund tests create partial refunds, retry with the same idempotency key, recover
+operation metadata through charge-filtered pages, refund the remaining balance,
+and verify that Stripe rejects excessive or already-refunded amounts.
+
 No money moves, but the tests do talk to Stripe over the network, so they are
 opt-in and are not part of the default `ctest` run.
 

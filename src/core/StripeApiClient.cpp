@@ -319,6 +319,25 @@ std::string payment_page_query(std::int64_t limit, const std::string& starting_a
     return query;
 }
 
+/** Validate a refund and encode its amount and recovery metadata. */
+std::string refund_body(const CreateRefundRequest& request) {
+    if (request.charge_id.empty() || (request.amount && *request.amount <= 0))
+        throw ConfigurationException(
+            "Refund requires a charge and a positive amount when supplied");
+    std::string body;
+    append_form_value(body, "charge", request.charge_id);
+    if (request.amount) append_form_value(body, "amount", std::to_string(*request.amount));
+    append_metadata(body, request.metadata);
+    return body;
+}
+
+/** Build a refund history URL with an optional charge filter. */
+std::string refunds_path(const ListRefundsRequest& request) {
+    auto query = payment_page_query(request.limit, request.starting_after);
+    if (!request.charge_id.empty()) append_form_value(query, "charge", request.charge_id);
+    return "/v1/refunds?" + query;
+}
+
 /** Build a charge list URL with an optional customer filter. */
 std::string charges_path(const ListChargesRequest& request) {
     auto query = payment_page_query(request.limit, request.starting_after);
@@ -851,6 +870,34 @@ Charge StripeResponseParser::parse_charge(const HttpResponse& response) const {
     return charge;
 }
 
+Refund StripeResponseParser::parse_refund(const HttpResponse& response) const {
+    const auto value = json_value::parse(response.body);
+    if (!value.isObject() || value["object"] != "refund" || !value["id"].isString() ||
+        value["id"].asString().empty() || !value["status"].isString() ||
+        value["status"].asString().empty() || !value["currency"].isString() ||
+        value["currency"].asString().empty() || !value["amount"].isInt64() ||
+        value["amount"].asInt64() <= 0 || !value["metadata"].isObject() ||
+        (!value["failure_reason"].isNull() && !value["failure_reason"].isString()))
+        throw ConfigurationException("Stripe returned a malformed refund");
+    Refund refund;
+    refund.id = value["id"].asString();
+    refund.charge_id = reference_id(value["charge"]);
+    refund.payment_intent_id = reference_id(value["payment_intent"]);
+    if (refund.charge_id.empty() && refund.payment_intent_id.empty())
+        throw ConfigurationException("Stripe returned a refund without a payment reference");
+    refund.amount = value["amount"].asInt64();
+    refund.currency = value["currency"].asString();
+    refund.status = value["status"].asString();
+    if (!value["failure_reason"].isNull())
+        refund.failure_reason = value["failure_reason"].asString();
+    for (const auto& key : value["metadata"].getMemberNames()) {
+        if (!value["metadata"][key].isString())
+            throw ConfigurationException("Stripe returned malformed refund metadata");
+        refund.metadata.emplace(key, value["metadata"][key].asString());
+    }
+    return refund;
+}
+
 InvoicePayment StripeResponseParser::parse_invoice_payment(const HttpResponse& response) const {
     const auto value = json_value::parse(response.body);
     if (!value.isObject() || value["object"] != "invoice_payment" || !value["id"].isString() ||
@@ -917,6 +964,11 @@ Page parse_payment_page(const HttpResponse& response, Decoder decode) {
 ChargeList StripeResponseParser::parse_charge_list(const HttpResponse& response) const {
     return parse_payment_page<ChargeList>(
         response, [this](const HttpResponse& item) { return parse_charge(item); });
+}
+
+RefundList StripeResponseParser::parse_refund_list(const HttpResponse& response) const {
+    return parse_payment_page<RefundList>(
+        response, [this](const HttpResponse& item) { return parse_refund(item); });
 }
 
 InvoicePaymentList
@@ -1723,7 +1775,7 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client)
       subscription_operations(*this), billing_portal_session_operations(*this),
       billing_portal_operations(*this), product_operations(*this), price_operations(*this),
       invoice_operations(*this), billing_portal_configuration_operations(*this),
-      charge_operations(*this), invoice_payment_operations(*this) {}
+      charge_operations(*this), invoice_payment_operations(*this), refund_operations(*this) {}
 
 StripeApiClient::StripeApiClient(HTTPClient& http_client,
                                  const StripeResponseParser& response_parser)
@@ -1733,7 +1785,7 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client,
       subscription_operations(*this), billing_portal_session_operations(*this),
       billing_portal_operations(*this), product_operations(*this), price_operations(*this),
       invoice_operations(*this), billing_portal_configuration_operations(*this),
-      charge_operations(*this), invoice_payment_operations(*this) {}
+      charge_operations(*this), invoice_payment_operations(*this), refund_operations(*this) {}
 
 StripeApiClient::~StripeApiClient() {
     callback_lifetime->close_and_wait();
@@ -1748,6 +1800,10 @@ Charges& StripeApiClient::charges() {
 }
 InvoicePayments& StripeApiClient::invoice_payments() {
     return invoice_payment_operations;
+}
+
+Refunds& StripeApiClient::refunds() {
+    return refund_operations;
 }
 
 Checkout& StripeApiClient::checkout() {
@@ -2102,6 +2158,70 @@ void StripeApiClient::InvoicePaymentOperations::list(const ListInvoicePaymentsRe
         std::move(http),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_invoice_payment_list(response);
+        },
+        std::move(completion));
+}
+
+Task<Refund> StripeApiClient::RefundOperations::create_async(const CreateRefundRequest& request,
+                                                             const RequestOptions& options) {
+    return send_and_parse_async<Refund>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post, "/v1/refunds", refund_body(request), options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_refund(response);
+        });
+}
+
+void StripeApiClient::RefundOperations::create(const CreateRefundRequest& request,
+                                               const RequestOptions& options,
+                                               Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post, "/v1/refunds", refund_body(request), options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Refund>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_refund(response);
+        },
+        std::move(completion));
+}
+
+Task<RefundList> StripeApiClient::RefundOperations::list_async(const ListRefundsRequest& request,
+                                                               const RequestOptions& options) {
+    return send_and_parse_async<RefundList>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, refunds_path(request), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_refund_list(response);
+        });
+}
+
+void StripeApiClient::RefundOperations::list(const ListRefundsRequest& request,
+                                             const RequestOptions& options,
+                                             ListCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, refunds_path(request), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<RefundList>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_refund_list(response);
         },
         std::move(completion));
 }

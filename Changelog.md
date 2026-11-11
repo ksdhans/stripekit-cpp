@@ -9,6 +9,8 @@ version section when a release is tagged.
   and add tests to confirm their behaviour.
 - Add charge retrieval, customer-filtered charge listing, and payment-intent
   filtered invoice payment listing, with unit and Sandbox tests.
+- Add refund creation and charge-filtered refund listing, with unit and Sandbox
+  tests for partial refunds, pagination, and retry recovery.
 
 ## 0.5.0 2026-11-11
 

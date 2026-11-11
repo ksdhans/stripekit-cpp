@@ -1156,6 +1156,82 @@ public:
     virtual BillingPortalConfigurations& configurations() = 0;
 };
 
+/** Create a refund for a charge, optionally limiting it to part of the remaining balance. */
+struct CreateRefundRequest {
+    std::string charge_id;
+    std::optional<std::int64_t> amount; ///< Positive amount in the smallest currency unit; absent
+                                        ///< refunds the remaining balance.
+    std::unordered_map<std::string, std::string>
+        metadata; ///< Save a durable application operation ID for recovery.
+};
+
+/** Filters for one page of refunds. Empty charge_id lists refunds for all charges. */
+struct ListRefundsRequest {
+    std::string charge_id;
+    std::int64_t limit = 10;    ///< Page size, from 1 to 100.
+    std::string starting_after; ///< Last refund ID from the previous page.
+};
+
+/** Create refunds and read refund history through StripeClient::refunds(). */
+class Refunds {
+public:
+    /** Receives the created refund or the failure. */
+    using Completion = std::function<void(CallbackResult<Refund>)>;
+    /** Receives one page of refunds or the failure. */
+    using ListCompletion = std::function<void(CallbackResult<RefundList>)>;
+    /** Destroy the operations instance. */
+    virtual ~Refunds() = default;
+    /**
+     * Request money back for a charge. Save and reuse an idempotency key for retries.
+     * Stripe checks the remaining refundable balance. Inspect status before
+     * treating the refund as complete.
+     *
+     * @param request Charge, optional amount, and metadata.
+     * @param options Per-request timeout, headers, and idempotency key.
+     *
+     * @return The refund, which may still be pending or require customer action.
+     *
+     * @throws ConfigurationException If the charge is empty or the supplied amount is not positive.
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<Refund> create_async(const CreateRefundRequest& request,
+                                      const RequestOptions& options = {}) = 0;
+    /**
+     * Create a refund and report its result or failure exactly once.
+     *
+     * @param request Charge, optional amount, and metadata.
+     * @param options Per-request settings; reuse an idempotency key for retries.
+     * @param completion Receives the refund or failure.
+     */
+    virtual void create(const CreateRefundRequest& request,
+                        const RequestOptions& options,
+                        Completion completion) = 0;
+    /**
+     * Read one page of refunds, optionally for a specific charge.
+     * Metadata can recover a saved operation after its idempotency key expires.
+     *
+     * @param request Charge filter, page size, and cursor.
+     * @param options Per-request settings.
+     *
+     * @return One page; further pages are not fetched automatically.
+     *
+     * @throws ConfigurationException If limit is outside 1 through 100.
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<RefundList> list_async(const ListRefundsRequest& request = {},
+                                        const RequestOptions& options = {}) = 0;
+    /**
+     * Read one page and report its result or failure exactly once.
+     *
+     * @param request Charge filter and pagination settings.
+     * @param options Per-request settings.
+     * @param completion Receives the page or failure.
+     */
+    virtual void list(const ListRefundsRequest& request,
+                      const RequestOptions& options,
+                      ListCompletion completion) = 0;
+};
+
 /** Filters for one page of charges. Empty customer_id lists all customers. */
 struct ListChargesRequest {
     std::string customer_id;
@@ -1285,6 +1361,13 @@ public:
  */
 class StripeClient {
 public:
+    /**
+     * Return refund creation and listing operations.
+     *
+     * @return Operations owned by this client and valid for its lifetime.
+     */
+    virtual Refunds& refunds() = 0;
+
     /**
      * Return charge retrieval and listing operations.
      *

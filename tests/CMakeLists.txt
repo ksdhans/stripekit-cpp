@@ -10,6 +10,7 @@ add_executable(stripekit_unit_tests
     unit/TestLogging.cpp
     unit/TestModelsAndParser.cpp
     unit/TestPayments.cpp
+    unit/TestRefunds.cpp
     unit/TestSqliteWebhookDedupStore.cpp
     unit/TestStripeApiClient.cpp
     unit/TestVersionAndErrors.cpp

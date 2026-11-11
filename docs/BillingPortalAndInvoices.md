@@ -216,6 +216,52 @@ All three read operations also have callback forms: `charges().retrieve()`,
 result or the failure exactly once. Invalid IDs and page sizes fail before
 sending a request; Stripe rejections and transport failures are reported too.
 
+@section refunds Return money and recover refund requests
+
+Use `stripe->refunds()` to return money for a charge and read its refund history:
+
+@code{.cpp}
+stripekit::CreateRefundRequest request;
+request.charge_id = charge_id;
+request.amount = 500; // Smallest currency unit; omit to refund the remaining balance.
+request.metadata["operation"] = saved_operation_id;
+stripekit::RequestOptions options;
+options.idempotency_key = saved_operation_id;
+const auto refund = co_await stripe->refunds().create_async(request, options);
+@endcode
+
+Verify that the charge belongs to the expected customer before requesting a
+refund. Stripe rejects amounts above the remaining refundable balance. Amounts
+must be positive when supplied. Save the operation ID and retry with the same
+idempotency key and request values, rather than issuing another refund.
+
+The result includes the refund ID, charge and payment-intent references, amount,
+currency, status, metadata, and a failure reason when Stripe supplies one.
+Only `succeeded` confirms completion. `pending` and `requires_action` are not
+complete, but still reserve the requested amount; `failed` and `canceled` do
+not. Unknown status strings are preserved for the application to handle explicitly.
+
+@code{.cpp}
+stripekit::ListRefundsRequest filter;
+filter.charge_id = charge_id;
+filter.limit = 100;
+const auto page = co_await stripe->refunds().list_async(filter);
+@endcode
+
+Listing returns one page, including failed and pending refunds. When `has_more`
+is true, use the last refund ID as `starting_after` for the next page. Page sizes
+must be from 1 to 100. An empty charge filter lists all refunds.
+
+Keep a durable operation ID in metadata to find a prior refund after Stripe's
+idempotency retention period. Read all pages and verify the saved charge and
+amount before accepting a match. Do not retry creation merely because a saved
+refund has not succeeded yet.
+
+The callback methods `refunds().create()` and `refunds().list()` report the same
+results and failures exactly once. Custom `StripeClient` implementations must
+provide `refunds()` as well as `charges()` and `invoice_payments()`. Custom
+response parsers inherit JSON decoding for these objects and can override it.
+
 @section portal_next Where to go next
 
 - @ref products_and_prices — create the products and prices offered for plan switching.

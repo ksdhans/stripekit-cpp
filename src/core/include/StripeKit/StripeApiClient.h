@@ -37,6 +37,27 @@ public:
     virtual ~StripeResponseParser() = default;
 
     /**
+     * Decode a refund using Stripe's JSON format by default.
+     *
+     * @param response Successful response to decode.
+     *
+     * @return Refund identity, amount, payment references, status, and metadata.
+     *
+     * @throws ConfigurationException If required fields or references are malformed.
+     */
+    virtual Refund parse_refund(const HttpResponse& response) const;
+    /**
+     * Decode one page using this parser's refund decoder.
+     *
+     * @param response Successful list response.
+     *
+     * @return Refunds and whether more pages exist.
+     *
+     * @throws ConfigurationException If the page or an entry is malformed.
+     */
+    virtual RefundList parse_refund_list(const HttpResponse& response) const;
+
+    /**
      * Decode a charge using Stripe's JSON format by default.
      *
      * @param response Successful response to decode.
@@ -349,6 +370,9 @@ public:
  */
 class StripeApiClient final : public StripeClient {
 public:
+    /** Return refund operations owned by this client. */
+    Refunds& refunds() override;
+
     /** Return charge operations owned by this client. */
     Charges& charges() override;
 
@@ -425,6 +449,24 @@ public:
     Prices& prices() override;
 
 private:
+    /** Request refunds and read their history. */
+    class RefundOperations final : public Refunds {
+    public:
+        /** Retain the client that owns these operations. */
+        explicit RefundOperations(StripeApiClient& owner) : owner(owner) {}
+        /** Request a refund using the saved retry settings. */
+        Task<Refund> create_async(const CreateRefundRequest&, const RequestOptions&) override;
+        /** Deliver a refund or failure exactly once. */
+        void create(const CreateRefundRequest&, const RequestOptions&, Completion) override;
+        /** Retrieve one page without automatic traversal. */
+        Task<RefundList> list_async(const ListRefundsRequest&, const RequestOptions&) override;
+        /** Deliver one page or failure exactly once. */
+        void list(const ListRefundsRequest&, const RequestOptions&, ListCompletion) override;
+
+    private:
+        StripeApiClient& owner;
+    };
+
     /** Retrieve payment attempts and list them by customer. */
     class ChargeOperations final : public Charges {
     public:
@@ -706,6 +748,7 @@ private:
     BillingPortalConfigurationOperations billing_portal_configuration_operations;
     ChargeOperations charge_operations;
     InvoicePaymentOperations invoice_payment_operations;
+    RefundOperations refund_operations;
 };
 
 /** @} */
