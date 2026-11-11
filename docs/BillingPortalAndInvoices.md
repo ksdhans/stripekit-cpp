@@ -172,7 +172,8 @@ there, then wait for the `invoice.paid` webhook.
 @section collection_controls Schedule cancellation or pause collection
 
 Use period-end cancellation to let an existing subscription finish its current
-billing period. Clear it before that period ends if the customer changes their mind:
+billing period without renewing. Clear it before that period ends if the
+customer changes their mind:
 
 @code{.cpp}
 const auto scheduled = co_await stripe->subscriptions().set_cancel_at_period_end_async(
@@ -181,22 +182,31 @@ const auto continued = co_await stripe->subscriptions().set_cancel_at_period_end
     subscription_id, false);
 @endcode
 
-A collection pause stops collecting new invoices without changing the
-subscription's status to `paused`. Choose what happens to invoices created
-during the pause:
+Check `cancel_at_period_end` on the returned subscription to confirm the setting.
+Scheduling cancellation does not end the subscription immediately.
+
+Use a collection pause to temporarily stop charging for future billing periods
+without ending the subscription. This does not change its status to `paused`.
+Choose what happens to invoices created during the pause:
 
 | `CollectionPauseBehavior` | New invoices |
 |---------------------------|--------------|
 | `Void` | Voided, so they cannot be collected. |
 | `KeepAsDraft` | Kept as drafts, without automatic collection. |
-| `MarkUncollectible` | Marked as uncollectible. |
+| `MarkUncollectible` | Recorded as unpaid, with automatic payment attempts stopped. |
 
 @code{.cpp}
 stripekit::PauseSubscriptionCollectionRequest pause;
 pause.behavior = stripekit::CollectionPauseBehavior::Void;
-// Optional positive Unix timestamp; otherwise pause until explicitly resumed.
+// Optional future date, in seconds since January 1, 1970 (UTC).
+// Omit it to pause until your application explicitly resumes collection.
 pause.resumes_at = resume_timestamp;
 const auto paused = co_await stripe->subscriptions().pause_collection_async(subscription_id, pause);
+@endcode
+
+To resume before that date, or end a pause with no resume date:
+
+@code{.cpp}
 const auto resumed = co_await stripe->subscriptions().resume_collection_async(subscription_id);
 @endcode
 
@@ -210,17 +220,21 @@ also remain your responsibility.
 @section invoices_manage List and clear unpaid invoices
 
 Invoice listing returns one page at a time. Set `subscription_id` to limit the
-results to one subscription; omit it to list all invoices:
+results to one subscription; omit it to list all invoices. Page sizes must be
+from 1 to 100. To read further pages, pass the last invoice ID from the previous
+page as `starting_after`:
 
 @code{.cpp}
 stripekit::ListInvoicesRequest filter;
 filter.subscription_id = subscription_id;
 filter.limit = 100;
 auto page = co_await stripe->invoices().list_async(filter);
-if (page.has_more) {
+while (page.has_more) {
+    // Process page.data before moving to the next page.
     filter.starting_after = page.data.back().id;
     page = co_await stripe->invoices().list_async(filter);
 }
+// Process the final page.data too.
 @endcode
 
 To discard an unpaid invoice, inspect its status first:
@@ -232,16 +246,20 @@ To discard an unpaid invoice, inspect its status first:
   then void the resulting `open` invoice. Finalization alone does not discard it.
 - Do not delete or void paid invoices. Refund a collected payment instead.
 
-Check returned IDs, ownership, and status before proceeding. Finalization returns
-the optional `invoice.auto_advance` setting so callers can confirm automatic
-collection is disabled; deletion returns a `DeletedInvoice` confirmation.
-Use a saved idempotency key for each distinct POST operation, and reuse it only
-when retrying that same operation. Stripe failures throw `StripeApiException`.
+Verify that each invoice belongs to the expected customer and subscription
+before changing it. Check the returned invoice's ID and status to confirm the
+change. After finalization, also check that `auto_advance` is present and `false`
+before voiding. A successful deletion returns the invoice ID and `deleted=true`.
+
+An **idempotency key** is a unique retry key that lets Stripe recognise a repeated
+request instead of performing the same change again. Save a separate key for
+each cancellation, pause, resume, finalization, or voiding operation. Reuse it
+with the same request values when retrying that operation.
+
+Stripe rejections throw `StripeApiException`; invalid IDs or page sizes throw
+`ConfigurationException`. Network failures are also reported to the caller.
 Callbacks receive either the typed result or a failure: `list()`, `finalize()`,
 `void_invoice()`, and `delete_invoice()`.
-
-Applications implementing custom `Subscriptions` or `Invoices` interfaces must
-implement these new methods as well as their coroutine forms.
 
 @section invoice_payments Find the payment behind an invoice
 
@@ -263,7 +281,10 @@ Verify that returned charges belong to the customer your application expects.
 The charge's amounts, including `amount_refunded`, use the currency's smallest unit.
 
 On older Stripe API versions a charge can contain `invoice_id`. From
-`2025-03-31.basil`, use its `payment_intent_id` to find the invoice allocations:
+`2025-03-31.basil`, use its `payment_intent_id` to find the invoice payment records
+instead. A **PaymentIntent** tracks a payment through any required customer
+authentication and payment attempts. An **invoice payment record** links that
+payment to an invoice and shows how much of the payment was applied to it:
 
 @code{.cpp}
 stripekit::ListInvoicePaymentsRequest request;
@@ -276,10 +297,10 @@ const auto page = co_await stripe->invoice_payments().list_async(request, option
 
 Use a nonempty PaymentIntent ID when looking up a particular payment. Omitting
 the filter lists all invoice payments. Pagination works like charge listing,
-using the last allocation ID as the next cursor. This endpoint requires a Stripe
+using the last record's ID as `starting_after`. This endpoint requires a Stripe
 API version that supports invoice payments, such as `2025-03-31.basil` or later.
 
-Each allocation identifies its invoice, payment type and matching payment
+Each record identifies its invoice, payment type and matching payment
 reference, status, currency, and requested and paid amounts. `amount_paid` is
 absent until paid; it is not assumed to be zero. A payment can pay more than
 one invoice, so inspect all pages rather than assuming a single invoice owns it.
@@ -290,9 +311,11 @@ All three read operations also have callback forms: `charges().retrieve()`,
 result or the failure exactly once. Invalid IDs and page sizes fail before
 sending a request; Stripe rejections and transport failures are reported too.
 
-@section refunds Return money and recover refund requests
+@section refunds Return money and check earlier refund requests
 
-Use `stripe->refunds()` to return money for a charge and read its refund history:
+Use `stripe->refunds()` to return money for a charge and read its refund history.
+Generate a unique operation ID and save it with the requested charge, amount,
+and currency in your database before contacting Stripe:
 
 @code{.cpp}
 stripekit::CreateRefundRequest request;
@@ -326,15 +349,16 @@ Listing returns one page, including failed and pending refunds. When `has_more`
 is true, use the last refund ID as `starting_after` for the next page. Page sizes
 must be from 1 to 100. An empty charge filter lists all refunds.
 
-Keep a durable operation ID in metadata to find a prior refund after Stripe's
-idempotency retention period. Read all pages and verify the saved charge and
-amount before accepting a match. Do not retry creation merely because a saved
-refund has not succeeded yet.
+Include the saved operation ID in the refund's metadata, as shown above, so you
+can find that refund again if the response is lost. Stripe can stop remembering
+an idempotency key after 24 hours; reusing an old key can then create another
+refund. Before retrying an old request, read all refund pages and look for the
+saved operation ID. Verify its charge, amount, and currency before accepting a
+match. Do not create another refund merely because an existing one has not
+succeeded yet.
 
 The callback methods `refunds().create()` and `refunds().list()` report the same
-results and failures exactly once. Custom `StripeClient` implementations must
-provide `refunds()` as well as `charges()` and `invoice_payments()`. Custom
-response parsers inherit JSON decoding for these objects and can override it.
+results and failures exactly once.
 
 @section portal_next Where to go next
 

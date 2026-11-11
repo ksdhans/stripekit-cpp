@@ -203,7 +203,9 @@ open session from being completed. Reuse an idempotency key in `options` for
 retries. The result is the updated session; Stripe rejects expiry if the
 session has already completed. Check ownership before expiring a saved session.
 
-**Find sessions for a payment.** List sessions using a payment intent ID:
+**Find sessions for a payment.** If you have a payment's `pi_...` ID and need
+to find the Checkout session that created it, use the payment intent filter.
+A PaymentIntent is Stripe's record of a payment and any steps needed to complete it:
 
 @code{.cpp}
 stripekit::ListCheckoutSessionsRequest filter;

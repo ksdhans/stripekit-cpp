@@ -5,39 +5,34 @@ products, prices, customers, subscriptions, payments, and disputes. They check
 catalog operations against Stripe and verify that StripeKit verifies,
 de-duplicates, and dispatches the webhook events Stripe sends back.
 
-Checkout tests cover session expiry and retry, rejected repeat expiry, real
-pagination, and payment-intent filtering that excludes unrelated sessions.
-A positive match to a completed Checkout payment still requires the browser
-walkthrough; the automated suite does not complete hosted Checkout.
-
-Payment tests cover charge retrieval and customer-filtered pagination, invoice
-allocations filtered by payment intent, and allocation pagination. They verify
-charge-to-invoice relationships on both legacy and modern Stripe API versions.
-Declined and disputed charges are checked through both retrieval and listing.
-
-The suite checks the requests, returned billing data, and webhook signals that
-applications need. Tenant access, trial eligibility, and grace-period policies
-belong to the application and are not tested here.
-
-Refund tests create partial refunds, retry with the same idempotency key, recover
-operation metadata through charge-filtered pages, refund the remaining balance,
-and verify that Stripe rejects excessive or already-refunded amounts.
-Stripe's `pm_card_pendingRefund` and `pm_card_refundFail` fixtures also exercise
-real pending-to-succeeded and succeeded-to-failed transitions. These tests poll
-refund history for up to seven minutes, checking preserved payment references,
-amounts, metadata, failure reasons, and the resulting charge refund totals.
-
 No money moves, but the tests do talk to Stripe over the network, so they are
 opt-in and are not part of the default `ctest` run.
 
-Collection and invoice tests use isolated test clocks to check cancellation at
-period end and clearing that cancellation, all three collection-pause behaviors
-at real renewals, explicit and timed resumption, and a paid renewal after timed
-resumption. They confirm that pauses leave existing paid and open invoices alone.
-Invoice tests traverse subscription-filtered pages, retry voiding with the same
-idempotency key, delete standalone drafts, and reject changes to paid invoices.
-They also verify Stripe's refusal to delete subscription-linked drafts and the
-safe alternative: finalize without automatic collection, then void.
+## Coverage and limitations
+
+The suite covers:
+
+- Checkout session expiry and paginated listing.
+- Successful, declined, and disputed charge reads, and links between payments
+  and invoices on older and newer Stripe API versions.
+- Partial and remaining-balance refunds, safe retries, and refunds that complete
+  or fail after the initial response.
+- Cancellation at renewal, collection pauses, and manual or scheduled resumption.
+  Stripe test clocks simulate future billing dates so renewals can be tested
+  without waiting for a real billing period.
+- Invoice listing, finalization without automatic collection, voiding, standalone
+  draft deletion, and protection against changes to paid invoices.
+
+The automated suite does not complete hosted Checkout in a browser. It checks
+that a payment filter excludes unrelated sessions, but does not check finding
+a session for a completed Checkout payment. Use the browser walkthrough below
+for hosted Checkout.
+
+Customer access rules, trial eligibility, and grace periods belong to your
+application and need separate tests.
+
+Refunds can change status asynchronously. Those tests may wait up to seven
+minutes for Stripe to report the final result.
 
 ## How Inbound Webhooks Reach Your Machine
 
