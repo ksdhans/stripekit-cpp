@@ -37,6 +37,47 @@ public:
     virtual ~StripeResponseParser() = default;
 
     /**
+     * Decode a charge using Stripe's JSON format by default.
+     *
+     * @param response Successful response to decode.
+     *
+     * @return Charge with nullable references preserved as empty IDs.
+     *
+     * @throws ConfigurationException If required fields or references are malformed.
+     */
+    virtual Charge parse_charge(const HttpResponse& response) const;
+    /**
+     * Decode one page using this parser's charge decoder.
+     *
+     * @param response Successful list response.
+     *
+     * @return Charges and whether more pages exist.
+     *
+     * @throws ConfigurationException If the page or an entry is malformed.
+     */
+    virtual ChargeList parse_charge_list(const HttpResponse& response) const;
+    /**
+     * Decode an invoice allocation using Stripe's JSON format by default.
+     *
+     * @param response Successful response to decode.
+     *
+     * @return Invoice and payment references, amounts and status.
+     *
+     * @throws ConfigurationException If required fields or references are malformed.
+     */
+    virtual InvoicePayment parse_invoice_payment(const HttpResponse& response) const;
+    /**
+     * Decode one page using this parser's invoice payment decoder.
+     *
+     * @param response Successful list response.
+     *
+     * @return Allocations and whether more pages exist.
+     *
+     * @throws ConfigurationException If the page or an entry is malformed.
+     */
+    virtual InvoicePaymentList parse_invoice_payment_list(const HttpResponse& response) const;
+
+    /**
      * Reads a product out of a successful response.
      *
      * Deleted products contain only their ID and deleted flag.
@@ -308,6 +349,11 @@ public:
  */
 class StripeApiClient final : public StripeClient {
 public:
+    /** Return charge operations owned by this client. */
+    Charges& charges() override;
+
+    /** Return invoice allocation operations owned by this client. */
+    InvoicePayments& invoice_payments() override;
     /**
      * Creates a client that decodes responses with JsonCpp.
      *
@@ -379,6 +425,40 @@ public:
     Prices& prices() override;
 
 private:
+    /** Retrieve payment attempts and list them by customer. */
+    class ChargeOperations final : public Charges {
+    public:
+        /** Retain the client that owns these operations. */
+        explicit ChargeOperations(StripeApiClient& owner) : owner(owner) {}
+        /** Retrieve a charge with per-request settings. */
+        Task<Charge> retrieve_async(std::string, const RequestOptions&) override;
+        /** Deliver a charge or failure exactly once. */
+        void retrieve(std::string, const RequestOptions&, Completion) override;
+        /** Retrieve one page without automatic traversal. */
+        Task<ChargeList> list_async(const ListChargesRequest&, const RequestOptions&) override;
+        /** Deliver one page or failure exactly once. */
+        void list(const ListChargesRequest&, const RequestOptions&, ListCompletion) override;
+
+    private:
+        StripeApiClient& owner;
+    };
+
+    /** Read the invoices allocated to a payment. */
+    class InvoicePaymentOperations final : public InvoicePayments {
+    public:
+        /** Retain the client that owns these operations. */
+        explicit InvoicePaymentOperations(StripeApiClient& owner) : owner(owner) {}
+        /** Retrieve one allocation page without automatic traversal. */
+        Task<InvoicePaymentList> list_async(const ListInvoicePaymentsRequest&,
+                                            const RequestOptions&) override;
+        /** Deliver one page or failure exactly once. */
+        void
+        list(const ListInvoicePaymentsRequest&, const RequestOptions&, ListCompletion) override;
+
+    private:
+        StripeApiClient& owner;
+    };
+
     /** Creates, retrieves, and updates Stripe products. */
     class ProductOperations final : public Products {
     public:
@@ -624,6 +704,8 @@ private:
     PriceOperations price_operations;
     InvoiceOperations invoice_operations;
     BillingPortalConfigurationOperations billing_portal_configuration_operations;
+    ChargeOperations charge_operations;
+    InvoicePaymentOperations invoice_payment_operations;
 };
 
 /** @} */

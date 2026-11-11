@@ -309,6 +309,33 @@ std::string price_body(const CreatePriceRequest& request) {
     return body;
 }
 
+/** Encode the common page controls, rejecting page sizes Stripe cannot accept. */
+std::string payment_page_query(std::int64_t limit, const std::string& starting_after) {
+    if (limit < 1 || limit > 100)
+        throw ConfigurationException("Payment page size must be from 1 to 100");
+    std::string query;
+    append_form_value(query, "limit", std::to_string(limit));
+    if (!starting_after.empty()) append_form_value(query, "starting_after", starting_after);
+    return query;
+}
+
+/** Build a charge list URL with an optional customer filter. */
+std::string charges_path(const ListChargesRequest& request) {
+    auto query = payment_page_query(request.limit, request.starting_after);
+    if (!request.customer_id.empty()) append_form_value(query, "customer", request.customer_id);
+    return "/v1/charges?" + query;
+}
+
+/** Build an invoice allocation URL, selecting PaymentIntent allocations when requested. */
+std::string invoice_payments_path(const ListInvoicePaymentsRequest& request) {
+    auto query = payment_page_query(request.limit, request.starting_after);
+    if (!request.payment_intent_id.empty()) {
+        append_form_value(query, "payment[type]", "payment_intent");
+        append_form_value(query, "payment[payment_intent]", request.payment_intent_id);
+    }
+    return "/v1/invoice_payments?" + query;
+}
+
 /** Build a filtered price-list URL with explicit pagination. */
 std::string prices_path(const ListPricesRequest& request) {
     if (request.limit < 1 || request.limit > 100 || request.lookup_keys.size() > 10)
@@ -797,6 +824,105 @@ std::vector<SubscriptionItem> subscription_items(const Json::Value& data) {
 
 Price StripeResponseParser::parse_price(const HttpResponse& response) const {
     return JsonStripeResponseParser{}.parse_price(response);
+}
+
+Charge StripeResponseParser::parse_charge(const HttpResponse& response) const {
+    const auto value = json_value::parse(response.body);
+    if (!value.isObject() || value["object"] != "charge" || !value["id"].isString() ||
+        value["id"].asString().empty() || !value["status"].isString() ||
+        value["status"].asString().empty() || !value["currency"].isString() ||
+        value["currency"].asString().empty() || !value["amount"].isInt64() ||
+        value["amount"].asInt64() < 0 || !value["amount_refunded"].isInt64() ||
+        value["amount_refunded"].asInt64() < 0 || !value["paid"].isBool() ||
+        !value["disputed"].isBool() || !value["livemode"].isBool())
+        throw ConfigurationException("Stripe returned a malformed charge");
+    Charge charge;
+    charge.id = value["id"].asString();
+    charge.customer_id = reference_id(value["customer"]);
+    charge.payment_intent_id = reference_id(value["payment_intent"]);
+    charge.invoice_id = reference_id(value["invoice"]);
+    charge.status = value["status"].asString();
+    charge.currency = value["currency"].asString();
+    charge.amount = value["amount"].asInt64();
+    charge.amount_refunded = value["amount_refunded"].asInt64();
+    charge.paid = value["paid"].asBool();
+    charge.disputed = value["disputed"].asBool();
+    charge.livemode = value["livemode"].asBool();
+    return charge;
+}
+
+InvoicePayment StripeResponseParser::parse_invoice_payment(const HttpResponse& response) const {
+    const auto value = json_value::parse(response.body);
+    if (!value.isObject() || value["object"] != "invoice_payment" || !value["id"].isString() ||
+        value["id"].asString().empty() || !value["status"].isString() ||
+        value["status"].asString().empty() || !value["currency"].isString() ||
+        value["currency"].asString().empty() || !value["amount_requested"].isInt64() ||
+        value["amount_requested"].asInt64() < 0 ||
+        (!value["amount_paid"].isNull() &&
+         (!value["amount_paid"].isInt64() || value["amount_paid"].asInt64() < 0)) ||
+        !value["is_default"].isBool() || !value["livemode"].isBool() ||
+        !value["payment"].isObject() || !value["payment"]["type"].isString() ||
+        value["payment"]["type"].asString().empty())
+        throw ConfigurationException("Stripe returned a malformed invoice payment");
+    InvoicePayment payment;
+    payment.id = value["id"].asString();
+    payment.invoice_id = reference_id(value["invoice"]);
+    if (payment.invoice_id.empty())
+        throw ConfigurationException("Stripe returned an invoice payment without an invoice");
+    payment.payment_type = value["payment"]["type"].asString();
+    payment.payment_intent_id = reference_id(value["payment"]["payment_intent"]);
+    payment.charge_id = reference_id(value["payment"]["charge"]);
+    payment.payment_record_id = reference_id(value["payment"]["payment_record"]);
+    if ((payment.payment_type == "payment_intent" && payment.payment_intent_id.empty()) ||
+        (payment.payment_type == "charge" && payment.charge_id.empty()) ||
+        (payment.payment_type == "payment_record" && payment.payment_record_id.empty()))
+        throw ConfigurationException("Stripe invoice payment reference is missing");
+    payment.status = value["status"].asString();
+    payment.currency = value["currency"].asString();
+    payment.amount_requested = value["amount_requested"].asInt64();
+    if (!value["amount_paid"].isNull()) payment.amount_paid = value["amount_paid"].asInt64();
+    payment.is_default = value["is_default"].asBool();
+    payment.livemode = value["livemode"].asBool();
+    return payment;
+}
+
+namespace {
+
+/** Decode one payment page, using the supplied entry decoder and rejecting unusable cursors. */
+template <typename Page, typename Decoder>
+Page parse_payment_page(const HttpResponse& response, Decoder decode) {
+    const auto value = json_value::parse(response.body);
+    if (!value.isObject() || value["object"] != "list" || !value["data"].isArray() ||
+        !value["has_more"].isBool())
+        throw ConfigurationException("Stripe returned a malformed payment list");
+    Page result;
+    result.has_more = value["has_more"].asBool();
+    std::unordered_set<std::string> ids;
+    for (const auto& entry : value["data"]) {
+        auto item = response;
+        Json::StreamWriterBuilder writer;
+        item.body = Json::writeString(writer, entry);
+        auto parsed = decode(item);
+        if (parsed.id.empty() || !ids.insert(parsed.id).second)
+            throw ConfigurationException("Stripe payment list contains missing or duplicate IDs");
+        result.data.push_back(std::move(parsed));
+    }
+    if (result.has_more && result.data.empty())
+        throw ConfigurationException("Stripe payment pagination did not advance");
+    return result;
+}
+
+} // namespace
+
+ChargeList StripeResponseParser::parse_charge_list(const HttpResponse& response) const {
+    return parse_payment_page<ChargeList>(
+        response, [this](const HttpResponse& item) { return parse_charge(item); });
+}
+
+InvoicePaymentList
+StripeResponseParser::parse_invoice_payment_list(const HttpResponse& response) const {
+    return parse_payment_page<InvoicePaymentList>(
+        response, [this](const HttpResponse& item) { return parse_invoice_payment(item); });
 }
 
 PriceList StripeResponseParser::parse_price_list(const HttpResponse& response) const {
@@ -1596,7 +1722,8 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client)
       checkout_session_operations(*this), checkout_operations(*this),
       subscription_operations(*this), billing_portal_session_operations(*this),
       billing_portal_operations(*this), product_operations(*this), price_operations(*this),
-      invoice_operations(*this), billing_portal_configuration_operations(*this) {}
+      invoice_operations(*this), billing_portal_configuration_operations(*this),
+      charge_operations(*this), invoice_payment_operations(*this) {}
 
 StripeApiClient::StripeApiClient(HTTPClient& http_client,
                                  const StripeResponseParser& response_parser)
@@ -1605,7 +1732,8 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client,
       checkout_session_operations(*this), checkout_operations(*this),
       subscription_operations(*this), billing_portal_session_operations(*this),
       billing_portal_operations(*this), product_operations(*this), price_operations(*this),
-      invoice_operations(*this), billing_portal_configuration_operations(*this) {}
+      invoice_operations(*this), billing_portal_configuration_operations(*this),
+      charge_operations(*this), invoice_payment_operations(*this) {}
 
 StripeApiClient::~StripeApiClient() {
     callback_lifetime->close_and_wait();
@@ -1613,6 +1741,13 @@ StripeApiClient::~StripeApiClient() {
 
 Customers& StripeApiClient::customers() {
     return customer_operations;
+}
+
+Charges& StripeApiClient::charges() {
+    return charge_operations;
+}
+InvoicePayments& StripeApiClient::invoice_payments() {
+    return invoice_payment_operations;
 }
 
 Checkout& StripeApiClient::checkout() {
@@ -1870,6 +2005,103 @@ void StripeApiClient::PriceOperations::list(const ListPricesRequest& request,
         std::move(http),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_price_list(response);
+        },
+        std::move(completion));
+}
+
+Task<Charge> StripeApiClient::ChargeOperations::retrieve_async(std::string id,
+                                                               const RequestOptions& options) {
+    return send_and_parse_async<Charge>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, catalog_path("charges", id), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_charge(response);
+        });
+}
+
+void StripeApiClient::ChargeOperations::retrieve(std::string id,
+                                                 const RequestOptions& options,
+                                                 Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, catalog_path("charges", id), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Charge>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_charge(response);
+        },
+        std::move(completion));
+}
+
+Task<ChargeList> StripeApiClient::ChargeOperations::list_async(const ListChargesRequest& request,
+                                                               const RequestOptions& options) {
+    return send_and_parse_async<ChargeList>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, charges_path(request), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_charge_list(response);
+        });
+}
+
+void StripeApiClient::ChargeOperations::list(const ListChargesRequest& request,
+                                             const RequestOptions& options,
+                                             ListCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, charges_path(request), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<ChargeList>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_charge_list(response);
+        },
+        std::move(completion));
+}
+
+Task<InvoicePaymentList>
+StripeApiClient::InvoicePaymentOperations::list_async(const ListInvoicePaymentsRequest& request,
+                                                      const RequestOptions& options) {
+    return send_and_parse_async<InvoicePaymentList>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, invoice_payments_path(request), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_invoice_payment_list(response);
+        });
+}
+
+void StripeApiClient::InvoicePaymentOperations::list(const ListInvoicePaymentsRequest& request,
+                                                     const RequestOptions& options,
+                                                     ListCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, invoice_payments_path(request), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<InvoicePaymentList>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_invoice_payment_list(response);
         },
         std::move(completion));
 }

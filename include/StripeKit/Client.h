@@ -1156,6 +1156,114 @@ public:
     virtual BillingPortalConfigurations& configurations() = 0;
 };
 
+/** Filters for one page of charges. Empty customer_id lists all customers. */
+struct ListChargesRequest {
+    std::string customer_id;
+    std::int64_t limit = 10;    ///< Page size, from 1 to 100.
+    std::string starting_after; ///< Last charge ID from the previous page.
+};
+
+/** Filters for one page of invoice payments. Empty payment_intent_id lists all payments. */
+struct ListInvoicePaymentsRequest {
+    std::string payment_intent_id;
+    std::int64_t limit = 10;    ///< Page size, from 1 to 100.
+    std::string starting_after; ///< Last invoice payment ID from the previous page.
+};
+
+/** Read payment attempts and discover a customer's charges through StripeClient::charges(). */
+class Charges {
+public:
+    /** Receives a charge or the failure. */
+    using Completion = std::function<void(CallbackResult<Charge>)>;
+    /** Receives one page or the failure. */
+    using ListCompletion = std::function<void(CallbackResult<ChargeList>)>;
+    /** Destroy the operations instance. */
+    virtual ~Charges() = default;
+
+    /**
+     * Retrieve a charge, including customer and payment references.
+     *
+     * @param charge_id Existing Stripe charge ID.
+     * @param options Per-request timeout and headers.
+     *
+     * @return The charge, including payment and dispute status.
+     *
+     * @throws ConfigurationException If the ID is empty.
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<Charge> retrieve_async(std::string charge_id,
+                                        const RequestOptions& options = {}) = 0;
+    /**
+     * Retrieve a charge and report its result or failure exactly once.
+     *
+     * @param charge_id Existing Stripe charge ID.
+     * @param options Per-request settings.
+     * @param completion Receives the charge or failure.
+     */
+    virtual void
+    retrieve(std::string charge_id, const RequestOptions& options, Completion completion) = 0;
+    /**
+     * List one page of charges, optionally limited to a customer.
+     *
+     * @param request Customer filter, page size and cursor.
+     * @param options Per-request settings.
+     *
+     * @return One page; no further pages are fetched automatically.
+     *
+     * @throws ConfigurationException If limit is outside 1 through 100.
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<ChargeList> list_async(const ListChargesRequest& request = {},
+                                        const RequestOptions& options = {}) = 0;
+    /**
+     * List one page and report its result or failure exactly once.
+     *
+     * @param request Customer filter and pagination settings.
+     * @param options Per-request settings.
+     * @param completion Receives the page or failure.
+     */
+    virtual void list(const ListChargesRequest& request,
+                      const RequestOptions& options,
+                      ListCompletion completion) = 0;
+};
+
+/**
+ * Read invoice payment allocations through StripeClient::invoice_payments().
+ * These endpoints require a Stripe API version supporting invoice payments
+ * (2025-03-31.basil or later); older versions expose an invoice on the charge.
+ */
+class InvoicePayments {
+public:
+    /** Receives one page or the failure. */
+    using ListCompletion = std::function<void(CallbackResult<InvoicePaymentList>)>;
+    /** Destroy the operations instance. */
+    virtual ~InvoicePayments() = default;
+    /**
+     * List invoice allocations, optionally for a specific PaymentIntent.
+     * One payment may be allocated to more than one invoice.
+     *
+     * @param request Payment intent filter, page size and cursor.
+     * @param options Per-request settings, including a supported Stripe-Version.
+     *
+     * @return One page; no further pages are fetched automatically.
+     *
+     * @throws ConfigurationException If limit is outside 1 through 100.
+     * @throws StripeApiException If Stripe rejects the request or API version.
+     */
+    virtual Task<InvoicePaymentList> list_async(const ListInvoicePaymentsRequest& request = {},
+                                                const RequestOptions& options = {}) = 0;
+    /**
+     * List one page and report its result or failure exactly once.
+     *
+     * @param request Payment intent filter and pagination settings.
+     * @param options Per-request settings.
+     * @param completion Receives the page or failure.
+     */
+    virtual void list(const ListInvoicePaymentsRequest& request,
+                      const RequestOptions& options,
+                      ListCompletion completion) = 0;
+};
+
 /**
  * The entry point for talking to Stripe.
  *
@@ -1177,6 +1285,20 @@ public:
  */
 class StripeClient {
 public:
+    /**
+     * Return charge retrieval and listing operations.
+     *
+     * @return Operations owned by this client and valid for its lifetime.
+     */
+    virtual Charges& charges() = 0;
+
+    /**
+     * Return invoice payment allocation operations.
+     *
+     * @return Operations owned by this client and valid for its lifetime.
+     */
+    virtual InvoicePayments& invoice_payments() = 0;
+
     /**
      * Destroys the client instance.
      */

@@ -169,6 +169,53 @@ Useful fields:
 customer's action, such as an extra bank authentication. Send the customer
 there, then wait for the `invoice.paid` webhook.
 
+@section invoice_payments Find the payment behind an invoice
+
+A **charge** is an attempt to collect money. Retrieve one with
+`stripe->charges().retrieve_async(charge_id)` to check its customer, amount,
+payment status, and whether it is disputed. To find a customer's charges:
+
+@code{.cpp}
+stripekit::ListChargesRequest request;
+request.customer_id = customer_id;
+request.limit = 100;
+const auto page = co_await stripe->charges().list_async(request);
+@endcode
+
+Only one page is returned. If `page.has_more` is true, set
+`request.starting_after` to `page.data.back().id` and request the next page.
+Page sizes must be from 1 to 100. An empty customer filter lists all customers.
+Verify that returned charges belong to the customer your application expects.
+The charge's amounts, including `amount_refunded`, use the currency's smallest unit.
+
+On older Stripe API versions a charge can contain `invoice_id`. From
+`2025-03-31.basil`, use its `payment_intent_id` to find the invoice allocations:
+
+@code{.cpp}
+stripekit::ListInvoicePaymentsRequest request;
+request.payment_intent_id = charge.payment_intent_id;
+request.limit = 100;
+stripekit::RequestOptions options;
+options.headers["Stripe-Version"] = "2025-03-31.basil";
+const auto page = co_await stripe->invoice_payments().list_async(request, options);
+@endcode
+
+Use a nonempty PaymentIntent ID when looking up a particular payment. Omitting
+the filter lists all invoice payments. Pagination works like charge listing,
+using the last allocation ID as the next cursor. This endpoint requires a Stripe
+API version that supports invoice payments, such as `2025-03-31.basil` or later.
+
+Each allocation identifies its invoice, payment type and matching payment
+reference, status, currency, and requested and paid amounts. `amount_paid` is
+absent until paid; it is not assumed to be zero. A payment can pay more than
+one invoice, so inspect all pages rather than assuming a single invoice owns it.
+Unknown payment types remain available in `payment_type`.
+
+All three read operations also have callback forms: `charges().retrieve()`,
+`charges().list()`, and `invoice_payments().list()`. They report either the
+result or the failure exactly once. Invalid IDs and page sizes fail before
+sending a request; Stripe rejections and transport failures are reported too.
+
 @section portal_next Where to go next
 
 - @ref products_and_prices — create the products and prices offered for plan switching.

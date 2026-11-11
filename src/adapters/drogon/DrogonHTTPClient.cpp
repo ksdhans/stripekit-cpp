@@ -73,6 +73,16 @@ trantor::EventLoop* select_event_loop(EventLoopOptions options,
 
 class OwnedStripeClient final : public StripeClient {
 public:
+    /** Return the underlying client's charge operations. */
+    Charges& charges() override {
+        return client.charges();
+    }
+
+    /** Return the underlying client's invoice allocation operations. */
+    InvoicePayments& invoice_payments() override {
+        return client.invoice_payments();
+    }
+
     explicit OwnedStripeClient(ClientOptions options)
         : http_client(
               std::move(options.api_key), std::move(options.api_base_url), options.event_loop),

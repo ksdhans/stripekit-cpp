@@ -172,6 +172,57 @@ struct CheckoutSession {
     std::int64_t expires_at_unix = 0;
 };
 
+/**
+ * One attempt to collect a payment. Amounts are in the currency's smallest unit.
+ * invoice_id is available on older Stripe API versions; on newer versions,
+ * find invoice allocations through InvoicePayments using payment_intent_id.
+ */
+struct Charge {
+    std::string id;
+    std::string customer_id;       ///< Empty for a payment without a saved customer.
+    std::string payment_intent_id; ///< Empty for charges not created by a PaymentIntent.
+    std::string invoice_id;        ///< Legacy invoice reference; empty when absent.
+    std::string status;            ///< Stripe status, such as succeeded, pending, or failed.
+    std::string currency;
+    std::int64_t amount = 0;
+    std::int64_t amount_refunded = 0;
+    bool paid = false;
+    bool disputed = false;
+    bool livemode = false;
+};
+
+/** One page of charges; use the last ID as starting_after when has_more is true. */
+struct ChargeList {
+    std::vector<Charge> data;
+    bool has_more = false;
+};
+
+/**
+ * A payment allocated to an invoice, not necessarily its full balance.
+ * Keep payment_type when handling future Stripe payment types; only the
+ * reference matching that type is populated.
+ */
+struct InvoicePayment {
+    std::string id;
+    std::string invoice_id;
+    std::string payment_type; ///< For example payment_intent, charge, or payment_record.
+    std::string payment_intent_id;
+    std::string charge_id;
+    std::string payment_record_id;
+    std::string status; ///< For example open, paid, or canceled.
+    std::string currency;
+    std::int64_t amount_requested = 0;
+    std::optional<std::int64_t> amount_paid; ///< Absent until the allocation is paid.
+    bool is_default = false;
+    bool livemode = false;
+};
+
+/** One page of invoice allocations; use the last ID as the next cursor. */
+struct InvoicePaymentList {
+    std::vector<InvoicePayment> data;
+    bool has_more = false;
+};
+
 /** One page of Checkout sessions; request the next page only when has_more is true. */
 struct CheckoutSessionList {
     std::vector<CheckoutSession> data;

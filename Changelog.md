@@ -7,6 +7,8 @@ version section when a release is tagged.
 
 - Add Checkout session expiry and paginated listing with a payment intent filter,
   and add tests to confirm their behaviour.
+- Add charge retrieval, customer-filtered charge listing, and payment-intent
+  filtered invoice payment listing, with unit and Sandbox tests.
 
 ## 0.5.0 2026-11-11
 

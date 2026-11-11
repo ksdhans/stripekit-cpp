@@ -10,6 +10,10 @@ pagination, and payment-intent filtering that excludes unrelated sessions.
 A positive match to a completed Checkout payment still requires the browser
 walkthrough; the automated suite does not complete hosted Checkout.
 
+Payment tests cover charge retrieval and customer-filtered pagination, invoice
+allocations filtered by payment intent, and allocation pagination. They verify
+charge-to-invoice relationships on both legacy and modern Stripe API versions.
+
 The suite checks the requests, returned billing data, and webhook signals that
 applications need. Tenant access, trial eligibility, and grace-period policies
 belong to the application and are not tested here.
