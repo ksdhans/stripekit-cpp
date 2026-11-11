@@ -5,10 +5,10 @@ version section when a release is tagged.
 
 ## Unreleased
 
-- Add SQLite webhook store options for lock timeout, commit durability, and
-  automatic checkpointing control for external managers such as Litestream.
-  File-backed stores now use WAL mode with a five-second lock timeout and 
-  `FULL` durability by default.
+## 0.5.0 2026-11-11
+
+- Add SQLite webhook store options for optimal SQLite settings. File-backed stores
+  now use WAL mode with a five-second lock timeout and `FULL` durability by default.
 
 ## 0.4.0 2026-11-03
 
