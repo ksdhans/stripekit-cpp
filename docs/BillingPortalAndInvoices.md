@@ -195,7 +195,7 @@ creating another. Do not overwrite changes scheduled by another workflow.
 
 To keep the current price until renewal, then use a new price for one billing
 period, save two phases. This example assumes an active subscription with one
-fixed-price item, a positive quantity, and no discounts, tax settings, trial, or
+fixed-price item, a positive quantity, and no discounts, tax settings, active trial, or
 pending changes. Check those conditions before creating the schedule.
 Use the returned `current_phase` dates after checking that it is present:
 
