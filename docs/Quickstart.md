@@ -197,6 +197,31 @@ can be `open`, `complete`, or `expired`; `expires_at_unix` gives its expiry
 time in Unix seconds. You can set `request.expires_at` when creating a session,
 but Stripe requires it to be 30 minutes to 24 hours in the future.
 
+**Close an abandoned session.** Call
+`stripe->checkout().sessions().expire_async(session.id, options)` to prevent an
+open session from being completed. Reuse an idempotency key in `options` for
+retries. The result is the updated session; Stripe rejects expiry if the
+session has already completed. Check ownership before expiring a saved session.
+
+**Find sessions for a payment.** List sessions using a payment intent ID:
+
+@code{.cpp}
+stripekit::ListCheckoutSessionsRequest filter;
+filter.payment_intent_id = "pi_...";
+filter.limit = 100;
+auto page = co_await stripe->checkout().sessions().list_async(filter);
+while (page.has_more) {
+    // Process page.data before moving to the next page.
+    filter.starting_after = page.data.back().id;
+    page = co_await stripe->checkout().sessions().list_async(filter);
+}
+// Process the final page.data too.
+@endcode
+
+Each call returns only one page. Page sizes must be from 1 to 100. Omit the
+payment intent filter to list all sessions. The callback methods `expire`
+and `list` report the same results and failures as their coroutine counterparts.
+
 A `complete` session does not prove that payment succeeded or confirm trial
 access. Verify the subscription using Stripe webhooks before granting access.
 Stripe bills the subscription after the trial unless it is canceled.

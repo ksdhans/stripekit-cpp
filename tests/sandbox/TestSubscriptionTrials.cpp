@@ -9,6 +9,8 @@
 #include "StripeKit/Errors.h"
 
 #include <chrono>
+#include <future>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -16,6 +18,18 @@
 
 using namespace stripekit;
 using namespace stripekit::testing;
+
+namespace {
+
+/** Return a completed callback's value, rethrowing its original failure if it failed. */
+template <typename T>
+T unwrap_callback_result(CallbackResult<T> result) {
+    if (std::holds_alternative<std::exception_ptr>(result))
+        std::rethrow_exception(std::get<std::exception_ptr>(result));
+    return std::get<T>(std::move(result));
+}
+
+} // namespace
 
 class SandboxTrialTest : public ::testing::Test {
 protected:
@@ -53,8 +67,7 @@ protected:
                 const auto session =
                     environment->stripe_client().checkout().sessions().retrieve_async(id).result();
                 if (session.status == "open")
-                    environment->stripe_api().require_post(
-                        "/v1/checkout/sessions/" + id + "/expire", {});
+                    environment->stripe_client().checkout().sessions().expire_async(id).result();
             });
         }
         sessions.clear();
@@ -281,7 +294,7 @@ TEST_F(SandboxTrialTest, AbandonedExpiredCheckoutCanStartANewAttempt) {
     const auto session = create_session(request, options);
     EXPECT_TRUE(session.subscription_id.empty());
     EXPECT_EQ(session.status, "open");
-    environment->stripe_api().require_post("/v1/checkout/sessions/" + session.id + "/expire", {});
+    environment->stripe_client().checkout().sessions().expire_async(session.id).result();
     check_event("checkout.session.expired", session.id);
     const auto expired =
         environment->stripe_client().checkout().sessions().retrieve_async(session.id).result();
@@ -299,6 +312,107 @@ TEST_F(SandboxTrialTest, AbandonedExpiredCheckoutCanStartANewAttempt) {
     EXPECT_EQ(replacement.status, "open");
     const auto subscriptions = get_object("/v1/subscriptions?customer=" + request.customer_id);
     EXPECT_TRUE(subscriptions["data"].empty());
+}
+
+TEST_F(SandboxTrialTest, CheckoutManagementExpiryConfirmsStateAndRejectsAnotherExpiry) {
+    const auto session = create_session(checkout_request());
+    ASSERT_EQ(session.status, "open");
+    auto& checkout = environment->stripe_client().checkout().sessions();
+    const RequestOptions options{ .idempotency_key = environment->run_id() + "_checkout_expiry",
+                                  .timeout = std::chrono::seconds(30) };
+    const auto expired = checkout.expire_async(session.id, options).result();
+    EXPECT_EQ(expired.id, session.id);
+    EXPECT_EQ(expired.status, "expired");
+    EXPECT_EQ(expired.metadata.at("session_only"), environment->run_id());
+    EXPECT_FALSE(expired.livemode);
+    EXPECT_EQ(checkout.retrieve_async(session.id).result().status, "expired");
+    check_event("checkout.session.expired", session.id);
+
+    std::promise<CallbackResult<CheckoutSession>> completion;
+    auto result = completion.get_future();
+    checkout.expire(session.id, options, [&completion](CallbackResult<CheckoutSession> value) {
+        completion.set_value(std::move(value));
+    });
+    const auto retry = unwrap_callback_result(result.get());
+    EXPECT_EQ(retry.id, session.id);
+    EXPECT_EQ(retry.status, "expired");
+
+    try {
+        checkout.expire_async(session.id).result();
+        FAIL();
+    } catch (const StripeApiException& error) {
+        EXPECT_EQ(error.payload().http_status, 400);
+        EXPECT_FALSE(error.payload().request_id.empty());
+    }
+}
+
+TEST_F(SandboxTrialTest, CheckoutManagementListingTraversesRealPages) {
+    const auto first = create_session(checkout_request());
+    const auto second = create_session(checkout_request());
+    const auto newest = create_session(checkout_request());
+    ListCheckoutSessionsRequest request;
+    request.limit = 1;
+    request.starting_after = newest.id;
+    auto& checkout = environment->stripe_client().checkout().sessions();
+    auto page = checkout.list_async(request).result();
+    ASSERT_EQ(page.data.size(), 1U);
+    EXPECT_TRUE(page.has_more);
+    std::set<std::string> seen;
+    bool found_first = false;
+    bool found_second = false;
+    for (int pages = 0; pages < 20; ++pages) {
+        ASSERT_EQ(page.data.size(), 1U);
+        const auto& session = page.data.front();
+        ASSERT_TRUE(seen.insert(session.id).second);
+        EXPECT_NE(session.id, request.starting_after);
+        EXPECT_NE(session.id, newest.id);
+        EXPECT_FALSE(session.livemode);
+        if (session.id == first.id || session.id == second.id) {
+            EXPECT_EQ(session.mode, "subscription");
+            EXPECT_EQ(session.status, "open");
+            EXPECT_EQ(session.metadata.at("session_only"), environment->run_id());
+            found_first = found_first || session.id == first.id;
+            found_second = found_second || session.id == second.id;
+        }
+        if (found_first && found_second) break;
+        ASSERT_TRUE(page.has_more);
+        request.starting_after = session.id;
+        std::promise<CallbackResult<CheckoutSessionList>> completion;
+        auto result = completion.get_future();
+        checkout.list(request, {}, [&completion](CallbackResult<CheckoutSessionList> value) {
+            completion.set_value(std::move(value));
+        });
+        page = unwrap_callback_result(result.get());
+    }
+    EXPECT_TRUE(found_first);
+    EXPECT_TRUE(found_second);
+}
+
+TEST_F(SandboxTrialTest, CheckoutManagementPaymentIntentFilterExcludesUnrelatedSessions) {
+    const auto session = create_session(checkout_request());
+    const auto intent = environment->stripe_api().require_post(
+        "/v1/payment_intents",
+        { { "amount", "1500" },
+          { "currency", "usd" },
+          { "payment_method_types[]", "card" },
+          { "metadata[stripekit_run_id]", environment->run_id() } });
+    environment->stripe_api().require_post("/v1/payment_intents/" + intent.id() + "/cancel", {});
+    ListCheckoutSessionsRequest request;
+    request.payment_intent_id = intent.id();
+    request.limit = 100;
+    auto& checkout = environment->stripe_client().checkout().sessions();
+    const auto page = checkout.list_async(request).result();
+    EXPECT_TRUE(page.data.empty());
+    EXPECT_FALSE(page.has_more);
+    std::promise<CallbackResult<CheckoutSessionList>> completion;
+    auto result = completion.get_future();
+    checkout.list(request, {}, [&completion](CallbackResult<CheckoutSessionList> value) {
+        completion.set_value(std::move(value));
+    });
+    const auto callback_page = unwrap_callback_result(result.get());
+    EXPECT_TRUE(callback_page.data.empty());
+    EXPECT_FALSE(callback_page.has_more);
+    EXPECT_EQ(checkout.retrieve_async(session.id).result().status, "open");
 }
 
 TEST_F(SandboxTrialTest, TrialEndCollectsTheFirstNonzeroInvoice) {

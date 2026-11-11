@@ -65,6 +65,198 @@ protected:
     std::unique_ptr<StripeApiClient> client;
 };
 
+TEST_F(StripeApiClientTest, ExpireCheckoutPreservesOptionsAndEncodesIdentity) {
+    http_client.set_response(
+        { .status_code = 200,
+          .body =
+              R"({"object":"checkout.session","id":"cs_test","status":"expired","metadata":{"owner":"tenant"}})" });
+    RequestOptions options;
+    options.idempotency_key = "expiry-key";
+    options.timeout = std::chrono::seconds(7);
+    options.headers["Stripe-Version"] = "2024-06-20";
+    const auto session = client->checkout().sessions().expire_async("cs/a?b", options).result();
+    EXPECT_EQ(session.status, "expired");
+    EXPECT_EQ(session.metadata.at("owner"), "tenant");
+    const auto sent = http_client.get_recorded_requests().at(0);
+    EXPECT_EQ(sent.method, HttpMethod::Post);
+    EXPECT_EQ(sent.path, "/v1/checkout/sessions/cs%2Fa%3Fb/expire");
+    EXPECT_TRUE(sent.body.empty());
+    EXPECT_EQ(sent.options.timeout, options.timeout);
+    EXPECT_EQ(sent.headers.at("Idempotency-Key"), "expiry-key");
+    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2024-06-20");
+    int calls = 0;
+    client->checkout().sessions().expire(
+        "cs_test", options, [&](CallbackResult<CheckoutSession> result) {
+            ++calls;
+            ASSERT_TRUE(std::holds_alternative<CheckoutSession>(result));
+            EXPECT_EQ(std::get<CheckoutSession>(result).status, "expired");
+        });
+    EXPECT_EQ(calls, 1);
+}
+
+TEST_F(StripeApiClientTest, CheckoutListingReturnsOnePageAndEncodesFilters) {
+    http_client.set_response(
+        { .status_code = 200,
+          .body =
+              R"({"object":"list","has_more":true,"data":[{"object":"checkout.session","id":"cs_one","status":"complete","mode":"payment","payment_intent":"pi_test"}]})" });
+    ListCheckoutSessionsRequest request;
+    request.payment_intent_id = "pi/a?b";
+    request.starting_after = "cs &last";
+    request.limit = 100;
+    RequestOptions options;
+    options.timeout = std::chrono::seconds(3);
+    const auto page = client->checkout().sessions().list_async(request, options).result();
+    ASSERT_EQ(page.data.size(), 1U);
+    EXPECT_TRUE(page.has_more);
+    EXPECT_EQ(page.data.front().payment_intent_id, "pi_test");
+    const auto recorded = http_client.get_recorded_requests();
+    ASSERT_EQ(recorded.size(), 1U);
+    EXPECT_EQ(recorded[0].method, HttpMethod::Get);
+    EXPECT_EQ(
+        recorded[0].path,
+        "/v1/checkout/sessions?limit=100&payment_intent=pi%2Fa%3Fb&starting_after=cs%20%26last");
+    EXPECT_EQ(recorded[0].options.timeout, options.timeout);
+    int calls = 0;
+    client->checkout().sessions().list({}, {}, [&](CallbackResult<CheckoutSessionList> result) {
+        ++calls;
+        ASSERT_TRUE(std::holds_alternative<CheckoutSessionList>(result));
+    });
+    EXPECT_EQ(calls, 1);
+    EXPECT_EQ(http_client.get_recorded_requests().back().path, "/v1/checkout/sessions?limit=10");
+    http_client.set_response(
+        { .status_code = 200, .body = R"({"object":"list","has_more":false,"data":[]})" });
+    EXPECT_TRUE(client->checkout().sessions().list_async().result().data.empty());
+}
+
+TEST_F(StripeApiClientTest, CheckoutManagementRejectsInvalidInputWithoutNetworkCalls) {
+    EXPECT_THROW(client->checkout().sessions().expire_async("").result(), ConfigurationException);
+    for (const auto limit : { 0, 101 }) {
+        ListCheckoutSessionsRequest request;
+        request.limit = limit;
+        EXPECT_THROW(client->checkout().sessions().list_async(request).result(),
+                     ConfigurationException);
+    }
+    int calls = 0;
+    client->checkout().sessions().expire("", {}, [&](CallbackResult<CheckoutSession> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+    });
+    client->checkout().sessions().list(
+        { .limit = 0 }, {}, [&](CallbackResult<CheckoutSessionList> result) {
+            ++calls;
+            EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+        });
+    EXPECT_EQ(calls, 2);
+    EXPECT_TRUE(http_client.get_recorded_requests().empty());
+}
+
+TEST_F(StripeApiClientTest, CheckoutListingFollowsExplicitCursorsAndParsesExpandedIdentities) {
+    http_client.set_handler([](const HttpRequest& request) {
+        if (request.path == "/v1/checkout/sessions?limit=1") {
+            return HttpResponse{
+                .status_code = 200,
+                .body =
+                    R"({"object":"list","has_more":true,"data":[{"object":"checkout.session","id":"cs_first","status":"complete","mode":"payment","customer":{"id":"cus_test"},"payment_intent":{"id":"pi_test"},"metadata":{"owner":"tenant"}}]})"
+            };
+        }
+        EXPECT_EQ(request.path, "/v1/checkout/sessions?limit=1&starting_after=cs_first");
+        return HttpResponse{
+            .status_code = 200,
+            .body =
+                R"({"object":"list","has_more":false,"data":[{"object":"checkout.session","id":"cs_last","status":"open","mode":"subscription","subscription":{"id":"sub_test"},"expires_at":2000000000}]})"
+        };
+    });
+    ListCheckoutSessionsRequest request;
+    request.limit = 1;
+    auto page = client->checkout().sessions().list_async(request).result();
+    ASSERT_EQ(page.data.size(), 1U);
+    EXPECT_TRUE(page.has_more);
+    EXPECT_EQ(page.data[0].customer_id, "cus_test");
+    EXPECT_EQ(page.data[0].payment_intent_id, "pi_test");
+    EXPECT_EQ(page.data[0].metadata.at("owner"), "tenant");
+    ASSERT_EQ(http_client.get_recorded_requests().size(), 1U);
+    request.starting_after = page.data[0].id;
+    page = client->checkout().sessions().list_async(request).result();
+    ASSERT_EQ(page.data.size(), 1U);
+    EXPECT_FALSE(page.has_more);
+    EXPECT_EQ(page.data[0].id, "cs_last");
+    EXPECT_EQ(page.data[0].subscription_id, "sub_test");
+    EXPECT_EQ(page.data[0].expires_at_unix, 2000000000);
+    EXPECT_EQ(http_client.get_recorded_requests().size(), 2U);
+}
+
+TEST_F(StripeApiClientTest, CheckoutListsRejectMalformedPages) {
+    for (
+        const auto* body :
+        { "{}",
+          R"({"object":"list","data":[],"has_more":true})",
+          R"({"object":"list","data":{},"has_more":false})",
+          R"({"object":"list","data":[]})",
+          R"({"object":"list","data":[],"has_more":"false"})",
+          R"({"object":"list","data":[{"object":"checkout.session","status":"open"}],"has_more":false})",
+          R"({"object":"list","data":[{"object":"checkout.session","id":"cs_test"}],"has_more":false})",
+          R"({"object":"list","data":[{"object":"customer","id":"cus_test","status":"open"}],"has_more":false})" }) {
+        http_client.set_response({ .status_code = 200, .body = body });
+        EXPECT_THROW(client->checkout().sessions().list_async().result(), ConfigurationException);
+    }
+}
+
+TEST_F(StripeApiClientTest, CheckoutCallbacksPropagateParseProviderAndTransportFailuresOnce) {
+    int calls = 0;
+    const auto session_failure = [&](CallbackResult<CheckoutSession> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+    };
+    const auto list_failure = [&](CallbackResult<CheckoutSessionList> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+    };
+    http_client.set_response({ .status_code = 200, .body = "not json" });
+    client->checkout().sessions().expire("cs_test", {}, session_failure);
+    client->checkout().sessions().list({}, {}, list_failure);
+    http_client.set_response(
+        { .status_code = 429,
+          .body = R"({"error":{"type":"rate_limit_error","message":"Slow down"}})" });
+    client->checkout().sessions().list({}, {}, list_failure);
+    http_client.set_exception(std::make_exception_ptr(std::runtime_error("Offline")));
+    client->checkout().sessions().expire("cs_test", {}, session_failure);
+    http_client.set_exception(std::make_exception_ptr(std::runtime_error("Offline")));
+    EXPECT_THROW(client->checkout().sessions().list_async().result(), std::runtime_error);
+    EXPECT_EQ(calls, 4);
+    EXPECT_EQ(http_client.get_recorded_requests().size(), 5U);
+}
+
+TEST_F(StripeApiClientTest, CheckoutManagementPropagatesStripeAndTransportFailures) {
+    http_client.set_response(
+        { .status_code = 400,
+          .headers = { { "request-id", "req_expire" } },
+          .body =
+              R"({"error":{"type":"invalid_request_error","message":"Session is complete"}})" });
+    EXPECT_THROW(client->checkout().sessions().expire_async("cs_complete").result(),
+                 StripeApiException);
+    EXPECT_THROW(client->checkout().sessions().list_async().result(), StripeApiException);
+    int calls = 0;
+    client->checkout().sessions().expire(
+        "cs_complete", {}, [&](CallbackResult<CheckoutSession> result) {
+            ++calls;
+            ASSERT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+            try {
+                std::rethrow_exception(std::get<std::exception_ptr>(result));
+            } catch (const StripeApiException& error) {
+                EXPECT_EQ(error.payload().request_id, "req_expire");
+            }
+        });
+    http_client.set_exception(std::make_exception_ptr(std::runtime_error("Offline")));
+    client->checkout().sessions().list({}, {}, [&](CallbackResult<CheckoutSessionList> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+    });
+    EXPECT_EQ(calls, 2);
+    http_client.set_exception(std::make_exception_ptr(std::runtime_error("Offline")));
+    EXPECT_THROW(client->checkout().sessions().expire_async("cs_test").result(),
+                 std::runtime_error);
+}
+
 TEST_F(StripeApiClientTest, CreateCustomerAsyncSuccess) {
     http_client.set_handler([](const HttpRequest& req) {
         EXPECT_EQ(req.method, HttpMethod::Post);

@@ -5,6 +5,9 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Add Checkout session expiry and paginated listing with a payment intent filter,
+  and add tests to confirm their behaviour.
+
 ## 0.5.0 2026-11-11
 
 - Add SQLite webhook store options for optimal SQLite settings. File-backed stores

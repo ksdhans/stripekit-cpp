@@ -167,6 +167,19 @@ std::string catalog_path(std::string_view group, const std::string& id) {
     return "/v1/" + std::string(group) + "/" + url_encode(id);
 }
 
+/** Build a Checkout list query with bounded pagination and encoded filter values. */
+std::string checkout_sessions_path(const ListCheckoutSessionsRequest& request) {
+    if (request.limit < 1 || request.limit > 100)
+        throw ConfigurationException("Checkout session page size must be from 1 to 100");
+    std::string query;
+    append_form_value(query, "limit", std::to_string(request.limit));
+    if (!request.payment_intent_id.empty())
+        append_form_value(query, "payment_intent", request.payment_intent_id);
+    if (!request.starting_after.empty())
+        append_form_value(query, "starting_after", request.starting_after);
+    return "/v1/checkout/sessions?" + query;
+}
+
 /** Encode product creation, retaining caller-supplied identities and metadata. */
 std::string product_body(const CreateProductRequest& request) {
     if (request.name.empty()) throw ConfigurationException("A product name is required");
@@ -799,6 +812,29 @@ StripeResponseParser::parse_billing_portal_configuration(const HttpResponse& res
     return JsonStripeResponseParser{}.parse_billing_portal_configuration(response);
 }
 
+CheckoutSessionList
+StripeResponseParser::parse_checkout_session_list(const HttpResponse& response) const {
+    const auto object = json_value::parse(response.body);
+    if (!object.isObject() || object["object"] != "list" || !object["data"].isArray() ||
+        !object["has_more"].isBool())
+        throw ConfigurationException("Stripe returned a malformed Checkout session list");
+    CheckoutSessionList result;
+    result.has_more = object["has_more"].asBool();
+    for (const auto& value : object["data"]) {
+        if (!value.isObject() || value["object"] != "checkout.session" || !value["id"].isString() ||
+            value["id"].asString().empty() || !value["status"].isString() ||
+            value["status"].asString().empty())
+            throw ConfigurationException("Stripe returned a malformed Checkout session");
+        auto item = response;
+        Json::StreamWriterBuilder writer;
+        item.body = Json::writeString(writer, value);
+        result.data.push_back(parse_checkout_session(item));
+    }
+    if (result.has_more && result.data.empty())
+        throw ConfigurationException("Stripe Checkout pagination did not advance");
+    return result;
+}
+
 Product JsonStripeResponseParser::parse_product(const HttpResponse& response) const {
     const auto object = json_value::parse(response.body);
     require_catalog_field(object.isObject() && object["object"] == "product" &&
@@ -1131,6 +1167,74 @@ void StripeApiClient::CustomerOperations::retrieve(std::string customer_id,
 
 StripeApiClient::CheckoutSessionOperations::CheckoutSessionOperations(StripeApiClient& owner)
     : owner(owner) {}
+
+Task<CheckoutSession>
+StripeApiClient::CheckoutSessionOperations::expire_async(std::string id,
+                                                         const RequestOptions& options) {
+    return send_and_parse_async<CheckoutSession>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(
+            HttpMethod::Post, catalog_path("checkout/sessions", id) + "/expire", {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_checkout_session(response);
+        });
+}
+
+void StripeApiClient::CheckoutSessionOperations::expire(std::string id,
+                                                        const RequestOptions& options,
+                                                        CreateCompletion completion) {
+    HttpRequest request;
+    try {
+        request = make_request(
+            HttpMethod::Post, catalog_path("checkout/sessions", id) + "/expire", {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<CheckoutSession>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(request),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_checkout_session(response);
+        },
+        std::move(completion));
+}
+
+Task<CheckoutSessionList>
+StripeApiClient::CheckoutSessionOperations::list_async(const ListCheckoutSessionsRequest& request,
+                                                       const RequestOptions& options) {
+    return send_and_parse_async<CheckoutSessionList>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, checkout_sessions_path(request), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_checkout_session_list(response);
+        });
+}
+
+void StripeApiClient::CheckoutSessionOperations::list(const ListCheckoutSessionsRequest& filters,
+                                                      const RequestOptions& options,
+                                                      ListCompletion completion) {
+    HttpRequest request;
+    try {
+        request = make_request(HttpMethod::Get, checkout_sessions_path(filters), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<CheckoutSessionList>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(request),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_checkout_session_list(response);
+        },
+        std::move(completion));
+}
 
 Task<CheckoutSession>
 StripeApiClient::CheckoutSessionOperations::retrieve_async(std::string session_id,

@@ -659,8 +659,15 @@ public:
                           RetrieveCompletion completion) = 0;
 };
 
+/** Filters for one page of Checkout sessions. No automatic pagination. */
+struct ListCheckoutSessionsRequest {
+    std::string payment_intent_id; ///< Optional payment intent to find its Checkout session.
+    std::int64_t limit = 10;       ///< Page size, from 1 to 100.
+    std::string starting_after;    ///< Last session ID from the previous page; empty for the first.
+};
+
 /**
- * Creates Stripe-hosted Checkout sessions.
+ * Create, retrieve, expire, and list Stripe-hosted Checkout sessions.
  *
  * Reach an instance through StripeClient::checkout(). Checkout is a payment
  * page Stripe hosts: create a session, redirect the customer to
@@ -670,8 +677,57 @@ public:
  */
 class CheckoutSessions {
 public:
-    /** Completion callback for the callback form of create(). */
+    /** Receives a created or expired session, or the request failure. */
     using CreateCompletion = std::function<void(CallbackResult<CheckoutSession>)>;
+    /** Receives one page of sessions, or the request failure. */
+    using ListCompletion = std::function<void(CallbackResult<CheckoutSessionList>)>;
+
+    /**
+     * Expire an open session so it can no longer be completed.
+     * Stripe rejects sessions that cannot be expired, including completed sessions.
+     *
+     * @param session_id Existing Checkout session ID.
+     * @param options Request timeout and optional idempotency key.
+     *
+     * @return The expired session; verify its status before treating expiry as confirmed.
+     *
+     * @throws ConfigurationException If the session ID is empty.
+     * @throws StripeApiException If Stripe rejects expiry.
+     */
+    virtual Task<CheckoutSession> expire_async(std::string session_id,
+                                               const RequestOptions& options = {}) = 0;
+    /**
+     * Expire a session and report its result or failure exactly once.
+     *
+     * @param session_id Existing Checkout session ID.
+     * @param options Per-request settings.
+     * @param completion Receives the expired session or failure.
+     */
+    virtual void
+    expire(std::string session_id, const RequestOptions& options, CreateCompletion completion) = 0;
+    /**
+     * Retrieve one page of sessions, optionally filtered by payment intent.
+     *
+     * @param request Filter, page size, and optional cursor.
+     * @param options Per-request settings.
+     *
+     * @return Sessions and whether another page exists.
+     *
+     * @throws ConfigurationException If the page size is outside 1 through 100.
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<CheckoutSessionList> list_async(const ListCheckoutSessionsRequest& request = {},
+                                                 const RequestOptions& options = {}) = 0;
+    /**
+     * Retrieve one page and report its result or failure exactly once.
+     *
+     * @param request Filter and pagination settings.
+     * @param options Per-request settings.
+     * @param completion Receives the page or failure.
+     */
+    virtual void list(const ListCheckoutSessionsRequest& request,
+                      const RequestOptions& options,
+                      ListCompletion completion) = 0;
 
     /**
      * Destroys the API instance.

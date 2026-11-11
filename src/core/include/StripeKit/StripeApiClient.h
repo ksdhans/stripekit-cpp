@@ -94,6 +94,16 @@ public:
      * @throws ConfigurationException The body was not a valid session object.
      */
     virtual CheckoutSession parse_checkout_session(const HttpResponse& response) const = 0;
+    /**
+     * Decode a page using this parser's Checkout session decoder.
+     *
+     * @param response Successful Stripe list response.
+     *
+     * @return One validated page.
+     *
+     * @throws ConfigurationException If the list or a session identity is malformed.
+     */
+    virtual CheckoutSessionList parse_checkout_session_list(const HttpResponse& response) const;
 
     /**
      * Reads a subscription out of a successful response.
@@ -458,9 +468,25 @@ private:
     class CheckoutSessionOperations final : public CheckoutSessions {
     public:
         explicit CheckoutSessionOperations(StripeApiClient& owner);
+
+        /** Expire an open session, preserving per-request settings. */
+        Task<CheckoutSession> expire_async(std::string, const RequestOptions&) override;
+
+        /** Report expiry or failure exactly once. */
+        void expire(std::string, const RequestOptions&, CreateCompletion) override;
+
+        /** Retrieve one filtered page without automatically fetching more. */
+        Task<CheckoutSessionList> list_async(const ListCheckoutSessionsRequest&,
+                                             const RequestOptions&) override;
+
+        /** Report a page or failure exactly once. */
+        void
+        list(const ListCheckoutSessionsRequest&, const RequestOptions&, ListCompletion) override;
+
         /** Retrieve the current state of a checkout session. */
         Task<CheckoutSession> retrieve_async(std::string session_id,
                                              const RequestOptions& options = {}) override;
+
         Task<CheckoutSession> create_async(const CreateCheckoutSessionRequest& request,
                                            const RequestOptions& options = {}) override;
         void create(const CreateCheckoutSessionRequest& request,

@@ -172,6 +172,12 @@ struct CheckoutSession {
     std::int64_t expires_at_unix = 0;
 };
 
+/** One page of Checkout sessions; request the next page only when has_more is true. */
+struct CheckoutSessionList {
+    std::vector<CheckoutSession> data;
+    bool has_more = false;
+};
+
 /** A current subscription item, or a proposed item in a pending update. */
 struct SubscriptionItem {
     /** Subscription item ID (si_...). */
