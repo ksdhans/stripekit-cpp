@@ -169,6 +169,94 @@ Useful fields:
 customer's action, such as an extra bank authentication. Send the customer
 there, then wait for the `invoice.paid` webhook.
 
+@section subscription_schedules Change a price at a future renewal
+
+Use a **subscription schedule** when a price should change at renewal rather
+than immediately. A schedule is a sequence of **phases**: each phase has start
+and end dates, prices, and quantities. Stripe applies those settings when the
+phase starts.
+
+Create a schedule from an existing subscription to copy its current billing
+settings. This does not create another subscription or immediately change its
+price. Stripe allows only the subscription ID in this creation request; set
+metadata and future phases in a separate update.
+
+@code{.cpp}
+stripekit::RequestOptions options;
+options.headers["Stripe-Version"] = "2025-03-31.basil";
+options.idempotency_key = saved_operation_id + ":create";
+const auto schedule = co_await stripe->subscription_schedules().create_async(
+    { .from_subscription = subscription_id }, options);
+@endcode
+
+If a subscription already has a schedule, read it with
+`subscription_schedules().retrieve_async(subscription.schedule_id)` rather than
+creating another. Do not overwrite changes scheduled by another workflow.
+
+To keep the current price until renewal, then use a new price for one billing
+period, save two phases. This example assumes an active subscription with one
+fixed-price item, a positive quantity, and no discounts, tax settings, trial, or
+pending changes. Check those conditions before creating the schedule.
+Use the returned `current_phase` dates after checking that it is present:
+
+@code{.cpp}
+const auto& current = schedule.current_phase.value();
+stripekit::UpdateSubscriptionScheduleRequest update;
+update.phases = {
+    { .start_date = current.start_date_unix,
+      .end_date = current.end_date_unix,
+      .items = { { current_price_id, quantity } } },
+    { .start_date = current.end_date_unix,
+      .iterations = 1,
+      .items = { { replacement_price_id, quantity } } }
+};
+update.metadata["operation"] = saved_operation_id;
+options.idempotency_key = saved_operation_id + ":update";
+const auto changed = co_await stripe->subscription_schedules().update_async(
+    schedule.id, update, options);
+@endcode
+
+Things to know:
+
+- Updates replace the current and future phases, rather than changing just one
+  field. Include every price and quantity you want to keep. This API supports
+  phase prices, quantities, dates, metadata, and payment adjustments; it cannot
+  preserve other phase settings such as discounts or tax rates in an update.
+- Specify either `end_date` or `iterations` for each phase, not both.
+  `iterations=1` means one billing period at the phase's price. It requires a
+  Stripe API version supporting that parameter, such as the version in the
+  example. Use explicit end dates on versions that no longer support it.
+  Dates are Unix seconds, and adjacent phases must meet at the same timestamp.
+- The default adjustment policy is `ProrationBehavior::None`, meaning no
+  partial-period charges or credits. Set the request's `proration_behavior` to
+  control adjustments to the current phase, and each phase's policy to control
+  adjustments when that phase starts.
+- The default `end_behavior` is `SubscriptionScheduleEndBehavior::Release`.
+  After the final phase, the subscription keeps running at its last settings;
+  it does not revert to the old price. `Cancel` ends the subscription instead.
+- Schedule metadata belongs to the schedule. Phase metadata is applied to the
+  subscription when that phase starts.
+- Read `schedule_id`, `discount_ids`, `default_tax_rate_ids`, and
+  `automatic_tax_enabled` on the subscription before changing its billing.
+  Items also report their discount and tax rate IDs.
+
+Save separate retry keys for creation and update. If creation succeeds but the
+response is lost, retry it with the same key before attempting to create another
+schedule. Stripe can stop remembering keys after 24 hours; if a schedule is
+already attached and you cannot establish that it belongs to your operation,
+leave it unchanged and investigate.
+
+Check the returned schedule's customer, subscription, phases, quantities, and
+end behavior before confirming the change in your application. A scheduled
+change is not proof of a later payment; follow subscription and invoice webhooks.
+After release, `subscription_id` is empty and `released_subscription_id`
+identifies the continuing subscription.
+
+The callback methods are `create()`, `retrieve()`, and `update()`. They report a
+schedule or a failure exactly once. Invalid dates, empty IDs, or invalid
+quantities fail with `ConfigurationException`; Stripe rejections throw
+`StripeApiException`.
+
 @section collection_controls Schedule cancellation or pause collection
 
 Use period-end cancellation to let an existing subscription finish its current

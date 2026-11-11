@@ -73,6 +73,10 @@ trantor::EventLoop* select_event_loop(EventLoopOptions options,
 
 class OwnedStripeClient final : public StripeClient {
 public:
+    /** Return the underlying client's schedule operations. */
+    SubscriptionSchedules& subscription_schedules() override {
+        return client.subscription_schedules();
+    }
     /** Return the underlying client's refund operations. */
     Refunds& refunds() override {
         return client.refunds();

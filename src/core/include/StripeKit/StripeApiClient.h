@@ -37,6 +37,17 @@ public:
     virtual ~StripeResponseParser() = default;
 
     /**
+     * Decode a schedule using Stripe's JSON format by default.
+     *
+     * @param response Successful response to decode.
+     *
+     * @return Schedule lifecycle, references, phases, and metadata.
+     *
+     * @throws ConfigurationException If dates, references, or required fields are malformed.
+     */
+    virtual SubscriptionSchedule parse_subscription_schedule(const HttpResponse& response) const;
+
+    /**
      * Decode a refund using Stripe's JSON format by default.
      *
      * @param response Successful response to decode.
@@ -391,6 +402,8 @@ public:
  */
 class StripeApiClient final : public StripeClient {
 public:
+    /** Return schedule operations owned by this client. */
+    SubscriptionSchedules& subscription_schedules() override;
     /** Return refund operations owned by this client. */
     Refunds& refunds() override;
 
@@ -790,6 +803,36 @@ private:
         StripeApiClient& owner;
     };
 
+    /** Creates and changes subscription schedules. */
+    class SubscriptionScheduleOperations final : public SubscriptionSchedules {
+    public:
+        /** Retain the client that owns these operations. */
+        explicit SubscriptionScheduleOperations(StripeApiClient& owner) : owner(owner) {}
+        /** Read a schedule by ID. */
+        Task<SubscriptionSchedule> retrieve_async(std::string, const RequestOptions&) override;
+        /** Deliver a schedule or failure once. */
+        void retrieve(std::string, const RequestOptions&, Completion) override;
+        /** Create a schedule from an existing subscription's billing settings. */
+        Task<SubscriptionSchedule> create_async(const CreateSubscriptionScheduleRequest&,
+                                                const RequestOptions&) override;
+        /** Deliver the created schedule or failure once. */
+        void create(const CreateSubscriptionScheduleRequest&,
+                    const RequestOptions&,
+                    Completion) override;
+        /** Replace current and future phases. */
+        Task<SubscriptionSchedule> update_async(std::string,
+                                                const UpdateSubscriptionScheduleRequest&,
+                                                const RequestOptions&) override;
+        /** Deliver the updated schedule or failure once. */
+        void update(std::string,
+                    const UpdateSubscriptionScheduleRequest&,
+                    const RequestOptions&,
+                    Completion) override;
+
+    private:
+        StripeApiClient& owner;
+    };
+
     HTTPClient& http_client;
     JsonStripeResponseParser default_response_parser;
     const StripeResponseParser& response_parser;
@@ -807,6 +850,7 @@ private:
     ChargeOperations charge_operations;
     InvoicePaymentOperations invoice_payment_operations;
     RefundOperations refund_operations;
+    SubscriptionScheduleOperations subscription_schedule_operations;
 };
 
 /** @} */

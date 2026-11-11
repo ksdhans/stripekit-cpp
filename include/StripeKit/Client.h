@@ -798,6 +798,124 @@ public:
     virtual CheckoutSessions& sessions() = 0;
 };
 
+/** What Stripe should do when a subscription schedule reaches its final phase. */
+enum class SubscriptionScheduleEndBehavior { Release, Cancel };
+
+/** Create a schedule for an existing subscription, copying its current billing settings. */
+struct CreateSubscriptionScheduleRequest {
+    /** Existing subscription ID. Stripe permits no other settings in this creation request. */
+    std::string from_subscription;
+};
+
+/** A phase to save; specify either an end date or a positive number of billing iterations. */
+struct SubscriptionSchedulePhaseRequest {
+    std::int64_t start_date = 0;
+    std::optional<std::int64_t> end_date;
+    /** Billing periods at the phase's price; requires an API version supporting iterations. */
+    std::optional<std::int64_t> iterations;
+    std::vector<SubscriptionScheduleItem> items;
+    ProrationBehavior proration_behavior = ProrationBehavior::None;
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/** Replace current and future phases. Omitted past phases are left in Stripe's history. */
+struct UpdateSubscriptionScheduleRequest {
+    std::vector<SubscriptionSchedulePhaseRequest> phases;
+    SubscriptionScheduleEndBehavior end_behavior = SubscriptionScheduleEndBehavior::Release;
+    /** Adjustments to make when changing the currently running phase. */
+    ProrationBehavior proration_behavior = ProrationBehavior::None;
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/** Create, read, and change future billing settings through StripeClient::subscription_schedules().
+ */
+class SubscriptionSchedules {
+public:
+    using Completion = std::function<void(CallbackResult<SubscriptionSchedule>)>;
+    /** Destroy this operations instance. */
+    virtual ~SubscriptionSchedules() = default;
+    /**
+     * Read a schedule and its current, future, or released state.
+     *
+     * @param schedule_id Existing schedule ID.
+     * @param options Per-request headers and timeout.
+     *
+     * @return Schedule with phase dates, prices, quantities, and metadata.
+     *
+     * @throws ConfigurationException If the ID is empty or the response is malformed.
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<SubscriptionSchedule> retrieve_async(std::string schedule_id,
+                                                      const RequestOptions& options = {}) = 0;
+    /**
+     * Read a schedule and report its result or failure exactly once.
+     *
+     * @param schedule_id Existing schedule ID.
+     * @param options Per-request settings.
+     * @param completion Receives the schedule or failure.
+     */
+    virtual void
+    retrieve(std::string schedule_id, const RequestOptions& options, Completion completion) = 0;
+    /**
+     * Create a schedule from an existing subscription, preserving its current settings.
+     *
+     * @param request ID of the existing subscription to create a schedule for.
+     * @param options Per-request settings; use a saved idempotency key for retries.
+     *
+     * @return Schedule linked to the subscription.
+     *
+     * @throws ConfigurationException If the subscription ID is empty.
+     * @throws StripeApiException If Stripe rejects the request, including an already scheduled
+     * subscription.
+     */
+    virtual Task<SubscriptionSchedule>
+    create_async(const CreateSubscriptionScheduleRequest& request,
+                 const RequestOptions& options = {}) = 0;
+    /**
+     * Create a schedule and report its result or failure exactly once.
+     *
+     * @param request ID of the existing subscription to create a schedule for.
+     * @param options Per-request settings.
+     * @param completion Receives the schedule or failure.
+     */
+    virtual void create(const CreateSubscriptionScheduleRequest& request,
+                        const RequestOptions& options,
+                        Completion completion) = 0;
+    /**
+     * Replace current and future phases with explicit prices, quantities, and dates.
+     *
+     * This is not a partial phase update: include every setting you intend to retain.
+     * Only prices, quantities, dates, metadata, and adjustment policies are supported;
+     * do not use this to replace phases whose discounts or tax settings must be preserved.
+     * Release keeps the subscription running after the final phase; cancel ends it.
+     *
+     * @param schedule_id Existing schedule ID.
+     * @param request One through ten phases and end and adjustment policies.
+     * @param options Per-request settings; use a saved idempotency key for retries.
+     *
+     * @return Updated schedule; inspect its phases to confirm the intended change.
+     *
+     * @throws ConfigurationException If dates, items, policies, or quantities are invalid.
+     * @throws StripeApiException If Stripe rejects the change.
+     */
+    virtual Task<SubscriptionSchedule>
+    update_async(std::string schedule_id,
+                 const UpdateSubscriptionScheduleRequest& request,
+                 const RequestOptions& options = {}) = 0;
+    /**
+     * Update a schedule and report its result or failure exactly once.
+     *
+     * @param schedule_id Existing schedule ID.
+     * @param request Replacement phases and policies.
+     * @param options Per-request settings.
+     * @param completion Receives the schedule or failure.
+     */
+    virtual void update(std::string schedule_id,
+                        const UpdateSubscriptionScheduleRequest& request,
+                        const RequestOptions& options,
+                        Completion completion) = 0;
+};
+
 /** Settings for invoices created during a collection pause; existing invoices are unchanged. */
 struct PauseSubscriptionCollectionRequest {
     CollectionPauseBehavior behavior = CollectionPauseBehavior::Void;
@@ -1557,6 +1675,12 @@ public:
  */
 class StripeClient {
 public:
+    /**
+     * Return subscription schedule operations.
+     *
+     * @return Operations owned by this client and valid for its lifetime.
+     */
+    virtual SubscriptionSchedules& subscription_schedules() = 0;
     /**
      * Return refund creation and listing operations.
      *

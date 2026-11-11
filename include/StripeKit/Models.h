@@ -263,6 +263,10 @@ struct SubscriptionItem {
     std::optional<std::int64_t> current_period_start_unix;
     /** Item billing-period end in Unix seconds, absent when Stripe omits it. */
     std::optional<std::int64_t> current_period_end_unix;
+    /** Discounts applied to this item, as Stripe discount IDs. */
+    std::vector<std::string> discount_ids;
+    /** Tax rates applied to this item, as Stripe tax rate IDs. */
+    std::vector<std::string> tax_rate_ids;
 };
 
 /** Changes awaiting payment, not yet applied to the subscription. */
@@ -334,6 +338,54 @@ struct Subscription {
 
     /** Present when collection is paused; the subscription can still be active. */
     std::optional<SubscriptionCollectionPause> pause_collection;
+
+    /** Schedule controlling future changes, empty when absent. */
+    std::string schedule_id;
+    /** Subscription discounts, including the legacy single-discount field. */
+    std::vector<std::string> discount_ids;
+    /** Default tax rates used by this subscription. */
+    std::vector<std::string> default_tax_rate_ids;
+    /** Whether Stripe calculates tax automatically. */
+    bool automatic_tax_enabled = false;
+};
+
+/** A price and quantity in one subscription schedule phase. */
+struct SubscriptionScheduleItem {
+    std::string price_id;
+    /** Absent when Stripe does not supply a quantity, for example metered usage. */
+    std::optional<std::int64_t> quantity;
+};
+
+/** One period of scheduled subscription settings, with dates in Unix seconds. */
+struct SubscriptionSchedulePhase {
+    std::int64_t start_date_unix = 0;
+    std::int64_t end_date_unix = 0;
+    std::vector<SubscriptionScheduleItem> items;
+    /** Adjustment policy reported by Stripe; unknown values are preserved. */
+    std::string proration_behavior;
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/** Start and end of the currently running schedule phase, absent after release or cancellation. */
+struct SubscriptionScheduleCurrentPhase {
+    std::int64_t start_date_unix = 0;
+    std::int64_t end_date_unix = 0;
+};
+
+/** Future subscription settings and their lifecycle, including the subscription after release. */
+struct SubscriptionSchedule {
+    std::string id;
+    std::string customer_id;
+    /** Empty after release; use released_subscription_id to find the continuing subscription. */
+    std::string subscription_id;
+    std::string released_subscription_id;
+    /** For example active, released, completed, canceled, or not_started. */
+    std::string status;
+    /** What happens after the final phase, normally release or cancel. */
+    std::string end_behavior;
+    std::optional<SubscriptionScheduleCurrentPhase> current_phase;
+    std::vector<SubscriptionSchedulePhase> phases;
+    std::unordered_map<std::string, std::string> metadata;
 };
 
 /**

@@ -22,6 +22,9 @@ The suite covers:
   without waiting for a real billing period.
 - Invoice listing, finalization without automatic collection, voiding, standalone
   draft deletion, and protection against changes to paid invoices.
+- Scheduled price changes at renewal, preserved quantities and additional items,
+  safe retries, and continuing or ending the subscription after the last phase.
+  Subscription reads also check discounts, tax rates, and automatic tax settings.
 
 The automated suite does not complete hosted Checkout in a browser. It checks
 that a payment filter excludes unrelated sessions, but does not check finding

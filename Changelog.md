@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Add subscription schedule creation, retrieval, and updates, plus subscription
+  schedule, discount, and tax settings, with unit and Sandbox tests.
 - Add Checkout session expiry and paginated listing with a payment intent filter,
   and add tests to confirm their behaviour.
 - Add charge retrieval, customer-filtered charge listing, and payment-intent
