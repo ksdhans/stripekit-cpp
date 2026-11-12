@@ -101,7 +101,7 @@ one contract.
 | `STRIPEKIT_SANDBOX_REQUIRED` | No | Set to `1` to fail instead of skip when configuration is missing. Use this in the CI job so a broken secret cannot pass silently. |
 | `STRIPEKIT_SANDBOX_STRIPE_CLI` | No | Path to the Stripe CLI binary. Defaults to `stripe`. |
 | `STRIPEKIT_SANDBOX_EVENT_TIMEOUT_SECONDS` | No | How long to wait for an expected event. Defaults to `90`. |
-| `STRIPEKIT_SANDBOX_MAX_API_CALLS` | No | Stripe API call budget per run, guarding against runaway loops. Defaults to `400`. |
+| `STRIPEKIT_SANDBOX_MAX_API_CALLS` | No | Stripe API call budget per run, guarding against runaway loops. Defaults to `1000`. |
 
 The suite refuses to start when `STRIPE_API_KEY` is a publishable key or a
 live-mode key, and that refusal always fails the run. The required value is the

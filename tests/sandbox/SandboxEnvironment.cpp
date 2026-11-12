@@ -441,7 +441,8 @@ SandboxConfig SandboxConfig::from_environment() {
     config.cli_path = env_or("STRIPEKIT_SANDBOX_STRIPE_CLI", "stripe");
     config.event_timeout =
         std::chrono::seconds(env_int("STRIPEKIT_SANDBOX_EVENT_TIMEOUT_SECONDS", 90));
-    config.max_api_calls = env_int("STRIPEKIT_SANDBOX_MAX_API_CALLS", 400);
+    config.max_api_calls =
+        env_int("STRIPEKIT_SANDBOX_MAX_API_CALLS", STRIPEKIT_SANDBOX_MAX_API_CALLS);
     return config;
 }
 

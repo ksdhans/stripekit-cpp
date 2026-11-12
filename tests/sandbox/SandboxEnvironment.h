@@ -33,6 +33,8 @@ namespace stripekit::testing {
 /** Key/value pairs sent as an `application/x-www-form-urlencoded` request body. */
 using FormParams = std::vector<std::pair<std::string, std::string>>;
 
+#define STRIPEKIT_SANDBOX_MAX_API_CALLS 1000
+
 /**
  * Settings that control whether and how the sandbox suite runs.
  *
@@ -56,7 +58,7 @@ struct SandboxConfig {
     std::chrono::seconds event_timeout{ 90 };
 
     /** Upper bound on Stripe API calls per run, guarding against runaway loops. */
-    int max_api_calls = 400;
+    int max_api_calls = STRIPEKIT_SANDBOX_MAX_API_CALLS;
 
     /** Reads the configuration from the current process environment. */
     static SandboxConfig from_environment();
