@@ -65,6 +65,63 @@ protected:
     std::unique_ptr<StripeApiClient> client;
 };
 
+TEST_F(StripeApiClientTest, DefaultApiVersionIsSentForAsyncAndCallbackRequests) {
+    http_client.set_response({ .status_code = 200, .body = R"({"id":"cus_version"})" });
+    client->customers().create_async({ .email = "version@example.com" }).result();
+    client->customers().retrieve_async("cus_version").result();
+    int calls = 0;
+    const auto completion = [&](CallbackResult<Customer> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<Customer>(result));
+    };
+    client->customers().create({}, {}, completion);
+    client->customers().retrieve("cus_version", {}, completion);
+    EXPECT_EQ(calls, 2);
+    ASSERT_EQ(http_client.get_recorded_requests().size(), 4U);
+    for (const auto& request : http_client.get_recorded_requests())
+        EXPECT_EQ(request.headers.at("Stripe-Version"), default_stripe_api_version);
+
+    http_client.set_response(
+        { .status_code = 200, .body = R"({"object":"invoice","id":"in_version","deleted":true})" });
+    client->invoices().delete_async("in_version").result();
+    EXPECT_EQ(http_client.get_recorded_requests().back().method, HttpMethod::Delete);
+    EXPECT_EQ(http_client.get_recorded_requests().back().headers.at("Stripe-Version"),
+              default_stripe_api_version);
+}
+
+TEST_F(StripeApiClientTest, ApiVersionOverridesAreCaseInsensitiveAndDoNotChangeTheDefault) {
+    http_client.set_response({ .status_code = 200, .body = R"({"id":"cus_version"})" });
+    for (const auto* name : { "Stripe-Version", "stripe-version", "STRIPE-VERSION" }) {
+        const RequestOptions options{ .headers = { { name, "2024-06-20" } } };
+        client->customers().retrieve_async("cus_version", options).result();
+        const auto sent = http_client.get_recorded_requests().back();
+        EXPECT_EQ(sent.headers.at("Stripe-Version"), "2024-06-20");
+        EXPECT_EQ(sent.headers.size(), 2U);
+    }
+    client->customers().retrieve_async("cus_version").result();
+    EXPECT_EQ(http_client.get_recorded_requests().back().headers.at("Stripe-Version"),
+              default_stripe_api_version);
+}
+
+TEST_F(StripeApiClientTest, CheckoutPaymentMethodsUseEndiveParametersInBothForms) {
+    http_client.set_response({ .status_code = 200, .body = R"({"id":"cs_version"})" });
+    CreateCheckoutSessionRequest request;
+    request.price_id = "price_version";
+    request.payment_method_types = { "card" };
+    client->checkout().sessions().create_async(request).result();
+    int calls = 0;
+    client->checkout().sessions().create(request, {}, [&](CallbackResult<CheckoutSession> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<CheckoutSession>(result));
+    });
+    EXPECT_EQ(calls, 1);
+    for (const auto& sent : http_client.get_recorded_requests()) {
+        EXPECT_EQ(sent.headers.at("Stripe-Version"), default_stripe_api_version);
+        EXPECT_NE(sent.body.find("&allowed_payment_method_types%5B0%5D=card"), std::string::npos);
+        EXPECT_EQ(sent.body.find("&payment_method_types"), std::string::npos);
+    }
+}
+
 TEST_F(StripeApiClientTest, ExpireCheckoutPreservesOptionsAndEncodesIdentity) {
     http_client.set_response(
         { .status_code = 200,
@@ -791,7 +848,8 @@ TEST_F(StripeApiClientTest, CreateCardRequiredSubscriptionTrial) {
         EXPECT_NE(req.body.find("subscription_data%5Bmetadata%5D%5Btenant_id%5D=tenant_1"),
                   std::string::npos);
         EXPECT_NE(req.body.find("payment_method_collection=always"), std::string::npos);
-        EXPECT_NE(req.body.find("payment_method_types%5B0%5D=card"), std::string::npos);
+        EXPECT_NE(req.body.find("&allowed_payment_method_types%5B0%5D=card"), std::string::npos);
+        EXPECT_EQ(req.body.find("&payment_method_types"), std::string::npos);
         EXPECT_NE(req.body.find("expires_at=1800000000"), std::string::npos);
         return HttpResponse{ .status_code = 200,
                              .body =

@@ -131,6 +131,7 @@ struct CreateCheckoutSessionRequest {
 
     /** Email for a new customer; do not combine with customer_id. */
     std::string customer_email;
+
     /**
      * Subscription trial duration, from 1 to 730 days; absent means no trial.
      *
@@ -138,8 +139,10 @@ struct CreateCheckoutSessionRequest {
      * payment_method_collection to "always" and payment_method_types to {"card"}.
      */
     std::optional<std::int64_t> trial_period_days;
+
     /** Metadata on the resulting subscription, included in subscription webhooks. */
     std::unordered_map<std::string, std::string> subscription_metadata;
+
     /**
      * "always" or "if_required"; empty uses Stripe's default.
      *
@@ -148,17 +151,27 @@ struct CreateCheckoutSessionRequest {
      * trial_settings.end_behavior for configuring that policy.
      */
     std::string payment_method_collection;
-    /** Allowed payment methods; empty uses the Stripe account's defaults. */
+
+    /**
+     * Allowed payment methods; empty uses the Stripe account's defaults.
+     *
+     * Stripe filters out methods incompatible with the payment.
+     */
     std::vector<std::string> payment_method_types;
+
     /** Session expiry as Unix seconds; absent uses Stripe's default. */
     std::optional<std::int64_t> expires_at;
+
     /** Enable or disable Stripe's automatic tax calculation; unset preserves Stripe defaults. */
     std::optional<bool> automatic_tax_enabled;
+
     /** "auto" or "required"; empty preserves Stripe's default collection behavior. */
     std::string billing_address_collection;
+
     /** Request Checkout to save a collected address or name for an existing Customer. */
     std::optional<bool> customer_update_address;
     std::optional<bool> customer_update_name;
+
     /** Collect an optional business tax ID in hosted Checkout when set. */
     std::optional<bool> tax_id_collection_enabled;
 };
@@ -896,12 +909,20 @@ struct CreateSubscriptionScheduleRequest {
     std::string from_subscription;
 };
 
-/** A phase to save; specify either an end date or a positive number of billing iterations. */
+/** How long a schedule phase lasts, independently of its prices' billing intervals. */
+struct SubscriptionSchedulePhaseDuration {
+    /** "day", "week", "month", or "year". */
+    std::string interval;
+    /** Positive number of intervals. */
+    std::int64_t interval_count = 1;
+};
+
+/** A phase to save; specify either an end date or a duration. */
 struct SubscriptionSchedulePhaseRequest {
     std::int64_t start_date = 0;
     std::optional<std::int64_t> end_date;
-    /** Billing periods at the phase's price; requires an API version supporting iterations. */
-    std::optional<std::int64_t> iterations;
+    /** Phase length when no explicit end date is supplied. */
+    std::optional<SubscriptionSchedulePhaseDuration> duration;
     std::vector<SubscriptionScheduleItem> items;
     ProrationBehavior proration_behavior = ProrationBehavior::None;
     std::unordered_map<std::string, std::string> metadata;

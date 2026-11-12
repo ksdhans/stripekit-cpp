@@ -16,6 +16,9 @@
 
 namespace stripekit {
 
+/** Stripe API version used by StripeKit unless a request overrides it. */
+inline constexpr const char* default_stripe_api_version = "2026-10-28.endive";
+
 /**
  * @ingroup client
  *
@@ -46,9 +49,10 @@ struct RequestOptions {
     std::optional<std::chrono::milliseconds> timeout;
 
     /**
-     * Extra HTTP headers, merged over the adapter's defaults.
+     * Extra HTTP headers, merged over StripeKit's defaults.
      *
-     * Mostly useful for pinning "Stripe-Version" to a known API version.
+     * Set "Stripe-Version" to override default_stripe_api_version for this call.
+     * Overrides must be compatible with the operation and response parser.
      */
     std::unordered_map<std::string, std::string> headers;
 };

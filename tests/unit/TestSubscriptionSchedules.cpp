@@ -40,13 +40,15 @@ HttpResponse response(const Json::Value& value) {
     return { .status_code = 200, .body = Json::writeString(Json::StreamWriterBuilder{}, value) };
 }
 
-/** Return a valid update using both explicit dates and billing iterations. */
+/** Return a valid update using both explicit dates and a phase duration. */
 UpdateSubscriptionScheduleRequest update_request() {
     return { .phases = { { .start_date = 100,
                            .end_date = 200,
                            .items = { { "price/old", 3 }, { "price_extra", {} } },
                            .metadata = { { "label &", "first?" } } },
-                         { .start_date = 200, .iterations = 1, .items = { { "price_new", 3 } } } },
+                         { .start_date = 200,
+                           .duration = SubscriptionSchedulePhaseDuration{ "month", 1 },
+                           .items = { { "price_new", 3 } } } },
              .metadata = { { "operation", "saved" } } };
 }
 } // namespace
@@ -61,7 +63,7 @@ TEST_F(SubscriptionSchedulesTest, RequestsEncodeDatesQuantitiesMetadataAndOption
     http.set_response(response(schedule_json()));
     const RequestOptions options{ .idempotency_key = "saved",
                                   .timeout = std::chrono::seconds(7),
-                                  .headers = { { "Stripe-Version", "2025-03-31.basil" } } };
+                                  .headers = { { "Stripe-Version", default_stripe_api_version } } };
     auto& api = client.subscription_schedules();
     const auto schedule = api.create_async({ "sub/a?" }, options).result();
     EXPECT_EQ(schedule.id, "sub_sched");
@@ -84,7 +86,8 @@ TEST_F(SubscriptionSchedulesTest, RequestsEncodeDatesQuantitiesMetadataAndOption
               "&phases%5B0%5D%5Bitems%5D%5B0%5D%5Bprice%5D=price%2Fold&phases%5B0%5D%5Bitems%5D%"
               "5B0%5D%5Bquantity%5D=3"
               "&phases%5B0%5D%5Bitems%5D%5B1%5D%5Bprice%5D=price_extra"
-              "&phases%5B1%5D%5Bstart_date%5D=200&phases%5B1%5D%5Biterations%5D=1"
+              "&phases%5B1%5D%5Bstart_date%5D=200&phases%5B1%5D%5Bduration%5D%5Binterval%5D=month"
+              "&phases%5B1%5D%5Bduration%5D%5Binterval_count%5D=1"
               "&phases%5B1%5D%5Bproration_behavior%5D=none&phases%5B1%5D%5Bitems%5D%5B0%5D%5Bprice%"
               "5D=price_new"
               "&phases%5B1%5D%5Bitems%5D%5B0%5D%5Bquantity%5D=3");
@@ -107,7 +110,7 @@ TEST_F(SubscriptionSchedulesTest, RequestsEncodeDatesQuantitiesMetadataAndOption
     for (const auto& request : http.get_recorded_requests()) {
         EXPECT_EQ(request.options.timeout, options.timeout);
         EXPECT_EQ(request.options.idempotency_key, options.idempotency_key);
-        EXPECT_EQ(request.headers.at("Stripe-Version"), "2025-03-31.basil");
+        EXPECT_EQ(request.headers.at("Stripe-Version"), default_stripe_api_version);
         if (request.method == HttpMethod::Post)
             EXPECT_EQ(request.headers.at("Idempotency-Key"), "saved");
     }
@@ -161,7 +164,7 @@ TEST_F(SubscriptionSchedulesTest, ValidationRejectsAmbiguousOrInvalidUpdatesWith
     api.retrieve("", {}, failure);
     api.create({}, {}, failure);
     api.update("", update_request(), {}, failure);
-    for (int invalid = 0; invalid < 16; ++invalid) {
+    for (int invalid = 0; invalid < 17; ++invalid) {
         auto request = update_request();
         switch (invalid) {
         case 0:
@@ -180,10 +183,10 @@ TEST_F(SubscriptionSchedulesTest, ValidationRejectsAmbiguousOrInvalidUpdatesWith
             request.phases[0].end_date.reset();
             break;
         case 5:
-            request.phases[0].iterations = 1;
+            request.phases[0].duration = SubscriptionSchedulePhaseDuration{ "month", 1 };
             break;
         case 6:
-            request.phases[1].iterations = 0;
+            request.phases[1].duration->interval_count = 0;
             break;
         case 7:
             request.phases[1].start_date = 201;
@@ -212,11 +215,14 @@ TEST_F(SubscriptionSchedulesTest, ValidationRejectsAmbiguousOrInvalidUpdatesWith
         case 15:
             request.phases[0].discounts = { {} };
             break;
+        case 16:
+            request.phases[1].duration->interval = "invalid";
+            break;
         }
         EXPECT_THROW(api.update_async("sched", request).result(), ConfigurationException);
         api.update("sched", request, {}, failure);
     }
-    EXPECT_EQ(calls, 19);
+    EXPECT_EQ(calls, 20);
     EXPECT_TRUE(http.get_recorded_requests().empty());
 }
 

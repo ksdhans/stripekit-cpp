@@ -142,6 +142,26 @@ void append_metadata(std::string& body,
     }
 }
 
+/** Recognize the Stripe API version header regardless of HTTP header casing. */
+bool is_stripe_version_header(std::string_view name) {
+    constexpr std::string_view expected = "stripe-version";
+    return std::equal(
+        name.begin(),
+        name.end(),
+        expected.begin(),
+        expected.end(),
+        [](unsigned char left, unsigned char right) { return std::tolower(left) == right; });
+}
+
+/** Return the version used to encode and send a request. */
+std::string_view stripe_api_version(const RequestOptions& options) {
+    for (const auto& [name, value] : options.headers) {
+        if (is_stripe_version_header(name)) return value;
+    }
+    return default_stripe_api_version;
+}
+
+/** Build a versioned API request, allowing callers to override its default headers. */
 HttpRequest
 make_request(HttpMethod method, std::string path, std::string body, const RequestOptions& options) {
     HttpRequest request{
@@ -149,6 +169,7 @@ make_request(HttpMethod method, std::string path, std::string body, const Reques
     };
 
     request.headers.emplace("Accept", "application/json");
+    request.headers.emplace("Stripe-Version", stripe_api_version(options));
     if (method == HttpMethod::Post) {
         request.headers.emplace("Content-Type", "application/x-www-form-urlencoded");
         if (options.idempotency_key.has_value()) {
@@ -156,6 +177,7 @@ make_request(HttpMethod method, std::string path, std::string body, const Reques
         }
     }
     for (const auto& [name, value] : options.headers) {
+        if (is_stripe_version_header(name)) continue;
         request.headers.insert_or_assign(name, value);
     }
     return request;
@@ -330,10 +352,13 @@ std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& reques
                           *request.default_automatic_tax_enabled ? "true" : "false");
     for (std::size_t i = 0; i < request.phases.size(); ++i) {
         const auto& phase = request.phases[i];
-        if (phase.start_date <= 0 || phase.end_date.has_value() == phase.iterations.has_value() ||
+        if (phase.start_date <= 0 || phase.end_date.has_value() == phase.duration.has_value() ||
             (phase.end_date && *phase.end_date <= phase.start_date) ||
-            (phase.iterations && *phase.iterations <= 0) || phase.items.empty() ||
-            phase.items.size() > 20)
+            (phase.duration &&
+             (phase.duration->interval_count <= 0 ||
+              (phase.duration->interval != "day" && phase.duration->interval != "week" &&
+               phase.duration->interval != "month" && phase.duration->interval != "year"))) ||
+            phase.items.empty() || phase.items.size() > 20)
             throw ConfigurationException("Invalid schedule phase dates, duration, or items");
         if (i > 0) {
             const auto& previous = request.phases[i - 1];
@@ -345,8 +370,12 @@ std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& reques
         append_form_value(body, prefix + "[start_date]", std::to_string(phase.start_date));
         if (phase.end_date)
             append_form_value(body, prefix + "[end_date]", std::to_string(*phase.end_date));
-        if (phase.iterations)
-            append_form_value(body, prefix + "[iterations]", std::to_string(*phase.iterations));
+        if (phase.duration) {
+            append_form_value(body, prefix + "[duration][interval]", phase.duration->interval);
+            append_form_value(body,
+                              prefix + "[duration][interval_count]",
+                              std::to_string(phase.duration->interval_count));
+        }
         append_form_value(
             body, prefix + "[proration_behavior]", proration_value(phase.proration_behavior));
         if (phase.automatic_tax_enabled)
@@ -608,6 +637,7 @@ bool is_success(const HttpResponse& response) {
     return response.status_code >= 200 && response.status_code < 300;
 }
 
+/** Encode Checkout settings for StripeKit's supported API version. */
 std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
     const std::string session_mode = request.mode.empty() ? "subscription" : request.mode;
     if ((!request.customer_id.empty() && !request.customer_email.empty()) ||
@@ -657,7 +687,7 @@ std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
         append_form_value(body, "payment_method_collection", request.payment_method_collection);
     for (std::size_t i = 0; i < request.payment_method_types.size(); ++i)
         append_form_value(body,
-                          "payment_method_types[" + std::to_string(i) + "]",
+                          "allowed_payment_method_types[" + std::to_string(i) + "]",
                           request.payment_method_types[i]);
     if (request.expires_at.has_value())
         append_form_value(body, "expires_at", std::to_string(*request.expires_at));

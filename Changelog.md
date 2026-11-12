@@ -5,6 +5,9 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Default API requests to `2026-10-28.endive`, with per-request version overrides.
+  Update Checkout payment-method parameters and replace schedule phase
+  `iterations` with `duration`.
 - Add Stripe Tax support for Checkout, customers, invoices, and subscription
   schedules, including tax settings, address collection and updates, tax and
   purchase details, invoice updates, and paginated line-item retrieval.

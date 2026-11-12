@@ -67,6 +67,9 @@ TEST_F(DrogonHTTPClientIntegrationTest, CustomerCreateAsyncSuccess) {
     EXPECT_EQ(customer.name, "Integration User");
     EXPECT_FALSE(customer.livemode);
     EXPECT_EQ(customer.metadata.at("source"), "integration_test");
+    EXPECT_EQ(
+        DrogonIntegrationEnvironment::get().telemetry.latest_api_request_header("stripe-version"),
+        default_stripe_api_version);
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, CustomerCreateSendsStripeVersionHeaderWhenRequested) {

@@ -215,7 +215,6 @@ metadata and future phases in a separate update.
 
 @code{.cpp}
 stripekit::RequestOptions options;
-options.headers["Stripe-Version"] = "2025-03-31.basil";
 options.idempotency_key = saved_operation_id + ":create";
 const auto schedule = co_await stripe->subscription_schedules().create_async(
     { .from_subscription = subscription_id }, options);
@@ -225,8 +224,8 @@ If a subscription already has a schedule, read it with
 `subscription_schedules().retrieve_async(subscription.schedule_id)` rather than
 creating another. Do not overwrite changes scheduled by another workflow.
 
-To keep the current price until renewal, then use a new price for one billing
-period, save two phases. This example assumes an active subscription with one
+To keep the current price until renewal, then use a new price for one month,
+save two phases. This example assumes an active subscription with one
 fixed-price item, a positive quantity, and no discounts, tax settings, active trial, or
 pending changes. Check those conditions before creating the schedule.
 Use the returned `current_phase` dates after checking that it is present:
@@ -239,7 +238,7 @@ update.phases = {
       .end_date = current.end_date_unix,
       .items = { { current_price_id, quantity } } },
     { .start_date = current.end_date_unix,
-      .iterations = 1,
+      .duration = stripekit::SubscriptionSchedulePhaseDuration{ "month", 1 },
       .items = { { replacement_price_id, quantity } } }
 };
 update.metadata["operation"] = saved_operation_id;
@@ -254,10 +253,9 @@ Things to know:
   field. Include every price, quantity, automatic-tax setting, and discount you
   want to keep. Reuse the returned coupon or promotion-code IDs so Stripe
   retains the discount's configured duration.
-- Specify either `end_date` or `iterations` for each phase, not both.
-  `iterations=1` means one billing period at the phase's price. It requires a
-  Stripe API version supporting that parameter, such as the version in the
-  example. Use explicit end dates on versions that no longer support it.
+- Specify either `end_date` or `duration` for each phase, not both.
+  A duration of `{ "month", 1 }` means one calendar month, independently of
+  the prices' billing intervals.
   Dates are Unix seconds, and adjacent phases must meet at the same timestamp.
 - The default adjustment policy is `ProrationBehavior::None`, meaning no
   partial-period charges or credits. Set the request's `proration_behavior` to
@@ -410,15 +408,13 @@ payment to an invoice and shows how much of the payment was applied to it:
 stripekit::ListInvoicePaymentsRequest request;
 request.payment_intent_id = charge.payment_intent_id;
 request.limit = 100;
-stripekit::RequestOptions options;
-options.headers["Stripe-Version"] = "2025-03-31.basil";
-const auto page = co_await stripe->invoice_payments().list_async(request, options);
+const auto page = co_await stripe->invoice_payments().list_async(request);
 @endcode
 
 Use a nonempty PaymentIntent ID when looking up a particular payment. Omitting
 the filter lists all invoice payments. Pagination works like charge listing,
-using the last record's ID as `starting_after`. This endpoint requires a Stripe
-API version that supports invoice payments, such as `2025-03-31.basil` or later.
+using the last record's ID as `starting_after`. StripeKit's default API version
+supports invoice payments.
 
 Each record identifies its invoice, payment type and matching payment
 reference, status, currency, and requested and paid amounts. `amount_paid` is

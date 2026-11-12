@@ -66,7 +66,6 @@ protected:
         renewal =
             saved.items.front().current_period_end_unix.value_or(saved.current_period_end_unix);
         if (renewal <= frozen) throw std::runtime_error("Schedule fixture has no future renewal");
-        options.headers["Stripe-Version"] = "2025-03-31.basil";
     }
 
     /** Delete clock-bound billing objects and retire catalog fixtures, surfacing cleanup failures.
@@ -156,6 +155,27 @@ protected:
     RequestOptions options;
 };
 
+TEST_F(SandboxSubscriptionSchedulesTest, DefaultApiVersionSupportsExplicitPhaseDates) {
+    auto& schedules = environment->stripe_client().subscription_schedules();
+    const auto created = schedules.create_async({ .from_subscription = subscription }).result();
+    ASSERT_TRUE(created.current_phase.has_value());
+    ASSERT_FALSE(created.phases.empty());
+    SubscriptionSchedulePhaseRequest phase;
+    phase.start_date = created.current_phase->start_date_unix;
+    phase.end_date = created.current_phase->end_date_unix;
+    phase.items = created.phases.front().items;
+    UpdateSubscriptionScheduleRequest request;
+    request.phases.push_back(std::move(phase));
+    const auto updated = schedules.update_async(created.id, request).result();
+    ASSERT_EQ(updated.phases.size(), 1U);
+    EXPECT_EQ(updated.phases.front().start_date_unix, created.current_phase->start_date_unix);
+    EXPECT_EQ(updated.phases.front().end_date_unix, created.current_phase->end_date_unix);
+    EXPECT_EQ(updated.phases.front().items.size(), 2U);
+    const auto saved = schedules.retrieve_async(created.id).result();
+    EXPECT_EQ(saved.id, created.id);
+    EXPECT_EQ(saved.subscription_id, subscription);
+}
+
 TEST_F(SandboxSubscriptionSchedulesTest,
        FuturePriceStartsAtRenewalAndReleaseKeepsSubscriptionRunning) {
     auto& client = environment->stripe_client();
@@ -168,7 +188,7 @@ TEST_F(SandboxSubscriptionSchedulesTest,
                          .end_date = renewal,
                          .items = { { prices[0], 2 }, { prices[2], 3 } } },
                        { .start_date = renewal,
-                         .iterations = 1,
+                         .duration = SubscriptionSchedulePhaseDuration{ "month", 1 },
                          .items = { { prices[1], 2 }, { prices[2], 3 } },
                          .metadata = { { "billing_stage", "new_price" } } } };
     auto update_options = options;
