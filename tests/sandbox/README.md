@@ -31,6 +31,13 @@ that a payment filter excludes unrelated sessions, but does not check finding
 a session for a completed Checkout payment. Use the browser walkthrough below
 for hosted Checkout.
 
+The suite also checks whether Stripe charges tax for registered and
+unregistered customer locations, including a VAT ID case. It does not assert
+fixed tax rates or amounts. The tests create subscription and one-off invoice
+payments, then check that automatic tax and a time-limited discount remain
+correct after a schedule update and renewal. The Checkout test creates and
+expires a session; it does not complete the hosted payment.
+
 Customer access rules, trial eligibility, and grace periods belong to your
 application and need separate tests.
 
@@ -90,6 +97,26 @@ one contract.
 The suite refuses to start when `STRIPE_API_KEY` is a publishable key or a
 live-mode key, and that refusal always fails the run. The required value is the
 secret key beginning with `sk_test_`.
+
+The Stripe Tax scenarios run as part of the existing opt-in sandbox suite.
+On startup, they configure the sandbox with a fictional business address, the
+B2B SaaS tax code, and tax-exclusive defaults. They add the required
+registrations if they are missing. If the no-tax control location already has
+an active or scheduled registration, the tests stop rather than changing it. 
+The scenarios use fictional customer addresses and a Stripe test VAT ID; these 
+are test inputs, not guidance about tax obligations.
+
+Tax settings are account-wide, and registrations remain in the sandbox after
+the tests because Stripe does not allow deleting them. Use a dedicated test
+sandbox; you can expire registrations in Stripe or wipe the sandbox to reset
+its data. This bootstrap only runs after the suite's explicit opt-in and
+test-mode key checks.
+
+Run the suite with:
+
+```bash
+ctest --test-dir build -R stripekit.sandbox -V
+```
 
 ## Running Locally
 

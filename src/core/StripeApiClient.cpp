@@ -1263,9 +1263,11 @@ StripeResponseParser::parse_subscription_schedule(const HttpResponse& response) 
     if (!value["current_phase"].isNull()) schedule.current_phase = dates(value["current_phase"]);
     for (const auto& entry : value["phases"]) {
         const auto period = dates(entry);
-        if (!entry["items"].isArray() || entry["items"].empty() ||
-            !entry["proration_behavior"].isString())
-            throw ConfigurationException("Stripe returned malformed schedule phase settings");
+        if (!entry["items"].isArray() || entry["items"].empty())
+            throw ConfigurationException("Stripe returned a schedule phase without items");
+        if (!entry["proration_behavior"].isString())
+            throw ConfigurationException(
+                "Stripe returned a schedule phase without a valid proration behavior");
         SubscriptionSchedulePhase phase;
         phase.start_date_unix = period.start_date_unix;
         phase.end_date_unix = period.end_date_unix;
