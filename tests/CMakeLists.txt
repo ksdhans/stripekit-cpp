@@ -3,12 +3,15 @@
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_subdirectory(support)
+
 add_executable(stripekit_unit_tests
     unit/Main.cpp
     unit/TestBillingPortalAndInvoices.cpp
     unit/TestCatalog.cpp
     unit/TestCollectionAndInvoices.cpp
     unit/TestSubscriptionSchedules.cpp
+    unit/TestTaxSandbox.cpp
     unit/TestLogging.cpp
     unit/TestModelsAndParser.cpp
     unit/TestPayments.cpp
@@ -38,6 +41,7 @@ target_include_directories(stripekit_unit_tests
 target_link_libraries(stripekit_unit_tests
     PRIVATE
         StripeKit::stripekit
+        StripeKit::sandbox_support
 )
 
 if(stripekit_libsodium_target)
@@ -173,6 +177,7 @@ if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
             PRIVATE
                 StripeKit::stripekit
                 StripeKit::drogon
+                StripeKit::sandbox_support
         )
 
         add_test(NAME stripekit.sandbox COMMAND stripekit_sandbox_tests)

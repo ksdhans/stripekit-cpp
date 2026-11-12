@@ -4,6 +4,7 @@
  */
 #include "SandboxEnvironment.h"
 #include "TestFramework.h"
+#include "StripeKit/Testing/TaxSandbox.h"
 
 #include <chrono>
 #include <memory>
@@ -17,172 +18,6 @@ using namespace stripekit;
 using namespace stripekit::testing;
 
 namespace {
-
-/** A fictional customer address used to exercise Stripe Tax in the sandbox. */
-struct TaxTestAddress {
-    std::string line1;
-    std::string city;
-    std::string state;
-    std::string postal_code;
-    std::string country;
-};
-
-/** Fictional customer and business details used by the Stripe Tax sandbox tests. */
-struct TaxTestFixtures {
-    std::string uk_vat_id = "GB123456789";
-    TaxTestAddress new_zealand{
-        .line1 = "1 Example Street", .city = "Auckland", .postal_code = "1010", .country = "NZ"
-    };
-    TaxTestAddress united_kingdom{
-        .line1 = "1 Example Street", .city = "London", .postal_code = "SW1A 1AA", .country = "GB"
-    };
-    TaxTestAddress australia{ .line1 = "1 Example Street",
-                              .city = "Sydney",
-                              .state = "NSW",
-                              .postal_code = "2000",
-                              .country = "AU" };
-};
-
-/** Add an address to a Stripe form request under the supplied parameter prefix. */
-void append_address(FormParams& params,
-                    const TaxTestAddress& address,
-                    std::string_view prefix = "address") {
-    const std::string key(prefix);
-    params.emplace_back(key + "[line1]", address.line1);
-    params.emplace_back(key + "[city]", address.city);
-    if (!address.state.empty()) params.emplace_back(key + "[state]", address.state);
-    params.emplace_back(key + "[postal_code]", address.postal_code);
-    params.emplace_back(key + "[country]", address.country);
-}
-
-/** Configure the fictional business and confirm Stripe Tax is ready in test mode. */
-void ensure_tax_settings(SandboxEnvironment& environment, const TaxTestFixtures& fixtures) {
-    auto& api = environment.stripe_api();
-    const auto matches_fixtures = [&](const Json::Value& settings) {
-        return settings["livemode"].isBool() && !settings["livemode"].asBool() &&
-               json_path(settings, "status").asString() == "active" &&
-               json_path(settings, "defaults.tax_behavior").asString() == "exclusive" &&
-               json_path(settings, "defaults.tax_code").asString() == "txcd_10103001" &&
-               json_path(settings, "head_office.address.line1").asString() ==
-                   fixtures.new_zealand.line1 &&
-               json_path(settings, "head_office.address.city").asString() ==
-                   fixtures.new_zealand.city &&
-               json_path(settings, "head_office.address.postal_code").asString() ==
-                   fixtures.new_zealand.postal_code &&
-               json_path(settings, "head_office.address.country").asString() ==
-                   fixtures.new_zealand.country;
-    };
-
-    auto settings = api.get("/v1/tax/settings");
-    if (!settings.ok())
-        throw std::runtime_error("Could not read Stripe Tax settings: " + settings.describe());
-    if (!settings.body["livemode"].isBool())
-        throw std::runtime_error(
-            "Stripe Tax settings response did not identify whether the account is in live mode");
-    if (settings.body["livemode"].asBool())
-        throw std::runtime_error(
-            "Refusing to run tax tests: STRIPE_API_KEY is associated with a live account, not a "
-            "test sandbox");
-    if (!matches_fixtures(settings.body)) {
-        FormParams params{ { "defaults[tax_behavior]", "exclusive" },
-                           { "defaults[tax_code]", "txcd_10103001" } };
-        append_address(params, fixtures.new_zealand, "head_office[address]");
-        settings = api.require_post("/v1/tax/settings", params);
-    }
-
-    if (json_path(settings.body, "status").asString() != "active" ||
-        !matches_fixtures(settings.body))
-        throw std::runtime_error(
-            "Stripe Tax settings could not be activated with the sandbox test fixtures");
-}
-
-/** Ensure one active test-mode registration exists for each tax-positive location. */
-void ensure_tax_registrations(SandboxEnvironment& environment) {
-    auto& api = environment.stripe_api();
-    bool new_zealand_active = false;
-    bool united_kingdom_active = false;
-    bool australia_active = false;
-    bool new_zealand_scheduled = false;
-    bool united_kingdom_scheduled = false;
-    bool australia_scheduled = false;
-    std::string starting_after;
-
-    do {
-        std::string path = "/v1/tax/registrations?limit=100&status=all";
-        if (!starting_after.empty()) path += "&starting_after=" + starting_after;
-        const auto response = api.get(path);
-        if (!response.ok())
-            throw std::runtime_error("Could not list Stripe Tax registrations: " +
-                                     response.describe());
-        const auto& data = response.body["data"];
-        const auto& has_more = response.body["has_more"];
-        if (!data.isArray() || !has_more.isBool())
-            throw std::runtime_error("Stripe returned a malformed tax registration list");
-
-        for (const auto& registration : data) {
-            if (!registration.isObject() || !registration["country"].isString() ||
-                !registration["status"].isString())
-                throw std::runtime_error("Stripe returned a malformed tax registration");
-            const auto country = registration["country"].asString();
-            const auto status = registration["status"].asString();
-            const bool target_location = country == "NZ" || country == "GB" || country == "AU";
-            if (!target_location || (status != "active" && status != "scheduled")) continue;
-            if (!registration["livemode"].isBool() || registration["livemode"].asBool())
-                throw std::runtime_error(
-                    "Stripe returned a live-mode tax registration; refusing tax tests");
-
-            if (country == "NZ") {
-                new_zealand_active |= status == "active";
-                new_zealand_scheduled |= status == "scheduled";
-            } else if (country == "GB") {
-                united_kingdom_active |= status == "active";
-                united_kingdom_scheduled |= status == "scheduled";
-            } else {
-                australia_active |= status == "active";
-                australia_scheduled |= status == "scheduled";
-            }
-        }
-
-        if (!has_more.asBool()) break;
-        if (data.empty() || !data[data.size() - 1]["id"].isString() ||
-            data[data.size() - 1]["id"].asString().empty())
-            throw std::runtime_error(
-                "Stripe returned an invalid cursor while listing tax registrations");
-        starting_after = data[data.size() - 1]["id"].asString();
-    } while (true);
-
-    if (australia_active || australia_scheduled)
-        throw std::runtime_error(
-            "The no-tax control location has an active or scheduled registration; remove or "
-            "expire it in this sandbox before running the tax tests");
-    if (new_zealand_scheduled || united_kingdom_scheduled)
-        throw std::runtime_error(
-            "A required tax location has a scheduled registration; resolve it in this sandbox "
-            "before running the tax tests");
-
-    const auto create_registration = [&](std::string_view country, std::string_view country_key) {
-        const auto registration = api.require_post(
-            "/v1/tax/registrations",
-            { { "country", std::string(country) },
-              { "country_options[" + std::string(country_key) + "][type]", "standard" },
-              { "active_from", "now" } });
-        if (!registration.body["livemode"].isBool() || registration.body["livemode"].asBool())
-            throw std::runtime_error(
-                "Stripe created a live-mode tax registration; refusing tax tests");
-        if (json_path(registration.body, "country").asString() != country ||
-            json_path(registration.body, "status").asString() != "active")
-            throw std::runtime_error(
-                "Stripe did not activate the required sandbox tax registration");
-    };
-    if (!new_zealand_active) create_registration("NZ", "nz");
-    if (!united_kingdom_active) create_registration("GB", "gb");
-}
-
-/** Prepare test-mode Tax settings and registrations without changing unrelated locations. */
-void ensure_tax_sandbox(SandboxEnvironment& environment, const TaxTestFixtures& fixtures) {
-    ensure_tax_settings(environment, fixtures);
-    ensure_tax_registrations(environment);
-}
 
 /** Track sandbox objects so the test can remove them even after an assertion fails. */
 class TaxTestResources {
@@ -271,7 +106,8 @@ struct TaxTestPrices {
 
 /** Create one product with a tax-exclusive recurring and one-time Price per currency. */
 std::vector<TaxTestPrices> create_tax_prices(SandboxEnvironment& environment,
-                                             TaxTestResources& resources) {
+                                             TaxTestResources& resources,
+                                             const TaxTestFixtures& fixtures) {
     auto& api = environment.stripe_api();
     resources.product = api.require_post("/v1/products",
                                          { { "name", "StripeKit tax test " + environment.run_id() },
@@ -283,7 +119,7 @@ std::vector<TaxTestPrices> create_tax_prices(SandboxEnvironment& environment,
             FormParams params{ { "product", resources.product },
                                { "currency", currency },
                                { "unit_amount", "1000" },
-                               { "tax_behavior", "exclusive" },
+                               { "tax_behavior", fixtures.tax_behavior },
                                { "metadata[stripekit_run_id]", environment.run_id() } };
             if (recurring) params.emplace_back("recurring[interval]", "month");
             const auto price = api.require_post("/v1/prices", params).id();
@@ -463,23 +299,9 @@ void run_tax_profiles(SandboxEnvironment& environment,
                       TaxTestResources& resources,
                       const TaxTestFixtures& fixtures,
                       const std::vector<TaxTestPrices>& prices) {
-    struct Profile {
-        const char* label;
-        const TaxTestAddress* address;
-        const char* currency;
-        bool expected_tax;
-        bool add_uk_vat_id;
-    };
-    const std::vector<Profile> profiles{
-        { "nz", &fixtures.new_zealand, "nzd", true, false },
-        { "uk_no_vat_id", &fixtures.united_kingdom, "gbp", true, false },
-        { "uk_with_vat_id", &fixtures.united_kingdom, "gbp", false, true },
-        { "au_unregistered", &fixtures.australia, "aud", false, false }
-    };
-
-    for (const auto& profile : profiles) {
+    for (const auto& profile : fixtures.profiles()) {
         const auto customer =
-            create_tax_customer(environment, resources, *profile.address, profile.label);
+            create_tax_customer(environment, resources, profile.address, profile.label);
         if (profile.add_uk_vat_id)
             environment.stripe_api().require_post(
                 "/v1/customers/" + customer + "/tax_ids",
@@ -586,7 +408,21 @@ protected:
     /** Prepare the test-mode Tax settings before any Stripe objects are created. */
     void SetUp() override {
         environment = &SandboxEnvironment::get();
-        ensure_tax_sandbox(*environment, fixtures);
+        auto& api = environment->stripe_api();
+        ensure_tax_sandbox({ .get =
+                                 [&](std::string_view path) {
+                                     const auto response = api.get(path);
+                                     if (!response.ok())
+                                         throw std::runtime_error(
+                                             "Could not read Stripe Tax configuration: " +
+                                             response.describe());
+                                     return response.body;
+                                 },
+                             .post =
+                                 [&](std::string_view path, const TaxSandboxParams& params) {
+                                     return api.require_post(path, params).body;
+                                 } },
+                           fixtures);
     }
 
     /** Retire all temporary objects created by the tax scenarios. */
@@ -602,19 +438,19 @@ protected:
 
 TEST_F(SandboxTaxTest, CheckoutInvoicesAndSubscriptionsReflectConfiguredTax) {
     resources = std::make_unique<TaxTestResources>(*environment);
-    const auto prices = create_tax_prices(*environment, *resources);
+    const auto prices = create_tax_prices(*environment, *resources, fixtures);
     run_tax_profiles(*environment, *resources, fixtures, prices);
 }
 
 TEST_F(SandboxTaxTest, ScheduleUpdatesKeepTaxAndDiscountDurationThroughRenewal) {
     resources = std::make_unique<TaxTestResources>(*environment);
-    const auto prices = create_tax_prices(*environment, *resources);
+    const auto prices = create_tax_prices(*environment, *resources, fixtures);
     run_tax_schedule_renewal(*environment, *resources, fixtures, prices_for(prices, "nzd"));
 }
 
 TEST_F(SandboxTaxTest, InvalidLocationBlocksFinalizationUntilCustomerAndDraftAreCorrected) {
     resources = std::make_unique<TaxTestResources>(*environment);
-    const auto prices = create_tax_prices(*environment, *resources);
+    const auto prices = create_tax_prices(*environment, *resources, fixtures);
     const auto customer = create_customer_with_card(*environment, "pm_card_visa", "missing_tax");
     resources->customers.push_back(customer);
     auto& client = environment->stripe_client();
@@ -654,7 +490,7 @@ TEST_F(SandboxTaxTest, InvalidLocationBlocksFinalizationUntilCustomerAndDraftAre
 
 TEST_F(SandboxTaxTest, InvalidRenewalLocationDisablesTaxAndScheduleRecoveryRestoresIt) {
     resources = std::make_unique<TaxTestResources>(*environment);
-    const auto prices = create_tax_prices(*environment, *resources);
+    const auto prices = create_tax_prices(*environment, *resources, fixtures);
     const auto frozen = std::chrono::duration_cast<std::chrono::seconds>(
                             std::chrono::system_clock::now().time_since_epoch())
                             .count();

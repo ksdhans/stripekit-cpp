@@ -121,7 +121,39 @@ sandbox; you can expire registrations in Stripe or wipe the sandbox to reset
 its data. This bootstrap only runs after the suite's explicit opt-in and
 test-mode key checks.
 
-Run the suite with:
+### Reusing the tax setup in application tests
+
+Application sandbox tests can reuse the fictional tax setup without building or
+running StripeKit's tests. Use this when your tests need consistent taxable
+and zero-tax customer examples. This support is available from the StripeKit
+source tree, not the installed package, and does not enable tax in your application.
+
+After adding StripeKit to your CMake build, add its test support separately if
+the target is not already available:
+
+```cmake
+if(NOT TARGET StripeKit::sandbox_support)
+    add_subdirectory("${STRIPEKIT_SOURCE_DIR}/tests/support"
+                     "${CMAKE_CURRENT_BINARY_DIR}/stripekit-sandbox-support")
+endif()
+target_link_libraries(your_sandbox_tests PRIVATE StripeKit::sandbox_support)
+```
+
+Keep `STRIPEKIT_BUILD_TESTS=OFF` and `STRIPEKIT_BUILD_SANDBOX_TESTS=OFF` in
+application builds. Use a dedicated sandbox with permission to read and update
+Tax settings and read/create Tax registrations. Setup checks that the account
+is in test mode, reuses matching active registrations, and adds missing ones.
+Conflicting registrations cause a failure rather than being changed automatically.
+The customer examples cover positive tax, zero tax without a registration, and
+a business tax-ID case; they do not prescribe tax rates or obligations.
+
+Do not run tests that change the same sandbox's tax settings concurrently,
+including across CI jobs. Settings and registrations remain after testing;
+expire registrations in Stripe or reset the sandbox when you need a clean slate.
+
+### Running the StripeKit sandbox suite
+
+For StripeKit development, run its own suite from the StripeKit directory:
 
 ```bash
 ctest --test-dir build -R stripekit.sandbox -V
