@@ -38,6 +38,15 @@ payments, then check that automatic tax and a time-limited discount remain
 correct after a schedule update and renewal. The Checkout test creates and
 expires a session; it does not complete the hosted payment.
 
+Recovery tests verify that a missing customer location prevents manual invoice
+finalization, and that correcting the address with immediate tax-location
+validation allows the draft to be updated, finalized, and paid with tax.
+They also verify that Stripe can automatically pay a subscription renewal
+without tax when its customer location is missing. The tests check the tax-disabled
+reasons on the invoice, subscription, schedule defaults, and current phase,
+then correct the location and restore schedule tax settings. The next renewal
+must collect tax again; the already-paid untaxed invoice remains unchanged.
+
 Customer access rules, trial eligibility, and grace periods belong to your
 application and need separate tests.
 

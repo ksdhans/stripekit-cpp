@@ -334,11 +334,11 @@ std::string create_tax_subscription(SandboxEnvironment& environment,
     return invoice_id;
 }
 
-/** Create and pay a one-off invoice using Stripe Tax for the supplied Price. */
-std::string create_tax_invoice(SandboxEnvironment& environment,
-                               TaxTestResources& resources,
-                               const std::string& customer,
-                               const std::string& price) {
+/** Create a tax-enabled draft invoice that callers can finalize or use for recovery tests. */
+std::string create_draft_tax_invoice(SandboxEnvironment& environment,
+                                     TaxTestResources& resources,
+                                     const std::string& customer,
+                                     const std::string& price) {
     auto& api = environment.stripe_api();
     const auto invoice =
         api.require_post("/v1/invoices",
@@ -353,9 +353,51 @@ std::string create_tax_invoice(SandboxEnvironment& environment,
                        { "invoice", invoice.id() },
                        { "price", price },
                        { "quantity", "1" } });
-    api.require_post("/v1/invoices/" + invoice.id() + "/finalize", { { "auto_advance", "false" } });
-    api.require_post("/v1/invoices/" + invoice.id() + "/pay", {});
     return invoice.id();
+}
+
+/** Create and pay a one-off invoice using Stripe Tax for the supplied Price. */
+std::string create_tax_invoice(SandboxEnvironment& environment,
+                               TaxTestResources& resources,
+                               const std::string& customer,
+                               const std::string& price) {
+    const auto invoice = create_draft_tax_invoice(environment, resources, customer, price);
+    environment.stripe_client().invoices().finalize_async(invoice).result();
+    environment.stripe_api().require_post("/v1/invoices/" + invoice + "/pay", {});
+    return invoice;
+}
+
+/** Require a tax-location API error rather than accepting an unrelated Stripe failure. */
+template <typename Action>
+void expect_tax_location_error(Action action) {
+    bool rejected = false;
+    try {
+        action();
+    } catch (const StripeApiException& error) {
+        rejected = true;
+        EXPECT_EQ(error.payload().code, "customer_tax_location_invalid");
+        EXPECT_EQ(error.payload().http_status, 400);
+        EXPECT_FALSE(error.payload().request_id.empty());
+    }
+    ASSERT_TRUE(rejected);
+}
+
+/** Save a valid taxable billing address and require Stripe to validate it immediately. */
+void correct_tax_location(SandboxEnvironment& environment,
+                          const std::string& customer,
+                          const TaxTestAddress& address) {
+    const auto corrected =
+        environment.stripe_client()
+            .customers()
+            .update_async(customer,
+                          { .address = BillingAddress{ .line1 = address.line1,
+                                                       .city = address.city,
+                                                       .state = address.state,
+                                                       .postal_code = address.postal_code,
+                                                       .country = address.country },
+                            .validate_tax_location = TaxLocationValidation::Immediately })
+            .result();
+    EXPECT_EQ(corrected.id, customer);
 }
 
 /** Verify Stripe calculated tax and successfully paid the invoice. */
@@ -568,4 +610,151 @@ TEST_F(SandboxTaxTest, ScheduleUpdatesKeepTaxAndDiscountDurationThroughRenewal) 
     resources = std::make_unique<TaxTestResources>(*environment);
     const auto prices = create_tax_prices(*environment, *resources);
     run_tax_schedule_renewal(*environment, *resources, fixtures, prices_for(prices, "nzd"));
+}
+
+TEST_F(SandboxTaxTest, InvalidLocationBlocksFinalizationUntilCustomerAndDraftAreCorrected) {
+    resources = std::make_unique<TaxTestResources>(*environment);
+    const auto prices = create_tax_prices(*environment, *resources);
+    const auto customer = create_customer_with_card(*environment, "pm_card_visa", "missing_tax");
+    resources->customers.push_back(customer);
+    auto& client = environment->stripe_client();
+    expect_tax_location_error([&] {
+        client.customers()
+            .update_async(customer, { .validate_tax_location = TaxLocationValidation::Immediately })
+            .result();
+    });
+
+    const auto invoice_id = create_draft_tax_invoice(
+        *environment, *resources, customer, prices_for(prices, "nzd").one_time);
+    expect_tax_location_error([&] { client.invoices().finalize_async(invoice_id).result(); });
+    const auto failed = client.invoices().retrieve_async(invoice_id).result();
+    EXPECT_EQ(failed.status, "draft");
+    EXPECT_FALSE(failed.paid);
+    ASSERT_TRUE(failed.automatic_tax.has_value());
+    EXPECT_TRUE(failed.automatic_tax->enabled);
+    EXPECT_EQ(failed.automatic_tax->status, "requires_location_inputs");
+    EXPECT_EQ(failed.last_finalization_error_code, "customer_tax_location_invalid");
+
+    correct_tax_location(*environment, customer, fixtures.new_zealand);
+    const auto updated =
+        client.invoices()
+            .update_async(invoice_id, { .automatic_tax_enabled = true, .auto_advance = false })
+            .result();
+    EXPECT_EQ(updated.status, "draft");
+    ASSERT_TRUE(updated.automatic_tax.has_value());
+    EXPECT_TRUE(updated.automatic_tax->enabled);
+    const auto finalized = client.invoices().finalize_async(invoice_id).result();
+    EXPECT_EQ(finalized.status, "open");
+    EXPECT_FALSE(finalized.paid);
+    environment->stripe_api().require_post("/v1/invoices/" + invoice_id + "/pay", {});
+    expect_tax_result(*environment, invoice_id, true);
+    EXPECT_TRUE(
+        client.invoices().retrieve_async(invoice_id).result().last_finalization_error_code.empty());
+}
+
+TEST_F(SandboxTaxTest, InvalidRenewalLocationDisablesTaxAndScheduleRecoveryRestoresIt) {
+    resources = std::make_unique<TaxTestResources>(*environment);
+    const auto prices = create_tax_prices(*environment, *resources);
+    const auto frozen = std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+    const auto clock = create_sandbox_clock(*environment, frozen);
+    resources->clocks.push_back(clock);
+    const auto customer =
+        create_tax_customer(*environment, *resources, fixtures.new_zealand, "tax_recovery", clock);
+    const auto first_invoice = create_tax_subscription(
+        *environment, *resources, customer, prices_for(prices, "nzd").recurring);
+    expect_tax_result(*environment, first_invoice, true);
+
+    auto& client = environment->stripe_client();
+    auto subscription =
+        client.subscriptions().retrieve_async(resources->subscriptions.back()).result();
+    const auto renewal = subscription.items.front().current_period_end_unix.value_or(
+        subscription.current_period_end_unix);
+    ASSERT_TRUE(renewal > frozen);
+    const auto schedule = client.subscription_schedules()
+                              .create_async({ .from_subscription = subscription.id })
+                              .result();
+    ASSERT_TRUE(schedule.current_phase.has_value());
+    ASSERT_FALSE(schedule.phases.empty());
+    SubscriptionSchedulePhaseRequest initial;
+    initial.start_date = schedule.current_phase->start_date_unix;
+    initial.duration = SubscriptionSchedulePhaseDuration{ "month", 3 };
+    initial.items = schedule.phases.front().items;
+    initial.automatic_tax_enabled = true;
+    // Keep the schedule active through both renewals instead of releasing after the first.
+    client.subscription_schedules()
+        .update_async(schedule.id, { .phases = { initial }, .default_automatic_tax_enabled = true })
+        .result();
+    client.customers()
+        .update_async(
+            customer,
+            { .address =
+                  BillingAddress{
+                      .line1 = "", .city = "", .state = "", .postal_code = "", .country = "" },
+              .validate_tax_location = TaxLocationValidation::Deferred })
+        .result();
+    expect_tax_location_error([&] {
+        client.customers()
+            .update_async(customer, { .validate_tax_location = TaxLocationValidation::Immediately })
+            .result();
+    });
+
+    advance_sandbox_clock(*environment, clock, renewal + 3600);
+    subscription = client.subscriptions().retrieve_async(subscription.id).result();
+    ASSERT_NE(subscription.latest_invoice_id, first_invoice);
+    const auto untaxed = client.invoices().retrieve_async(subscription.latest_invoice_id).result();
+    EXPECT_EQ(untaxed.status, "paid");
+    EXPECT_TRUE(untaxed.paid);
+    EXPECT_EQ(untaxed.amount_tax.value_or(0), 0);
+    ASSERT_TRUE(untaxed.automatic_tax.has_value());
+    EXPECT_FALSE(untaxed.automatic_tax->enabled);
+    EXPECT_EQ(untaxed.automatic_tax->disabled_reason, "finalization_requires_location_inputs");
+    EXPECT_FALSE(subscription.automatic_tax_enabled);
+    EXPECT_EQ(subscription.automatic_tax_disabled_reason, "requires_location_inputs");
+    const auto disabled = client.subscription_schedules().retrieve_async(schedule.id).result();
+    EXPECT_EQ(disabled.status, "active");
+    ASSERT_TRUE(disabled.default_automatic_tax.has_value());
+    EXPECT_FALSE(disabled.default_automatic_tax->enabled);
+    EXPECT_EQ(disabled.default_automatic_tax->disabled_reason, "requires_location_inputs");
+    ASSERT_FALSE(disabled.phases.empty());
+    ASSERT_TRUE(disabled.phases.front().automatic_tax.has_value());
+    EXPECT_FALSE(disabled.phases.front().automatic_tax->enabled);
+    EXPECT_EQ(disabled.phases.front().automatic_tax->disabled_reason, "requires_location_inputs");
+
+    correct_tax_location(*environment, customer, fixtures.new_zealand);
+    ASSERT_TRUE(disabled.current_phase.has_value());
+    SubscriptionSchedulePhaseRequest phase;
+    phase.start_date = disabled.current_phase->start_date_unix;
+    phase.end_date = disabled.current_phase->end_date_unix;
+    phase.items = disabled.phases.front().items;
+    phase.automatic_tax_enabled = true;
+    const auto restored =
+        client.subscription_schedules()
+            .update_async(schedule.id,
+                          { .phases = { phase }, .default_automatic_tax_enabled = true })
+            .result();
+    ASSERT_TRUE(restored.default_automatic_tax.has_value());
+    EXPECT_TRUE(restored.default_automatic_tax->enabled);
+    EXPECT_TRUE(restored.default_automatic_tax->disabled_reason.empty());
+    ASSERT_FALSE(restored.phases.empty());
+    ASSERT_TRUE(restored.phases.front().automatic_tax.has_value());
+    EXPECT_TRUE(restored.phases.front().automatic_tax->enabled);
+    EXPECT_TRUE(restored.phases.front().automatic_tax->disabled_reason.empty());
+    subscription = client.subscriptions().retrieve_async(subscription.id).result();
+    EXPECT_TRUE(subscription.automatic_tax_enabled);
+    EXPECT_TRUE(subscription.automatic_tax_disabled_reason.empty());
+
+    const auto next_renewal = subscription.items.front().current_period_end_unix.value_or(
+        subscription.current_period_end_unix);
+    ASSERT_TRUE(next_renewal > renewal);
+    advance_sandbox_clock(*environment, clock, next_renewal + 3600);
+    subscription = client.subscriptions().retrieve_async(subscription.id).result();
+    EXPECT_NE(subscription.latest_invoice_id, untaxed.id);
+    expect_tax_result(*environment, subscription.latest_invoice_id, true);
+    // Correcting future billing cannot retroactively fix an already-paid untaxed invoice.
+    const auto unchanged = client.invoices().retrieve_async(untaxed.id).result();
+    ASSERT_TRUE(unchanged.automatic_tax.has_value());
+    EXPECT_FALSE(unchanged.automatic_tax->enabled);
+    EXPECT_EQ(unchanged.automatic_tax->disabled_reason, "finalization_requires_location_inputs");
 }
