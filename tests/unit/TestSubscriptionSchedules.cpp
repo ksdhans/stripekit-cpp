@@ -113,6 +113,41 @@ TEST_F(SubscriptionSchedulesTest, RequestsEncodeDatesQuantitiesMetadataAndOption
     }
 }
 
+TEST_F(SubscriptionSchedulesTest, ScheduleUpdatesPreserveAutomaticTaxAndReusableDiscounts) {
+    http.set_response(response(schedule_json()));
+    auto request = update_request();
+    request.default_automatic_tax_enabled = true;
+    request.phases[0].automatic_tax_enabled = true;
+    request.phases[0].discounts = { { .coupon_id = "coupon_phase" } };
+    request.phases[0].items[0].discounts = { { .coupon_id = "coupon_item" } };
+    client.subscription_schedules().update_async("sched_tax", request).result();
+    const auto body = http.get_recorded_requests().back().body;
+    EXPECT_NE(body.find("default_settings%5Bautomatic_tax%5D%5Benabled%5D=true"),
+              std::string::npos);
+    EXPECT_NE(body.find("phases%5B0%5D%5Bautomatic_tax%5D%5Benabled%5D=true"), std::string::npos);
+    EXPECT_NE(body.find("phases%5B0%5D%5Bdiscounts%5D%5B0%5D%5Bcoupon%5D=coupon_phase"),
+              std::string::npos);
+    EXPECT_NE(body.find("phases%5B0%5D%5Bitems%5D%5B0%5D%5Bdiscounts%5D%5B0%5D%5Bcoupon%5D="
+                        "coupon_item"),
+              std::string::npos);
+
+    auto fixture = schedule_json();
+    fixture["default_settings"]["automatic_tax"]["enabled"] = true;
+    fixture["default_settings"]["automatic_tax"]["disabled_reason"] = "requires_location_inputs";
+    fixture["phases"][0]["automatic_tax"]["enabled"] = true;
+    fixture["phases"][0]["discounts"][0]["coupon"]["id"] = "coupon_phase";
+    fixture["phases"][0]["items"][0]["discounts"][0]["promotion_code"] = "promo_item";
+    const auto parsed = JsonStripeResponseParser{}.parse_subscription_schedule(response(fixture));
+    ASSERT_TRUE(parsed.default_automatic_tax.has_value());
+    EXPECT_EQ(parsed.default_automatic_tax->disabled_reason, "requires_location_inputs");
+    ASSERT_TRUE(parsed.phases[0].automatic_tax.has_value());
+    EXPECT_TRUE(parsed.phases[0].automatic_tax->enabled);
+    ASSERT_EQ(parsed.phases[0].discounts.size(), 1U);
+    EXPECT_EQ(parsed.phases[0].discounts[0].coupon_id, "coupon_phase");
+    ASSERT_EQ(parsed.phases[0].items[0].discounts.size(), 1U);
+    EXPECT_EQ(parsed.phases[0].items[0].discounts[0].promotion_code_id, "promo_item");
+}
+
 TEST_F(SubscriptionSchedulesTest, ValidationRejectsAmbiguousOrInvalidUpdatesWithoutSending) {
     auto& api = client.subscription_schedules();
     EXPECT_THROW(api.retrieve_async("").result(), ConfigurationException);
@@ -126,7 +161,7 @@ TEST_F(SubscriptionSchedulesTest, ValidationRejectsAmbiguousOrInvalidUpdatesWith
     api.retrieve("", {}, failure);
     api.create({}, {}, failure);
     api.update("", update_request(), {}, failure);
-    for (int invalid = 0; invalid < 15; ++invalid) {
+    for (int invalid = 0; invalid < 16; ++invalid) {
         auto request = update_request();
         switch (invalid) {
         case 0:
@@ -174,11 +209,14 @@ TEST_F(SubscriptionSchedulesTest, ValidationRejectsAmbiguousOrInvalidUpdatesWith
         case 14:
             request.phases[1].proration_behavior = static_cast<ProrationBehavior>(99);
             break;
+        case 15:
+            request.phases[0].discounts = { {} };
+            break;
         }
         EXPECT_THROW(api.update_async("sched", request).result(), ConfigurationException);
         api.update("sched", request, {}, failure);
     }
-    EXPECT_EQ(calls, 18);
+    EXPECT_EQ(calls, 19);
     EXPECT_TRUE(http.get_recorded_requests().empty());
 }
 
@@ -277,6 +315,11 @@ TEST_F(SubscriptionSchedulesTest, ParsesLegacyModernAndMalformedSubscriptionSafe
     EXPECT_TRUE(parsed.automatic_tax_enabled);
     EXPECT_EQ(parsed.items[0].discount_ids[0], "di_item");
     EXPECT_EQ(parsed.items[0].tax_rate_ids[0], "txr_item");
+    value["automatic_tax"]["enabled"] = false;
+    value["automatic_tax"]["disabled_reason"] = "requires_location_inputs";
+    const auto disabled = parser.parse_subscription(response(value));
+    EXPECT_FALSE(disabled.automatic_tax_enabled);
+    EXPECT_EQ(disabled.automatic_tax_disabled_reason, "requires_location_inputs");
     const auto original = value;
     for (const auto* field :
          { "schedule", "discount", "discounts", "default_tax_rates", "automatic_tax" }) {

@@ -51,6 +51,21 @@ struct CreateCustomerRequest {
     std::unordered_map<std::string, std::string> metadata;
 };
 
+/** When Stripe should validate a customer's tax location. */
+enum class TaxLocationValidation { Automatic, Deferred, Immediately };
+
+/** Customer fields that can be changed when correcting billing location details. */
+struct UpdateCustomerRequest {
+    /** Replacement email address; an empty value clears it. */
+    std::optional<std::string> email;
+    /** Replacement display name; an empty value clears it. */
+    std::optional<std::string> name;
+    /** Supplied fields replace matching billing-address fields; empty values clear them. */
+    std::optional<BillingAddress> address;
+    /** Optional Stripe tax-location validation policy. */
+    std::optional<TaxLocationValidation> validate_tax_location;
+};
+
 /**
  * Describes the Checkout session to create.
  *
@@ -137,6 +152,15 @@ struct CreateCheckoutSessionRequest {
     std::vector<std::string> payment_method_types;
     /** Session expiry as Unix seconds; absent uses Stripe's default. */
     std::optional<std::int64_t> expires_at;
+    /** Enable or disable Stripe's automatic tax calculation; unset preserves Stripe defaults. */
+    std::optional<bool> automatic_tax_enabled;
+    /** "auto" or "required"; empty preserves Stripe's default collection behavior. */
+    std::string billing_address_collection;
+    /** Request Checkout to save a collected address or name for an existing Customer. */
+    std::optional<bool> customer_update_address;
+    std::optional<bool> customer_update_name;
+    /** Collect an optional business tax ID in hosted Checkout when set. */
+    std::optional<bool> tax_id_collection_enabled;
 };
 
 /** Which task a billing portal session should take the customer straight to. */
@@ -376,6 +400,8 @@ struct UpdateSubscriptionRequest {
     std::optional<ProrationBehavior> proration_behavior;
     /** Required; no implicit payment-failure policy. */
     std::optional<PaymentBehavior> payment_behavior;
+    /** Enable or disable automatic tax while changing subscription items. */
+    std::optional<bool> automatic_tax_enabled;
 };
 
 /** Create a fixed per-unit price. Does not change existing subscriptions. */
@@ -657,6 +683,35 @@ public:
     virtual void retrieve(std::string customer_id,
                           const RequestOptions& options,
                           RetrieveCompletion completion) = 0;
+
+    /**
+     * Update customer contact or billing-address details.
+     *
+     * @param customer_id Existing Stripe customer ID.
+     * @param request Fields to change; omitted fields remain unchanged.
+     * @param options Per-request settings.
+     *
+     * @return Updated customer, including Stripe's tax-location status when available.
+     *
+     * @throws ConfigurationException If the ID is empty or no fields are supplied.
+     * @throws StripeApiException If Stripe rejects the change.
+     */
+    virtual Task<Customer> update_async(std::string customer_id,
+                                        const UpdateCustomerRequest& request,
+                                        const RequestOptions& options = {}) = 0;
+
+    /**
+     * Update customer fields and report the result or failure exactly once.
+     *
+     * @param customer_id Existing Stripe customer ID.
+     * @param request Fields to change.
+     * @param options Per-request settings.
+     * @param completion Receives the updated customer or failure.
+     */
+    virtual void update(std::string customer_id,
+                        const UpdateCustomerRequest& request,
+                        const RequestOptions& options,
+                        RetrieveCompletion completion) = 0;
 };
 
 /** Filters for one page of Checkout sessions. No automatic pagination. */
@@ -664,6 +719,12 @@ struct ListCheckoutSessionsRequest {
     std::string payment_intent_id; ///< Optional payment intent to find its Checkout session.
     std::int64_t limit = 10;       ///< Page size, from 1 to 100.
     std::string starting_after;    ///< Last session ID from the previous page; empty for the first.
+};
+
+/** Page size and cursor for purchased line items. */
+struct ListPurchasedLineItemsRequest {
+    std::int64_t limit = 10;    ///< Page size, from 1 to 100.
+    std::string starting_after; ///< Last line-item ID from the previous page.
 };
 
 /**
@@ -681,6 +742,7 @@ public:
     using CreateCompletion = std::function<void(CallbackResult<CheckoutSession>)>;
     /** Receives one page of sessions, or the request failure. */
     using ListCompletion = std::function<void(CallbackResult<CheckoutSessionList>)>;
+    using LineItemsCompletion = std::function<void(CallbackResult<PurchasedLineItemList>)>;
 
     /**
      * Expire an open session so it can no longer be completed.
@@ -728,6 +790,33 @@ public:
     virtual void list(const ListCheckoutSessionsRequest& request,
                       const RequestOptions& options,
                       ListCompletion completion) = 0;
+
+    /**
+     * Read one page of prices and quantities purchased in a Checkout session.
+     *
+     * @param session_id Existing Checkout session ID.
+     * @param request Page size and cursor.
+     * @param options Per-request settings.
+     *
+     * @return One page of line items; further pages are not fetched automatically.
+     */
+    virtual Task<PurchasedLineItemList>
+    list_line_items_async(std::string session_id,
+                          const ListPurchasedLineItemsRequest& request = {},
+                          const RequestOptions& options = {}) = 0;
+
+    /**
+     * Read Checkout line items and report the page or failure exactly once.
+     *
+     * @param session_id Existing Checkout session ID.
+     * @param request Page size and cursor.
+     * @param options Per-request settings.
+     * @param completion Receives the page or failure.
+     */
+    virtual void list_line_items(std::string session_id,
+                                 const ListPurchasedLineItemsRequest& request,
+                                 const RequestOptions& options,
+                                 LineItemsCompletion completion) = 0;
 
     /**
      * Destroys the API instance.
@@ -816,6 +905,10 @@ struct SubscriptionSchedulePhaseRequest {
     std::vector<SubscriptionScheduleItem> items;
     ProrationBehavior proration_behavior = ProrationBehavior::None;
     std::unordered_map<std::string, std::string> metadata;
+    /** Optional automatic-tax override for this phase. */
+    std::optional<bool> automatic_tax_enabled;
+    /** Discounts to retain or apply for this phase. */
+    std::vector<SubscriptionScheduleDiscount> discounts;
 };
 
 /** Replace current and future phases. Omitted past phases are left in Stripe's history. */
@@ -825,6 +918,8 @@ struct UpdateSubscriptionScheduleRequest {
     /** Adjustments to make when changing the currently running phase. */
     ProrationBehavior proration_behavior = ProrationBehavior::None;
     std::unordered_map<std::string, std::string> metadata;
+    /** Default automatic-tax setting for the schedule. */
+    std::optional<bool> default_automatic_tax_enabled;
 };
 
 /** Create, read, and change future billing settings through StripeClient::subscription_schedules().
@@ -840,7 +935,7 @@ public:
      * @param schedule_id Existing schedule ID.
      * @param options Per-request headers and timeout.
      *
-     * @return Schedule with phase dates, prices, quantities, and metadata.
+     * @return Schedule with phase dates, prices, quantities, discounts, and tax settings.
      *
      * @throws ConfigurationException If the ID is empty or the response is malformed.
      * @throws StripeApiException If Stripe rejects the request.
@@ -885,8 +980,7 @@ public:
      * Replace current and future phases with explicit prices, quantities, and dates.
      *
      * This is not a partial phase update: include every setting you intend to retain.
-     * Only prices, quantities, dates, metadata, and adjustment policies are supported;
-     * do not use this to replace phases whose discounts or tax settings must be preserved.
+     * Include the existing automatic-tax and discount settings when replacing phases.
      * Release keeps the subscription running after the final phase; cancel ends it.
      *
      * @param schedule_id Existing schedule ID.
@@ -928,6 +1022,14 @@ struct ListInvoicesRequest {
     std::string subscription_id;
     std::int64_t limit = 10;    ///< Page size, from 1 to 100.
     std::string starting_after; ///< Last invoice ID from the previous page.
+};
+
+/** Draft invoice fields that can be corrected before finalization. */
+struct UpdateInvoiceRequest {
+    /** Enable or disable automatic tax before finalization. */
+    std::optional<bool> automatic_tax_enabled;
+    /** Whether Stripe should continue collection after finalization. */
+    std::optional<bool> auto_advance;
 };
 
 /**
@@ -1138,6 +1240,10 @@ public:
     using ListCompletion = std::function<void(CallbackResult<InvoiceList>)>;
     /** Receives draft deletion confirmation or a failure. */
     using DeleteCompletion = std::function<void(CallbackResult<DeletedInvoice>)>;
+    /** Receives an invoice or the failure. */
+    using Completion = std::function<void(CallbackResult<Invoice>)>;
+    /** Receives one page of purchased invoice lines or a failure. */
+    using LineItemsCompletion = std::function<void(CallbackResult<PurchasedLineItemList>)>;
     /**
      * Read one page, optionally for a specific subscription.
      *
@@ -1161,6 +1267,64 @@ public:
     virtual void list(const ListInvoicesRequest& request,
                       const RequestOptions& options,
                       ListCompletion completion) = 0;
+
+    /**
+     * Read one page of purchased prices and quantities on an invoice.
+     *
+     * @param invoice_id Existing Stripe invoice ID.
+     * @param request Page size and cursor.
+     * @param options Per-request settings.
+     *
+     * @return One page of line items; further pages are not fetched automatically.
+     *
+     * @throws ConfigurationException If the ID is empty or the page size is invalid.
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<PurchasedLineItemList>
+    list_line_items_async(std::string invoice_id,
+                          const ListPurchasedLineItemsRequest& request = {},
+                          const RequestOptions& options = {}) = 0;
+
+    /**
+     * Read invoice line items and report the page or failure exactly once.
+     *
+     * @param invoice_id Existing Stripe invoice ID.
+     * @param request Page size and cursor.
+     * @param options Per-request settings.
+     * @param completion Receives the page or failure.
+     */
+    virtual void list_line_items(std::string invoice_id,
+                                 const ListPurchasedLineItemsRequest& request,
+                                 const RequestOptions& options,
+                                 LineItemsCompletion completion) = 0;
+    /**
+     * Update automatic-tax or collection settings on a draft invoice.
+     *
+     * @param invoice_id Existing draft invoice ID.
+     * @param request Fields to change.
+     * @param options Per-request settings.
+     *
+     * @return Updated invoice with the resulting draft settings.
+     *
+     * @throws ConfigurationException If the ID is empty or no fields are supplied.
+     * @throws StripeApiException If Stripe rejects the change.
+     */
+    virtual Task<Invoice> update_async(std::string invoice_id,
+                                       const UpdateInvoiceRequest& request,
+                                       const RequestOptions& options = {}) = 0;
+
+    /**
+     * Update a draft invoice and report its result or failure exactly once.
+     *
+     * @param invoice_id Existing draft invoice ID.
+     * @param request Fields to change.
+     * @param options Per-request settings.
+     * @param completion Receives the updated invoice or failure.
+     */
+    virtual void update(std::string invoice_id,
+                        const UpdateInvoiceRequest& request,
+                        const RequestOptions& options,
+                        Completion completion) = 0;
     /**
      * Finalize a draft with automatic collection disabled.
      *
@@ -1234,9 +1398,6 @@ public:
     virtual void delete_invoice(std::string invoice_id,
                                 const RequestOptions& options,
                                 DeleteCompletion completion) = 0;
-    /** Callback receiving an invoice or the failure. */
-    using Completion = std::function<void(CallbackResult<Invoice>)>;
-
     /** Destroys the API instance. */
     virtual ~Invoices() = default;
 

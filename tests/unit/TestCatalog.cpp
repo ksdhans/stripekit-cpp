@@ -482,6 +482,7 @@ UpdateSubscriptionRequest subscription_request() {
 TEST_F(CatalogTest, SubscriptionUpdatesReplaceItemsWithExplicitQuantitiesAndPolicies) {
     http.set_response({ .status_code = 200, .body = subscription_json });
     auto request = subscription_request();
+    request.automatic_tax_enabled = true;
     request.items.push_back({ .item_id = "si_second", .price_id = "price/two &", .quantity = 2 });
     const auto result = client.subscriptions()
                             .update_async("sub/a?b",
@@ -508,6 +509,7 @@ TEST_F(CatalogTest, SubscriptionUpdatesReplaceItemsWithExplicitQuantitiesAndPoli
     EXPECT_EQ(sent.options.timeout, std::chrono::seconds(5));
     EXPECT_EQ(sent.body,
               "proration_behavior=none&payment_behavior=allow_incomplete"
+              "&automatic_tax%5Benabled%5D=true"
               "&items%5B0%5D%5Bid%5D=si_first&items%5B0%5D%5Bprice%5D=price_new"
               "&items%5B0%5D%5Bquantity%5D=7"
               "&items%5B1%5D%5Bid%5D=si_second&items%5B1%5D%5Bprice%5D=price%2Ftwo%20%26"

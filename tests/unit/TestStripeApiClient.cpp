@@ -381,6 +381,58 @@ TEST_F(StripeApiClientTest, RetrieveCustomerAsyncSuccess) {
     EXPECT_EQ(customer.id, "cus_special/id");
 }
 
+TEST_F(StripeApiClientTest, UpdateCustomerAddressUsesTypedPartialFields) {
+    http_client.set_handler([](const HttpRequest& req) {
+        EXPECT_EQ(req.method, HttpMethod::Post);
+        EXPECT_EQ(req.path, "/v1/customers/cus_special%2Fid");
+        EXPECT_EQ(req.body,
+                  "tax%5Bvalidate_location%5D=immediately&address%5Bcity%5D=Wellington&address%"
+                  "5Bpostal_code%5D=6011"
+                  "&address%5Bcountry%5D=NZ");
+        return HttpResponse{
+            .status_code = 200,
+            .body =
+                R"({"id":"cus_special/id","address":{"city":"Wellington","country":"NZ","postal_code":"6011"},"tax":{"location":{"status":"verified","source":"billing_address"}}})"
+        };
+    });
+    UpdateCustomerRequest request;
+    request.address =
+        BillingAddress{ .city = "Wellington", .postal_code = "6011", .country = "NZ" };
+    request.validate_tax_location = TaxLocationValidation::Immediately;
+    const auto customer = client->customers().update_async("cus_special/id", request).result();
+    ASSERT_TRUE(customer.address.has_value());
+    EXPECT_EQ(customer.address->country.value(), "NZ");
+    EXPECT_EQ(customer.tax_location_status, "verified");
+    EXPECT_THROW(client->customers().update_async("cus", {}).result(), ConfigurationException);
+    UpdateCustomerRequest invalid;
+    invalid.address = BillingAddress{ .country = "NZL" };
+    EXPECT_THROW(client->customers().update_async("cus", invalid).result(), ConfigurationException);
+    invalid.address.reset();
+    invalid.validate_tax_location = static_cast<TaxLocationValidation>(99);
+    EXPECT_THROW(client->customers().update_async("cus", invalid).result(), ConfigurationException);
+    EXPECT_EQ(http_client.get_recorded_requests().size(), 1U);
+}
+
+TEST_F(StripeApiClientTest, CustomerTaxLocationValidationUsesStripePolicies) {
+    http_client.set_handler([](const HttpRequest& req) {
+        EXPECT_EQ(req.method, HttpMethod::Post);
+        EXPECT_EQ(req.path, "/v1/customers/cus_tax");
+        return HttpResponse{ .status_code = 200, .body = R"({"id":"cus_tax"})" };
+    });
+    const std::vector<std::pair<TaxLocationValidation, std::string>> policies = {
+        { TaxLocationValidation::Automatic, "auto" },
+        { TaxLocationValidation::Deferred, "deferred" },
+        { TaxLocationValidation::Immediately, "immediately" }
+    };
+    for (const auto& [policy, value] : policies) {
+        UpdateCustomerRequest request;
+        request.validate_tax_location = policy;
+        client->customers().update_async("cus_tax", request).result();
+        EXPECT_EQ(http_client.get_recorded_requests().back().body,
+                  "tax%5Bvalidate_location%5D=" + value);
+    }
+}
+
 TEST_F(StripeApiClientTest, CreateCheckoutSessionAsyncSuccess) {
     http_client.set_handler([](const HttpRequest& req) {
         EXPECT_EQ(req.method, HttpMethod::Post);
@@ -400,6 +452,10 @@ TEST_F(StripeApiClientTest, CreateCheckoutSessionAsyncSuccess) {
         EXPECT_EQ(req.body.find("payment_method_types"), std::string::npos);
         EXPECT_EQ(req.body.find("customer_email"), std::string::npos);
         EXPECT_EQ(req.body.find("expires_at"), std::string::npos);
+        EXPECT_EQ(req.body.find("automatic_tax"), std::string::npos);
+        EXPECT_EQ(req.body.find("billing_address_collection"), std::string::npos);
+        EXPECT_EQ(req.body.find("customer_update"), std::string::npos);
+        EXPECT_EQ(req.body.find("tax_id_collection"), std::string::npos);
 
         return HttpResponse{ .status_code = 200, .headers = {}, .body = R"({
                 "id": "cs_test_session_1",
@@ -422,6 +478,79 @@ TEST_F(StripeApiClientTest, CreateCheckoutSessionAsyncSuccess) {
     EXPECT_EQ(session.id, "cs_test_session_1");
     EXPECT_EQ(session.customer_id, "cus_123");
     EXPECT_EQ(session.url, "https://checkout.stripe.com/c/pay/cs_test_session_1");
+}
+
+TEST_F(StripeApiClientTest, CheckoutTaxSettingsEncodeExplicitValuesForExistingCustomer) {
+    http_client.set_handler([](const HttpRequest& req) {
+        EXPECT_EQ(req.method, HttpMethod::Post);
+        EXPECT_NE(req.body.find("automatic_tax%5Benabled%5D=true"), std::string::npos);
+        EXPECT_NE(req.body.find("billing_address_collection=auto"), std::string::npos);
+        EXPECT_NE(req.body.find("customer_update%5Baddress%5D=auto"), std::string::npos);
+        EXPECT_NE(req.body.find("customer_update%5Bname%5D=auto"), std::string::npos);
+        EXPECT_NE(req.body.find("tax_id_collection%5Benabled%5D=true"), std::string::npos);
+        return HttpResponse{
+            .status_code = 200,
+            .body = R"({"id":"cs_tax","automatic_tax":{"enabled":true,"status":"complete"}})"
+        };
+    });
+    CreateCheckoutSessionRequest request;
+    request.customer_id = "cus_tax";
+    request.price_id = "price_exclusive";
+    request.automatic_tax_enabled = true;
+    request.billing_address_collection = "auto";
+    request.customer_update_address = true;
+    request.customer_update_name = true;
+    request.tax_id_collection_enabled = true;
+    const auto session = client->checkout().sessions().create_async(request).result();
+    ASSERT_TRUE(session.automatic_tax.has_value());
+    EXPECT_TRUE(session.automatic_tax->enabled);
+    EXPECT_EQ(session.automatic_tax->status, "complete");
+}
+
+TEST_F(StripeApiClientTest, CheckoutLineItemListSupportsPaginationAndOptions) {
+    http_client.set_handler([](const HttpRequest& req) {
+        EXPECT_EQ(req.method, HttpMethod::Get);
+        EXPECT_EQ(req.path,
+                  "/v1/checkout/sessions/cs%2Ftax/line_items?limit=1&starting_after=li%3F1");
+        EXPECT_EQ(req.headers.at("Stripe-Version"), "2025-03-31.basil");
+        return HttpResponse{
+            .status_code = 200,
+            .body =
+                R"({"object":"list","has_more":true,"data":[{"id":"li_tax","pricing":{"price_details":{"price":"price_nz"}},"quantity":2,"amount_total":2500}]})"
+        };
+    });
+    RequestOptions options{ .headers = { { "Stripe-Version", "2025-03-31.basil" } } };
+    const auto page =
+        client->checkout()
+            .sessions()
+            .list_line_items_async("cs/tax", { .limit = 1, .starting_after = "li?1" }, options)
+            .result();
+    ASSERT_EQ(page.data.size(), 1U);
+    EXPECT_TRUE(page.has_more);
+    EXPECT_EQ(page.data[0].id, "li_tax");
+    EXPECT_EQ(page.data[0].price_id, "price_nz");
+    EXPECT_EQ(page.data[0].quantity.value(), 2);
+}
+
+TEST_F(StripeApiClientTest, CheckoutLineItemPaginationRejectsInvalidRequestsAndResponses) {
+    auto& checkout = client->checkout().sessions();
+    EXPECT_THROW(checkout.list_line_items_async("").result(), ConfigurationException);
+    for (const auto limit : { 0, 101 })
+        EXPECT_THROW(checkout.list_line_items_async("cs_test", { .limit = limit }).result(),
+                     ConfigurationException);
+    int callbacks = 0;
+    checkout.list_line_items("", {}, {}, [&](CallbackResult<PurchasedLineItemList> result) {
+        ++callbacks;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+    });
+    EXPECT_EQ(callbacks, 1);
+    EXPECT_TRUE(http_client.get_recorded_requests().empty());
+    http_client.set_response(
+        { .status_code = 200,
+          .body =
+              R"({"object":"list","has_more":false,"data":[{"pricing":{"price_details":{"price":"price_test"}},"quantity":1}]})" });
+    EXPECT_THROW(checkout.list_line_items_async("cs_test").result(), ConfigurationException);
+    EXPECT_EQ(http_client.get_recorded_requests().size(), 1U);
 }
 
 TEST_F(StripeApiClientTest, CreateCheckoutSessionWithInlinePriceData) {
@@ -717,6 +846,16 @@ TEST_F(StripeApiClientTest, RejectConflictingCheckoutTrialSettings) {
     EXPECT_THROW(client->checkout().sessions().create_async(request).result(),
                  ConfigurationException);
     request.trial_period_days = -1;
+    EXPECT_THROW(client->checkout().sessions().create_async(request).result(),
+                 ConfigurationException);
+    request.trial_period_days.reset();
+    request.customer_update_address = true;
+    EXPECT_THROW(client->checkout().sessions().create_async(request).result(),
+                 ConfigurationException);
+    request.customer_update_address.reset();
+    request.customer_id = "cus_existing";
+    request.customer_email.clear();
+    request.billing_address_collection = "invalid";
     EXPECT_THROW(client->checkout().sessions().create_async(request).result(),
                  ConfigurationException);
     EXPECT_TRUE(http_client.get_recorded_requests().empty());

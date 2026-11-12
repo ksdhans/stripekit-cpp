@@ -22,6 +22,17 @@ TEST_F(ModelsAndParserTest, ParseCustomerSuccess) {
             "object": "customer",
             "email": "user@example.com",
             "name": "Jane Doe",
+            "address": {
+                "city": "Wellington",
+                "country": "NZ",
+                "postal_code": "6011"
+            },
+            "tax": {
+                "location": {
+                    "status": "verified",
+                    "source": "billing_address"
+                }
+            },
             "livemode": true,
             "metadata": {
                 "user_id": "usr_789",
@@ -33,6 +44,11 @@ TEST_F(ModelsAndParserTest, ParseCustomerSuccess) {
     EXPECT_EQ(customer.id, "cus_123456");
     EXPECT_EQ(customer.email, "user@example.com");
     EXPECT_EQ(customer.name, "Jane Doe");
+    ASSERT_TRUE(customer.address.has_value());
+    EXPECT_EQ(customer.address->city.value(), "Wellington");
+    EXPECT_EQ(customer.address->country.value(), "NZ");
+    EXPECT_EQ(customer.tax_location_status, "verified");
+    EXPECT_EQ(customer.tax_location_source, "billing_address");
     EXPECT_TRUE(customer.livemode);
     EXPECT_EQ(customer.metadata.size(), 2u);
     EXPECT_EQ(customer.metadata.at("user_id"), "usr_789");
@@ -62,7 +78,26 @@ TEST_F(ModelsAndParserTest, ParseCheckoutSessionSuccess) {
             "mode": "subscription",
             "url": "https://checkout.stripe.com/c/pay/cs_test_123",
             "currency": "usd",
+            "amount_subtotal": 5000,
             "amount_total": 4999,
+            "payment_status": "paid",
+            "automatic_tax": {
+                "enabled": true,
+                "status": "complete"
+            },
+            "total_details": {
+                "amount_discount": 500,
+                "amount_tax": 499
+            },
+            "line_items": {
+                "has_more": false,
+                "data": [{
+                    "id": "li_monthly",
+                    "price": { "id": "price_monthly" },
+                    "quantity": 2,
+                    "amount_total": 5000
+                }]
+            },
             "livemode": false,
             "metadata": {
                 "order_ref": "ord_999"
@@ -78,6 +113,18 @@ TEST_F(ModelsAndParserTest, ParseCheckoutSessionSuccess) {
     EXPECT_EQ(session.url, "https://checkout.stripe.com/c/pay/cs_test_123");
     EXPECT_EQ(session.currency, "usd");
     EXPECT_EQ(session.amount_total, 4999);
+    EXPECT_EQ(session.amount_subtotal.value(), 5000);
+    EXPECT_EQ(session.amount_discount.value(), 500);
+    EXPECT_EQ(session.amount_tax.value(), 499);
+    EXPECT_EQ(session.payment_status, "paid");
+    ASSERT_TRUE(session.automatic_tax.has_value());
+    EXPECT_TRUE(session.automatic_tax->enabled);
+    EXPECT_EQ(session.automatic_tax->status, "complete");
+    ASSERT_EQ(session.line_items.size(), 1U);
+    EXPECT_EQ(session.line_items[0].id, "li_monthly");
+    EXPECT_EQ(session.line_items[0].price_id, "price_monthly");
+    EXPECT_EQ(session.line_items[0].quantity.value(), 2);
+    EXPECT_EQ(session.line_items[0].amount.value(), 5000);
     EXPECT_FALSE(session.livemode);
     EXPECT_EQ(session.metadata.at("order_ref"), "ord_999");
 }

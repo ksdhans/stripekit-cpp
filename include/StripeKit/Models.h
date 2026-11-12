@@ -104,6 +104,22 @@ struct PriceList {
  * @{
  */
 
+/** Customer billing-address fields supported by Stripe. */
+struct BillingAddress {
+    /** First street-address line. */
+    std::optional<std::string> line1;
+    /** Second street-address line. */
+    std::optional<std::string> line2;
+    /** City or locality. */
+    std::optional<std::string> city;
+    /** State, province, or region. */
+    std::optional<std::string> state;
+    /** Postal or ZIP code. */
+    std::optional<std::string> postal_code;
+    /** Two-letter country code. */
+    std::optional<std::string> country;
+};
+
 /**
  * A Stripe customer: the account everything else is billed against.
  *
@@ -119,11 +135,42 @@ struct Customer {
     /** Customer display name. */
     std::string name;
 
+    /** Billing address, absent when Stripe has no address on file. */
+    std::optional<BillingAddress> address;
+
+    /** Stripe's tax-location validation status, when returned. */
+    std::string tax_location_status;
+
+    /** Source Stripe used to determine the customer's tax location, when returned. */
+    std::string tax_location_source;
+
     /** True when the object belongs to a live Stripe account. */
     bool livemode = false;
 
     /** Free-form metadata key/value pairs attached to this customer. */
     std::unordered_map<std::string, std::string> metadata;
+};
+
+/** Stripe's automatic-tax state, including location-related status when available. */
+struct AutomaticTax {
+    /** Whether automatic tax is enabled. */
+    bool enabled = false;
+    /** Stripe's calculation status, when supplied. */
+    std::string status;
+    /** Why Stripe disabled automatic tax, when supplied. */
+    std::string disabled_reason;
+};
+
+/** A price and quantity returned for a Checkout or invoice line. */
+struct PurchasedLineItem {
+    /** Stripe line-item identifier, used as the next-page cursor. */
+    std::string id;
+    /** Stripe Price ID. */
+    std::string price_id;
+    /** Purchased quantity, absent when Stripe omits it. */
+    std::optional<std::int64_t> quantity;
+    /** Line amount in the currency's smallest unit, when supplied. */
+    std::optional<std::int64_t> amount;
 };
 
 /**
@@ -162,6 +209,27 @@ struct CheckoutSession {
 
     /** Total amount in the smallest currency unit. */
     std::int64_t amount_total = 0;
+
+    /** Pre-tax amount in the smallest currency unit, when supplied. */
+    std::optional<std::int64_t> amount_subtotal;
+
+    /** Discount amount in the smallest currency unit, when supplied. */
+    std::optional<std::int64_t> amount_discount;
+
+    /** Tax amount in the smallest currency unit, when supplied. */
+    std::optional<std::int64_t> amount_tax;
+
+    /** Payment state such as unpaid, paid, or no_payment_required. */
+    std::string payment_status;
+
+    /** Automatic-tax state, absent on older API versions or unexpanded responses. */
+    std::optional<AutomaticTax> automatic_tax;
+
+    /** Purchased prices and quantities when Stripe returns expanded line items. */
+    std::vector<PurchasedLineItem> line_items;
+
+    /** True when Stripe returned only the first page of line items. */
+    bool line_items_has_more = false;
 
     /** True when the object belongs to a live Stripe account. */
     bool livemode = false;
@@ -248,6 +316,12 @@ struct InvoicePaymentList {
 /** One page of Checkout sessions; request the next page only when has_more is true. */
 struct CheckoutSessionList {
     std::vector<CheckoutSession> data;
+    bool has_more = false;
+};
+
+/** One page of purchased prices and quantities. */
+struct PurchasedLineItemList {
+    std::vector<PurchasedLineItem> data;
     bool has_more = false;
 };
 
@@ -347,13 +421,27 @@ struct Subscription {
     std::vector<std::string> default_tax_rate_ids;
     /** Whether Stripe calculates tax automatically. */
     bool automatic_tax_enabled = false;
+    /** Why Stripe disabled automatic tax, when present. */
+    std::string automatic_tax_disabled_reason;
 };
 
-/** A price and quantity in one subscription schedule phase. */
+/** A discount reference that can be sent back when replacing schedule phases. */
+struct SubscriptionScheduleDiscount {
+    /** Existing Stripe discount ID, when the response provides it. */
+    std::string discount_id;
+    /** Coupon ID; reusing it retains the coupon's configured duration. */
+    std::string coupon_id;
+    /** Promotion-code ID; reusing it retains its associated coupon duration. */
+    std::string promotion_code_id;
+};
+
+/** A price, quantity, and optional item-level discounts in one schedule phase. */
 struct SubscriptionScheduleItem {
     std::string price_id;
     /** Absent when Stripe does not supply a quantity, for example metered usage. */
     std::optional<std::int64_t> quantity;
+    /** Discounts applied only to this item. */
+    std::vector<SubscriptionScheduleDiscount> discounts;
 };
 
 /** One period of scheduled subscription settings, with dates in Unix seconds. */
@@ -364,6 +452,8 @@ struct SubscriptionSchedulePhase {
     /** Adjustment policy reported by Stripe; unknown values are preserved. */
     std::string proration_behavior;
     std::unordered_map<std::string, std::string> metadata;
+    std::optional<AutomaticTax> automatic_tax;
+    std::vector<SubscriptionScheduleDiscount> discounts;
 };
 
 /** Start and end of the currently running schedule phase, absent after release or cancellation. */
@@ -384,6 +474,8 @@ struct SubscriptionSchedule {
     /** What happens after the final phase, normally release or cancel. */
     std::string end_behavior;
     std::optional<SubscriptionScheduleCurrentPhase> current_phase;
+    /** Default tax behavior inherited by phases that do not override it. */
+    std::optional<AutomaticTax> default_automatic_tax;
     std::vector<SubscriptionSchedulePhase> phases;
     std::unordered_map<std::string, std::string> metadata;
 };
@@ -425,6 +517,30 @@ struct Invoice {
 
     /** Amount still owed in the smallest currency unit. */
     std::int64_t amount_remaining = 0;
+
+    /** Pre-tax amount in the smallest currency unit, when supplied. */
+    std::optional<std::int64_t> subtotal;
+
+    /** Total discount amount in the smallest currency unit, when supplied. */
+    std::optional<std::int64_t> amount_discount;
+
+    /** Total tax in the smallest currency unit, when supplied. */
+    std::optional<std::int64_t> amount_tax;
+
+    /** Final invoice total in the smallest currency unit, when supplied. */
+    std::optional<std::int64_t> total;
+
+    /** Automatic-tax state, absent on older API versions. */
+    std::optional<AutomaticTax> automatic_tax;
+
+    /** Code explaining why finalization failed, when Stripe supplies one. */
+    std::string last_finalization_error_code;
+
+    /** Purchased prices and quantities when Stripe returns invoice lines. */
+    std::vector<PurchasedLineItem> line_items;
+
+    /** True when Stripe returned only the first page of invoice lines. */
+    bool line_items_has_more = false;
 
     /** True when the invoice has been paid in full. */
     bool paid = false;

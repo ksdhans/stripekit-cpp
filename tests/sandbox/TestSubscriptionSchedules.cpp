@@ -296,13 +296,17 @@ TEST_F(SandboxSubscriptionSchedulesTest,
 
 TEST_F(SandboxSubscriptionSchedulesTest, SubscriptionReadsPreserveEnabledAutomaticTax) {
     auto& client = environment->stripe_client();
-    environment->stripe_api().require_post("/v1/customers/" + customer,
-                                           { { "address[line1]", "354 Oyster Point Blvd" },
-                                             { "address[city]", "South San Francisco" },
-                                             { "address[state]", "CA" },
-                                             { "address[postal_code]", "94080" },
-                                             { "address[country]", "US" },
-                                             { "tax[validate_location]", "immediately" } });
+    UpdateCustomerRequest customer_update;
+    customer_update.address = BillingAddress{ .line1 = "354 Oyster Point Blvd",
+                                              .city = "South San Francisco",
+                                              .state = "CA",
+                                              .postal_code = "94080",
+                                              .country = "US" };
+    customer_update.validate_tax_location = TaxLocationValidation::Immediately;
+    const auto validated_customer =
+        client.customers().update_async(customer, customer_update, options).result();
+    ASSERT_TRUE(validated_customer.address.has_value());
+    EXPECT_EQ(validated_customer.address->country.value(), "US");
     environment->stripe_api().require_post(
         "/v1/subscriptions/" + subscription,
         { { "automatic_tax[enabled]", "true" }, { "proration_behavior", "none" } });
@@ -314,4 +318,23 @@ TEST_F(SandboxSubscriptionSchedulesTest, SubscriptionReadsPreserveEnabledAutomat
         EXPECT_EQ(saved.latest_invoice_id, paid_invoice);
         expect_items(saved, prices[0]);
     }
+    auto& schedules = client.subscription_schedules();
+    const auto created =
+        schedules.create_async({ .from_subscription = subscription }, options).result();
+    ASSERT_TRUE(created.current_phase.has_value());
+    ASSERT_TRUE(created.default_automatic_tax.has_value());
+    EXPECT_TRUE(created.default_automatic_tax->enabled);
+    UpdateSubscriptionScheduleRequest update;
+    update.default_automatic_tax_enabled = true;
+    SubscriptionSchedulePhaseRequest phase;
+    phase.start_date = created.current_phase->start_date_unix;
+    phase.end_date = created.current_phase->end_date_unix;
+    phase.automatic_tax_enabled = true;
+    phase.items = created.phases.front().items;
+    update.phases.push_back(std::move(phase));
+    const auto changed = schedules.update_async(created.id, update, options).result();
+    ASSERT_TRUE(changed.default_automatic_tax.has_value());
+    EXPECT_TRUE(changed.default_automatic_tax->enabled);
+    ASSERT_TRUE(changed.phases.front().automatic_tax.has_value());
+    EXPECT_TRUE(changed.phases.front().automatic_tax->enabled);
 }

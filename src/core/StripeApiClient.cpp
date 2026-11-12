@@ -180,6 +180,34 @@ std::string checkout_sessions_path(const ListCheckoutSessionsRequest& request) {
     return "/v1/checkout/sessions?" + query;
 }
 
+/** Build the validated query for one Checkout session's purchased line items. */
+std::string checkout_line_items_path(const std::string& session_id,
+                                     const ListPurchasedLineItemsRequest& request) {
+    if (session_id.empty())
+        throw ConfigurationException("Checkout line items require a session ID");
+    if (request.limit < 1 || request.limit > 100)
+        throw ConfigurationException("Checkout line-item page size must be from 1 to 100");
+    std::string query;
+    append_form_value(query, "limit", std::to_string(request.limit));
+    if (!request.starting_after.empty())
+        append_form_value(query, "starting_after", request.starting_after);
+    return "/v1/checkout/sessions/" + url_encode(session_id) + "/line_items?" + query;
+}
+
+/** Build the validated query for one invoice's purchased line items. */
+std::string invoice_line_items_path(const std::string& invoice_id,
+                                    const ListPurchasedLineItemsRequest& request) {
+    if (invoice_id.empty())
+        throw ConfigurationException("Invoice line items require an invoice ID");
+    if (request.limit < 1 || request.limit > 100)
+        throw ConfigurationException("Invoice line-item page size must be from 1 to 100");
+    std::string query;
+    append_form_value(query, "limit", std::to_string(request.limit));
+    if (!request.starting_after.empty())
+        append_form_value(query, "starting_after", request.starting_after);
+    return "/v1/invoices/" + url_encode(invoice_id) + "/lines?" + query;
+}
+
 /** Encode product creation, retaining caller-supplied identities and metadata. */
 std::string product_body(const CreateProductRequest& request) {
     if (request.name.empty()) throw ConfigurationException("A product name is required");
@@ -254,6 +282,22 @@ std::string schedule_create_body(const CreateSubscriptionScheduleRequest& reques
     return body;
 }
 
+/** Append a schedule discount while requiring exactly one reusable reference. */
+void append_schedule_discount(std::string& body,
+                              const std::string& prefix,
+                              const SubscriptionScheduleDiscount& discount) {
+    if ((discount.coupon_id.empty() && discount.promotion_code_id.empty() &&
+         discount.discount_id.empty()) ||
+        (!discount.coupon_id.empty() && !discount.promotion_code_id.empty()))
+        throw ConfigurationException(
+            "A schedule discount requires one reusable discount, coupon, or promotion-code ID");
+    if (!discount.promotion_code_id.empty())
+        append_form_value(body, prefix + "[promotion_code]", discount.promotion_code_id);
+    else if (!discount.coupon_id.empty())
+        append_form_value(body, prefix + "[coupon]", discount.coupon_id);
+    else append_form_value(body, prefix + "[discount]", discount.discount_id);
+}
+
 /** Build the request body for replacing a schedule's current and future phases.
  *
  * @param request Replacement phases, end behavior, and payment adjustment policies.
@@ -280,6 +324,10 @@ std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& reques
     append_form_value(body, "end_behavior", end);
     append_form_value(body, "proration_behavior", proration_value(request.proration_behavior));
     append_metadata(body, request.metadata);
+    if (request.default_automatic_tax_enabled)
+        append_form_value(body,
+                          "default_settings[automatic_tax][enabled]",
+                          *request.default_automatic_tax_enabled ? "true" : "false");
     for (std::size_t i = 0; i < request.phases.size(); ++i) {
         const auto& phase = request.phases[i];
         if (phase.start_date <= 0 || phase.end_date.has_value() == phase.iterations.has_value() ||
@@ -301,8 +349,15 @@ std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& reques
             append_form_value(body, prefix + "[iterations]", std::to_string(*phase.iterations));
         append_form_value(
             body, prefix + "[proration_behavior]", proration_value(phase.proration_behavior));
+        if (phase.automatic_tax_enabled)
+            append_form_value(body,
+                              prefix + "[automatic_tax][enabled]",
+                              *phase.automatic_tax_enabled ? "true" : "false");
         for (const auto& [key, value] : phase.metadata)
             append_form_value(body, prefix + "[metadata][" + key + "]", value);
+        for (std::size_t j = 0; j < phase.discounts.size(); ++j)
+            append_schedule_discount(
+                body, prefix + "[discounts][" + std::to_string(j) + "]", phase.discounts[j]);
         for (std::size_t j = 0; j < phase.items.size(); ++j) {
             const auto& item = phase.items[j];
             if (item.price_id.empty() || (item.quantity && *item.quantity <= 0))
@@ -312,6 +367,10 @@ std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& reques
             append_form_value(body, item_prefix + "[price]", item.price_id);
             if (item.quantity)
                 append_form_value(body, item_prefix + "[quantity]", std::to_string(*item.quantity));
+            for (std::size_t k = 0; k < item.discounts.size(); ++k)
+                append_schedule_discount(body,
+                                         item_prefix + "[discounts][" + std::to_string(k) + "]",
+                                         item.discounts[k]);
         }
     }
     return body;
@@ -342,6 +401,9 @@ std::string subscription_body(const UpdateSubscriptionRequest& request) {
     std::string body;
     append_form_value(body, "proration_behavior", proration_value(*request.proration_behavior));
     append_form_value(body, "payment_behavior", payment_value(*request.payment_behavior));
+    if (request.automatic_tax_enabled)
+        append_form_value(
+            body, "automatic_tax[enabled]", *request.automatic_tax_enabled ? "true" : "false");
     std::unordered_set<std::string> ids;
     for (std::size_t index = 0; index < request.items.size(); ++index) {
         const auto& item = request.items[index];
@@ -551,10 +613,16 @@ std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
     if ((!request.customer_id.empty() && !request.customer_email.empty()) ||
         (request.trial_period_days.has_value() &&
          (session_mode != "subscription" || *request.trial_period_days <= 0 ||
-          *request.trial_period_days > 730))) {
+          *request.trial_period_days > 730)) ||
+        (!request.billing_address_collection.empty() &&
+         request.billing_address_collection != "auto" &&
+         request.billing_address_collection != "required")) {
         throw ConfigurationException(
             "Checkout customer or subscription trial settings are invalid");
     }
+    if (request.customer_id.empty() &&
+        (request.customer_update_address.has_value() || request.customer_update_name.has_value()))
+        throw ConfigurationException("Checkout customer updates require an existing Customer");
     std::string body;
     append_form_value(body, "mode", session_mode);
     if (!request.customer_id.empty()) {
@@ -593,6 +661,77 @@ std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
                           request.payment_method_types[i]);
     if (request.expires_at.has_value())
         append_form_value(body, "expires_at", std::to_string(*request.expires_at));
+    if (request.automatic_tax_enabled)
+        append_form_value(
+            body, "automatic_tax[enabled]", *request.automatic_tax_enabled ? "true" : "false");
+    if (!request.billing_address_collection.empty())
+        append_form_value(body, "billing_address_collection", request.billing_address_collection);
+    if (request.customer_update_address)
+        append_form_value(
+            body, "customer_update[address]", *request.customer_update_address ? "auto" : "never");
+    if (request.customer_update_name)
+        append_form_value(
+            body, "customer_update[name]", *request.customer_update_name ? "auto" : "never");
+    if (request.tax_id_collection_enabled)
+        append_form_value(body,
+                          "tax_id_collection[enabled]",
+                          *request.tax_id_collection_enabled ? "true" : "false");
+    return body;
+}
+
+/** Validate and serialize draft invoice tax and collection changes. */
+std::string invoice_update_body(const UpdateInvoiceRequest& request) {
+    if (!request.automatic_tax_enabled && !request.auto_advance)
+        throw ConfigurationException("Invoice updates require at least one setting");
+    std::string body;
+    if (request.automatic_tax_enabled)
+        append_form_value(
+            body, "automatic_tax[enabled]", *request.automatic_tax_enabled ? "true" : "false");
+    if (request.auto_advance)
+        append_form_value(body, "auto_advance", *request.auto_advance ? "true" : "false");
+    return body;
+}
+
+/** Serialize customer fields without changing address fields the caller omitted. */
+std::string customer_update_body(const UpdateCustomerRequest& request) {
+    std::string body;
+    if (request.email) append_form_value(body, "email", *request.email);
+    if (request.name) append_form_value(body, "name", *request.name);
+    if (request.validate_tax_location) {
+        std::string validation;
+        switch (*request.validate_tax_location) {
+        case TaxLocationValidation::Automatic:
+            validation = "auto";
+            break;
+        case TaxLocationValidation::Deferred:
+            validation = "deferred";
+            break;
+        case TaxLocationValidation::Immediately:
+            validation = "immediately";
+            break;
+        default:
+            throw ConfigurationException("Invalid customer tax-location validation policy");
+        }
+        append_form_value(body, "tax[validate_location]", validation);
+    }
+    if (request.address) {
+        if (request.address->country && !request.address->country->empty() &&
+            (request.address->country->size() != 2 ||
+             !std::all_of(request.address->country->begin(),
+                          request.address->country->end(),
+                          [](unsigned char ch) { return std::isalpha(ch) != 0; })))
+            throw ConfigurationException("Customer address country must be a two-letter code");
+        const auto append = [&](const char* key, const std::optional<std::string>& value) {
+            if (value) append_form_value(body, std::string("address[") + key + "]", *value);
+        };
+        append("line1", request.address->line1);
+        append("line2", request.address->line2);
+        append("city", request.address->city);
+        append("state", request.address->state);
+        append("postal_code", request.address->postal_code);
+        append("country", request.address->country);
+    }
+    if (body.empty()) throw ConfigurationException("Customer updates require at least one field");
     return body;
 }
 
@@ -944,6 +1083,92 @@ std::vector<std::string> reference_ids(const Json::Value& value) {
     return ids;
 }
 
+/** Read the automatic-tax fields shared by Checkout, invoices, subscriptions, and schedules. */
+AutomaticTax automatic_tax_value(const Json::Value& value) {
+    if (!value.isObject() || !value["enabled"].isBool())
+        throw ConfigurationException("Stripe returned malformed automatic tax settings");
+    if ((!value["status"].isNull() && !value["status"].isString()) ||
+        (!value["disabled_reason"].isNull() && !value["disabled_reason"].isString()))
+        throw ConfigurationException("Stripe returned malformed automatic tax status");
+    return { .enabled = value["enabled"].asBool(),
+             .status = json_value::string(value, "status"),
+             .disabled_reason = json_value::string(value, "disabled_reason") };
+}
+
+/** Read a list of purchased line items without guessing a missing quantity or Price. */
+std::vector<PurchasedLineItem>
+purchased_line_items(const Json::Value& value, bool require_pagination, bool& has_more) {
+    if (!value.isObject() || !value["data"].isArray() ||
+        (require_pagination && !value["has_more"].isBool()))
+        throw ConfigurationException("Stripe returned malformed purchased line items");
+    if (value["has_more"].isBool()) has_more = value["has_more"].asBool();
+    std::vector<PurchasedLineItem> items;
+    for (const auto& entry : value["data"]) {
+        if (!entry.isObject() ||
+            (!entry["quantity"].isNull() &&
+             (!entry["quantity"].isInt64() || entry["quantity"].asInt64() < 0)) ||
+            (!entry["amount"].isNull() && !entry["amount"].isInt64()) ||
+            (!entry["amount_total"].isNull() && !entry["amount_total"].isInt64()))
+            throw ConfigurationException("Stripe returned a malformed purchased line item");
+        auto price_id = reference_id(entry["price"]);
+        if (price_id.empty() && entry["pricing"].isObject())
+            price_id = reference_id(entry["pricing"]["price_details"]["price"]);
+        if (price_id.empty())
+            throw ConfigurationException("Stripe returned a purchased item without a Price");
+        const auto id = json_value::string(entry, "id");
+        if (require_pagination && id.empty())
+            throw ConfigurationException("Stripe returned a line item without its pagination ID");
+        PurchasedLineItem item{ .id = id, .price_id = std::move(price_id) };
+        const auto& amount = entry["amount"].isNull() ? entry["amount_total"] : entry["amount"];
+        if (amount.isInt64()) item.amount = amount.asInt64();
+        if (!entry["quantity"].isNull()) item.quantity = entry["quantity"].asInt64();
+        items.push_back(std::move(item));
+    }
+    return items;
+}
+
+/** Read discounts returned for a schedule phase, retaining reusable IDs. */
+std::vector<SubscriptionScheduleDiscount> schedule_discounts(const Json::Value& value) {
+    if (value.isNull()) return {};
+    if (!value.isArray())
+        throw ConfigurationException("Stripe returned malformed schedule discounts");
+    std::vector<SubscriptionScheduleDiscount> discounts;
+    for (const auto& entry : value) {
+        if (!entry.isObject())
+            throw ConfigurationException("Stripe returned a malformed schedule discount");
+        SubscriptionScheduleDiscount discount;
+        const auto read_reusable_reference = [&](const Json::Value& source, const char* field) {
+            if (source.isObject() && source.isMember(field)) return reference_id(source[field]);
+            return std::string{};
+        };
+        discount.coupon_id = read_reusable_reference(entry, "coupon");
+        discount.promotion_code_id = read_reusable_reference(entry, "promotion_code");
+        const auto& discount_value = entry["discount"];
+        if (discount_value.isObject()) {
+            if (discount.coupon_id.empty())
+                discount.coupon_id = read_reusable_reference(discount_value, "coupon");
+            if (discount.promotion_code_id.empty())
+                discount.promotion_code_id =
+                    read_reusable_reference(discount_value, "promotion_code");
+            const auto& source = discount_value["source"];
+            if (discount.coupon_id.empty())
+                discount.coupon_id = read_reusable_reference(source, "coupon");
+            if (discount.promotion_code_id.empty())
+                discount.promotion_code_id = read_reusable_reference(source, "promotion_code");
+        } else if (discount_value.isString()) {
+            discount.discount_id = reference_id(discount_value);
+        }
+        if (discount.discount_id.empty() && discount.coupon_id.empty() &&
+            discount.promotion_code_id.empty())
+            discount.discount_id = reference_id(entry);
+        if (discount.discount_id.empty() && discount.coupon_id.empty() &&
+            discount.promotion_code_id.empty())
+            throw ConfigurationException("Stripe returned a schedule discount without an ID");
+        discounts.push_back(std::move(discount));
+    }
+    return discounts;
+}
+
 /** Read current or pending subscription items without inventing a quantity. */
 std::vector<SubscriptionItem> subscription_items(const Json::Value& data) {
     if (!data.isArray())
@@ -989,6 +1214,14 @@ StripeResponseParser::parse_subscription_schedule(const HttpResponse& response) 
     schedule.subscription_id = reference_id(value["subscription"]);
     schedule.released_subscription_id = reference_id(value["released_subscription"]);
     schedule.metadata = metadata_value(value);
+    const auto& default_settings = value["default_settings"];
+    if (!default_settings.isNull()) {
+        if (!default_settings.isObject())
+            throw ConfigurationException("Stripe returned malformed schedule defaults");
+        const auto& automatic_tax = default_settings["automatic_tax"];
+        if (!automatic_tax.isNull())
+            schedule.default_automatic_tax = automatic_tax_value(automatic_tax);
+    }
     const auto dates = [](const Json::Value& entry) {
         if (!entry.isObject() || !entry["start_date"].isInt64() || !entry["end_date"].isInt64() ||
             entry["start_date"].asInt64() <= 0 ||
@@ -1008,6 +1241,9 @@ StripeResponseParser::parse_subscription_schedule(const HttpResponse& response) 
         phase.end_date_unix = period.end_date_unix;
         phase.proration_behavior = entry["proration_behavior"].asString();
         phase.metadata = metadata_value(entry);
+        const auto& automatic_tax = entry["automatic_tax"];
+        if (!automatic_tax.isNull()) phase.automatic_tax = automatic_tax_value(automatic_tax);
+        phase.discounts = schedule_discounts(entry["discounts"]);
         for (const auto& item : entry["items"]) {
             if (!item.isObject())
                 throw ConfigurationException("Stripe returned a malformed schedule item");
@@ -1019,6 +1255,7 @@ StripeResponseParser::parse_subscription_schedule(const HttpResponse& response) 
                 throw ConfigurationException(
                     "Stripe returned a malformed schedule price or quantity");
             if (!item["quantity"].isNull()) parsed.quantity = item["quantity"].asInt64();
+            parsed.discounts = schedule_discounts(item["discounts"]);
             phase.items.push_back(std::move(parsed));
         }
         schedule.phases.push_back(std::move(phase));
@@ -1216,6 +1453,19 @@ StripeResponseParser::parse_checkout_session_list(const HttpResponse& response) 
     return result;
 }
 
+PurchasedLineItemList
+StripeResponseParser::parse_line_item_list(const HttpResponse& response) const {
+    const auto object = json_value::parse(response.body);
+    if (!object.isObject() || object["object"] != "list" || !object["has_more"].isBool())
+        throw ConfigurationException("Stripe returned a malformed Checkout line-item list");
+    PurchasedLineItemList result;
+    result.has_more = object["has_more"].asBool();
+    result.data = purchased_line_items(object, true, result.has_more);
+    if (result.has_more && result.data.empty())
+        throw ConfigurationException("Stripe Checkout line-item pagination did not advance");
+    return result;
+}
+
 Product JsonStripeResponseParser::parse_product(const HttpResponse& response) const {
     const auto object = json_value::parse(response.body);
     require_catalog_field(object.isObject() && object["object"] == "product" &&
@@ -1254,11 +1504,45 @@ PriceList JsonStripeResponseParser::parse_price_list(const HttpResponse& respons
 
 Customer JsonStripeResponseParser::parse_customer(const HttpResponse& response) const {
     const auto object = json_value::parse(response.body);
-    return Customer{ .id = json_value::string(object, "id"),
-                     .email = json_value::string(object, "email"),
-                     .name = json_value::string(object, "name"),
-                     .livemode = json_value::boolean(object, "livemode"),
-                     .metadata = metadata_value(object) };
+    Customer customer{ .id = json_value::string(object, "id"),
+                       .email = json_value::string(object, "email"),
+                       .name = json_value::string(object, "name"),
+                       .livemode = json_value::boolean(object, "livemode"),
+                       .metadata = metadata_value(object) };
+    const auto& address = object["address"];
+    if (!address.isNull()) {
+        if (!address.isObject())
+            throw ConfigurationException("Stripe returned a malformed customer address");
+        BillingAddress parsed;
+        const auto read = [&](const char* field) -> std::optional<std::string> {
+            if (address[field].isNull()) return std::nullopt;
+            if (!address[field].isString())
+                throw ConfigurationException("Stripe returned a malformed customer address");
+            return address[field].asString();
+        };
+        parsed.line1 = read("line1");
+        parsed.line2 = read("line2");
+        parsed.city = read("city");
+        parsed.state = read("state");
+        parsed.postal_code = read("postal_code");
+        parsed.country = read("country");
+        customer.address = std::move(parsed);
+    }
+    const auto& tax = object["tax"];
+    if (!tax.isNull()) {
+        if (!tax.isObject())
+            throw ConfigurationException("Stripe returned malformed customer tax details");
+        const auto& location = tax["location"];
+        if (!location.isNull()) {
+            if (!location.isObject() ||
+                (!location["status"].isNull() && !location["status"].isString()) ||
+                (!location["source"].isNull() && !location["source"].isString()))
+                throw ConfigurationException("Stripe returned a malformed customer tax location");
+            customer.tax_location_status = json_value::string(location, "status");
+            customer.tax_location_source = json_value::string(location, "source");
+        }
+    }
+    return customer;
 }
 
 CheckoutSession
@@ -1278,18 +1562,39 @@ JsonStripeResponseParser::parse_checkout_session(const HttpResponse& response) c
         return {};
     };
 
-    return CheckoutSession{ .id = json_value::string(object, "id"),
-                            .customer_id = string_or_object_id(object, "customer"),
-                            .subscription_id = string_or_object_id(object, "subscription"),
-                            .payment_intent_id = string_or_object_id(object, "payment_intent"),
-                            .status = json_value::string(object, "status"),
-                            .mode = json_value::string(object, "mode"),
-                            .url = json_value::string(object, "url"),
-                            .currency = json_value::string(object, "currency"),
-                            .amount_total = json_value::integer(object, "amount_total"),
-                            .livemode = json_value::boolean(object, "livemode"),
-                            .metadata = metadata_value(object),
-                            .expires_at_unix = json_value::integer(object, "expires_at") };
+    CheckoutSession session{ .id = json_value::string(object, "id"),
+                             .customer_id = string_or_object_id(object, "customer"),
+                             .subscription_id = string_or_object_id(object, "subscription"),
+                             .payment_intent_id = string_or_object_id(object, "payment_intent"),
+                             .status = json_value::string(object, "status"),
+                             .mode = json_value::string(object, "mode"),
+                             .url = json_value::string(object, "url"),
+                             .currency = json_value::string(object, "currency"),
+                             .amount_total = json_value::integer(object, "amount_total"),
+                             .livemode = json_value::boolean(object, "livemode"),
+                             .metadata = metadata_value(object),
+                             .expires_at_unix = json_value::integer(object, "expires_at") };
+    if (object["amount_subtotal"].isInt64())
+        session.amount_subtotal = object["amount_subtotal"].asInt64();
+    else if (!object["amount_subtotal"].isNull())
+        throw ConfigurationException("Stripe returned a malformed Checkout subtotal");
+    session.payment_status = json_value::string(object, "payment_status");
+    const auto& totals = object["total_details"];
+    if (!totals.isNull()) {
+        if (!totals.isObject() ||
+            (!totals["amount_discount"].isNull() && !totals["amount_discount"].isInt64()) ||
+            (!totals["amount_tax"].isNull() && !totals["amount_tax"].isInt64()))
+            throw ConfigurationException("Stripe returned malformed Checkout total details");
+        if (totals["amount_discount"].isInt64())
+            session.amount_discount = totals["amount_discount"].asInt64();
+        if (totals["amount_tax"].isInt64()) session.amount_tax = totals["amount_tax"].asInt64();
+    }
+    if (!object["automatic_tax"].isNull())
+        session.automatic_tax = automatic_tax_value(object["automatic_tax"]);
+    if (!object["line_items"].isNull())
+        session.line_items =
+            purchased_line_items(object["line_items"], false, session.line_items_has_more);
+    return session;
 }
 
 Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& response) const {
@@ -1319,9 +1624,9 @@ Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& re
     subscription.default_tax_rate_ids = reference_ids(object["default_tax_rates"]);
     const auto& automatic_tax = object["automatic_tax"];
     if (!automatic_tax.isNull()) {
-        if (!automatic_tax.isObject() || !automatic_tax["enabled"].isBool())
-            throw ConfigurationException("Stripe returned malformed automatic tax settings");
-        subscription.automatic_tax_enabled = automatic_tax["enabled"].asBool();
+        const auto tax = automatic_tax_value(automatic_tax);
+        subscription.automatic_tax_enabled = tax.enabled;
+        subscription.automatic_tax_disabled_reason = tax.disabled_reason;
     }
     const auto& pause = object["pause_collection"];
     if (!pause.isNull()) {
@@ -1435,6 +1740,48 @@ Invoice JsonStripeResponseParser::parse_invoice(const HttpResponse& response) co
             invoice.subscription_id = reference_id(parent["subscription_details"]["subscription"]);
     }
     invoice.paid = object["paid"].isBool() ? object["paid"].asBool() : invoice.status == "paid";
+    const auto parse_optional_amount = [&](const char* name) -> std::optional<std::int64_t> {
+        const auto& amount = object[name];
+        if (amount.isNull()) return std::nullopt;
+        if (!amount.isInt64())
+            throw ConfigurationException(std::string("Stripe returned malformed invoice ") + name);
+        return amount.asInt64();
+    };
+    invoice.subtotal = parse_optional_amount("subtotal");
+    invoice.total = parse_optional_amount("total");
+    const auto sum_amounts = [](const Json::Value& values,
+                                const char* field) -> std::optional<std::int64_t> {
+        if (values.isNull()) return std::nullopt;
+        if (!values.isArray())
+            throw ConfigurationException("Stripe returned malformed invoice amount details");
+        std::int64_t sum = 0;
+        for (const auto& entry : values) {
+            if (!entry.isObject() || !entry[field].isInt64())
+                throw ConfigurationException("Stripe returned malformed invoice amount details");
+            sum += entry[field].asInt64();
+        }
+        return sum;
+    };
+    invoice.amount_discount = sum_amounts(object["total_discount_amounts"], "amount");
+    invoice.amount_tax = sum_amounts(object["total_taxes"], "amount");
+    if (!invoice.amount_tax) {
+        const auto legacy_tax = object["total_tax"].isNull() ? object["tax"] : object["total_tax"];
+        if (!legacy_tax.isNull() && !legacy_tax.isInt64())
+            throw ConfigurationException("Stripe returned malformed invoice tax total");
+        if (legacy_tax.isInt64()) invoice.amount_tax = legacy_tax.asInt64();
+    }
+    if (!object["automatic_tax"].isNull())
+        invoice.automatic_tax = automatic_tax_value(object["automatic_tax"]);
+    const auto& finalization_error = object["last_finalization_error"];
+    if (!finalization_error.isNull()) {
+        if (!finalization_error.isObject() ||
+            (!finalization_error["code"].isNull() && !finalization_error["code"].isString()))
+            throw ConfigurationException("Stripe returned a malformed invoice finalization error");
+        invoice.last_finalization_error_code = json_value::string(finalization_error, "code");
+    }
+    if (!object["lines"].isNull())
+        invoice.line_items =
+            purchased_line_items(object["lines"], false, invoice.line_items_has_more);
     if (!object["auto_advance"].isNull()) {
         if (!object["auto_advance"].isBool())
             throw ConfigurationException("Stripe returned malformed invoice auto_advance");
@@ -1574,6 +1921,45 @@ void StripeApiClient::CustomerOperations::retrieve(std::string customer_id,
         std::move(completion));
 }
 
+Task<Customer> StripeApiClient::CustomerOperations::update_async(
+    std::string customer_id, const UpdateCustomerRequest& request, const RequestOptions& options) {
+    return send_and_parse_async<Customer>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post,
+                     catalog_path("customers", customer_id),
+                     customer_update_body(request),
+                     options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_customer(response);
+        });
+}
+
+void StripeApiClient::CustomerOperations::update(std::string customer_id,
+                                                 const UpdateCustomerRequest& request,
+                                                 const RequestOptions& options,
+                                                 RetrieveCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            catalog_path("customers", customer_id),
+                            customer_update_body(request),
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Customer>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_customer(response);
+        },
+        std::move(completion));
+}
+
 StripeApiClient::CheckoutSessionOperations::CheckoutSessionOperations(StripeApiClient& owner)
     : owner(owner) {}
 
@@ -1641,6 +2027,43 @@ void StripeApiClient::CheckoutSessionOperations::list(const ListCheckoutSessions
         std::move(request),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_checkout_session_list(response);
+        },
+        std::move(completion));
+}
+
+Task<PurchasedLineItemList> StripeApiClient::CheckoutSessionOperations::list_line_items_async(
+    std::string session_id,
+    const ListPurchasedLineItemsRequest& request,
+    const RequestOptions& options) {
+    return send_and_parse_async<PurchasedLineItemList>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, checkout_line_items_path(session_id, request), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_line_item_list(response);
+        });
+}
+
+void StripeApiClient::CheckoutSessionOperations::list_line_items(
+    std::string session_id,
+    const ListPurchasedLineItemsRequest& request,
+    const RequestOptions& options,
+    LineItemsCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(
+            HttpMethod::Get, checkout_line_items_path(session_id, request), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<PurchasedLineItemList>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_line_item_list(response);
         },
         std::move(completion));
 }
@@ -2607,6 +3030,74 @@ void StripeApiClient::InvoiceOperations::list(const ListInvoicesRequest& request
             return parser.parse_invoice_list(response);
         },
         std::move(completion));
+}
+
+Task<PurchasedLineItemList> StripeApiClient::InvoiceOperations::list_line_items_async(
+    std::string invoice_id,
+    const ListPurchasedLineItemsRequest& request,
+    const RequestOptions& options) {
+    return send_and_parse_async<PurchasedLineItemList>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, invoice_line_items_path(invoice_id, request), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_line_item_list(response);
+        });
+}
+
+void StripeApiClient::InvoiceOperations::list_line_items(
+    std::string invoice_id,
+    const ListPurchasedLineItemsRequest& request,
+    const RequestOptions& options,
+    LineItemsCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(
+            HttpMethod::Get, invoice_line_items_path(invoice_id, request), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<PurchasedLineItemList>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_line_item_list(response);
+        },
+        std::move(completion));
+}
+
+Task<Invoice> StripeApiClient::InvoiceOperations::update_async(std::string id,
+                                                               const UpdateInvoiceRequest& request,
+                                                               const RequestOptions& options) {
+    return send_and_parse_async<Invoice>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(
+            HttpMethod::Post, catalog_path("invoices", id), invoice_update_body(request), options),
+        parse_invoice_response);
+}
+
+void StripeApiClient::InvoiceOperations::update(std::string id,
+                                                const UpdateInvoiceRequest& request,
+                                                const RequestOptions& options,
+                                                Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(
+            HttpMethod::Post, catalog_path("invoices", id), invoice_update_body(request), options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Invoice>(owner.http_client,
+                            owner.response_parser,
+                            owner.callback_lifetime,
+                            std::move(http),
+                            parse_invoice_response,
+                            std::move(completion));
 }
 
 Task<Invoice> StripeApiClient::InvoiceOperations::finalize_async(std::string id,

@@ -158,6 +158,10 @@ Useful fields:
 |-------|---------|
 | `status` | `draft`, `open`, `paid`, `uncollectible`, or `void`. |
 | `amount_due`, `amount_paid`, `amount_remaining` | Amounts in the currency's smallest unit, such as cents. |
+| `subtotal`, `amount_discount`, `amount_tax`, `total` | Pre-tax amount, discounts, tax, and final total when the API version returns them. |
+| `automatic_tax` | Whether Stripe calculated tax and any status or disabled reason it returned. |
+| `last_finalization_error_code` | Stripe's code when draft finalization failed. |
+| `line_items` | Price IDs, quantities, and amounts returned with the invoice. |
 | `hosted_invoice_url` | A Stripe page where the customer can pay the invoice, including completing a 3D Secure check. |
 | `invoice_pdf` | A link to download the invoice as a PDF. |
 | `billing_reason` | Why it was created, such as `subscription_cycle` or `subscription_update`. |
@@ -168,6 +172,34 @@ Useful fields:
 `hosted_invoice_url` is the simplest way to recover a payment that needs the
 customer's action, such as an extra bank authentication. Send the customer
 there, then wait for the `invoice.paid` webhook.
+
+@section invoice_tax_recovery Correct a draft invoice before finalization
+
+StripeKit reports automatic-tax status and invoice-finalization error codes so
+an application can distinguish an address problem from an ordinary payment
+failure. Stripe may return tax fields only for API versions that support them;
+an absent status is not a successful tax calculation.
+
+After correcting the customer's address, retrieve the customer or update its
+`BillingAddress` with `validate_tax_location = true`. This asks Stripe to
+validate the new location and returns its tax-location status and source when
+available. For a draft invoice, restore automatic tax and then retry
+finalization:
+
+@code{.cpp}
+stripekit::UpdateInvoiceRequest correction;
+correction.automatic_tax_enabled = true;
+co_await stripe->invoices().update_async(invoice_id, correction);
+const auto finalized = co_await stripe->invoices().finalize_async(invoice_id);
+@endcode
+
+Verify the returned invoice's automatic-tax state and amounts. Stripe may
+reject an invalid location during finalization; do not treat a zero-tax total
+or a paid invoice as proof that required tax was calculated.
+
+Invoice responses may include only the first page of line items. To read all
+prices and quantities, call `invoices().list_line_items_async(invoice_id)` and
+continue with the last item's `id` while `has_more` is true.
 
 @section subscription_schedules Change a price at a future renewal
 
@@ -219,9 +251,9 @@ const auto changed = co_await stripe->subscription_schedules().update_async(
 Things to know:
 
 - Updates replace the current and future phases, rather than changing just one
-  field. Include every price and quantity you want to keep. This API supports
-  phase prices, quantities, dates, metadata, and payment adjustments; it cannot
-  preserve other phase settings such as discounts or tax rates in an update.
+  field. Include every price, quantity, automatic-tax setting, and discount you
+  want to keep. Reuse the returned coupon or promotion-code IDs so Stripe
+  retains the discount's configured duration.
 - Specify either `end_date` or `iterations` for each phase, not both.
   `iterations=1` means one billing period at the phase's price. It requires a
   Stripe API version supporting that parameter, such as the version in the

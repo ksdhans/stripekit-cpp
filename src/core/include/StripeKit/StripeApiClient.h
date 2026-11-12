@@ -179,6 +179,17 @@ public:
     virtual CheckoutSessionList parse_checkout_session_list(const HttpResponse& response) const;
 
     /**
+     * Decode one page of Checkout prices and quantities using Stripe's JSON format.
+     *
+     * @param response Successful line-item list response.
+     *
+     * @return Purchased items and whether another page exists.
+     *
+     * @throws ConfigurationException If a line item is malformed.
+     */
+    virtual PurchasedLineItemList parse_line_item_list(const HttpResponse& response) const;
+
+    /**
      * Reads a subscription out of a successful response.
      *
      * @param response The response body and status from Stripe.
@@ -616,6 +627,13 @@ private:
         void retrieve(std::string customer_id,
                       const RequestOptions& options,
                       RetrieveCompletion completion) override;
+        Task<Customer> update_async(std::string customer_id,
+                                    const UpdateCustomerRequest& request,
+                                    const RequestOptions& options = {}) override;
+        void update(std::string customer_id,
+                    const UpdateCustomerRequest& request,
+                    const RequestOptions& options,
+                    RetrieveCompletion completion) override;
 
     private:
         StripeApiClient& owner;
@@ -638,6 +656,13 @@ private:
         /** Report a page or failure exactly once. */
         void
         list(const ListCheckoutSessionsRequest&, const RequestOptions&, ListCompletion) override;
+        Task<PurchasedLineItemList> list_line_items_async(std::string,
+                                                          const ListPurchasedLineItemsRequest&,
+                                                          const RequestOptions&) override;
+        void list_line_items(std::string,
+                             const ListPurchasedLineItemsRequest&,
+                             const RequestOptions&,
+                             LineItemsCompletion) override;
 
         /** Retrieve the current state of a checkout session. */
         Task<CheckoutSession> retrieve_async(std::string session_id,
@@ -729,10 +754,27 @@ private:
         Task<InvoiceList> list_async(const ListInvoicesRequest&, const RequestOptions&) override;
         /** Deliver a page or failure once. */
         void list(const ListInvoicesRequest&, const RequestOptions&, ListCompletion) override;
+        /** Read one page of purchased invoice lines. */
+        Task<PurchasedLineItemList> list_line_items_async(std::string,
+                                                          const ListPurchasedLineItemsRequest&,
+                                                          const RequestOptions&) override;
+        /** Deliver a purchased invoice line page or failure once. */
+        void list_line_items(std::string,
+                             const ListPurchasedLineItemsRequest&,
+                             const RequestOptions&,
+                             LineItemsCompletion) override;
         /** Finalize a draft without automatic collection. */
         Task<Invoice> finalize_async(std::string, const RequestOptions&) override;
         /** Deliver the finalized invoice or failure once. */
         void finalize(std::string, const RequestOptions&, Completion) override;
+        /** Update automatic tax or collection settings on a draft invoice. */
+        Task<Invoice>
+        update_async(std::string, const UpdateInvoiceRequest&, const RequestOptions&) override;
+        /** Deliver the updated invoice or failure once. */
+        void update(std::string,
+                    const UpdateInvoiceRequest&,
+                    const RequestOptions&,
+                    Completion) override;
         /** Void a finalized unpaid invoice. */
         Task<Invoice> void_async(std::string, const RequestOptions&) override;
         /** Deliver the voided invoice or failure once. */

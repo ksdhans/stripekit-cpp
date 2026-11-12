@@ -5,6 +5,10 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Add Stripe Tax support for Checkout, customers, invoices, and subscription
+  schedules, including tax settings, address collection and updates, tax and
+  purchase details, invoice updates, and paginated line-item retrieval.
+
 ## 0.6.0 2026-11-11
 
 - Add subscription schedule creation, retrieval, and updates, plus subscription

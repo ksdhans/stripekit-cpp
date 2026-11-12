@@ -159,6 +159,32 @@ customer can close their browser before the redirect happens, and the URL
 itself is not secret. Use it only to show a "thank you" message. The real
 confirmation that payment succeeded is the webhook covered next.
 
+### Automatic tax and purchase details
+
+StripeKit can pass Stripe Tax options to hosted Checkout without requiring
+callers to change their behavior when they leave those options unset:
+
+@code{.cpp}
+request.automatic_tax_enabled = true;
+request.billing_address_collection = "auto";
+request.tax_id_collection_enabled = true; // Optional business tax-ID collection
+request.customer_update_address = true;   // Save a newly collected address for this Customer
+request.customer_update_name = true;
+@endcode
+
+Before enabling automatic tax, configure tax registrations and a default
+product tax code in the Stripe account, and use tax-exclusive Prices. Stripe
+uses the customer's submitted address and its account configuration to
+calculate tax; StripeKit does not estimate rates. For an existing Customer,
+Checkout address and name updates are saved only when requested. The returned
+`CheckoutSession` exposes its tax status, tax and discount amounts, subtotal,
+total, and payment status. To verify the purchased Price IDs and quantities,
+read every page from `sessions().list_line_items_async(session.id)`.
+
+Leave these request options unset to preserve the account's existing Checkout
+defaults. A Checkout redirect is still not proof of payment; use the verified
+payment state and webhooks before granting access.
+
 The `CheckoutSessionCli` example in the source tree is this same code as a
 complete, runnable program; `DrogonCheckoutDemo` shows it wired into an
 actual web page.

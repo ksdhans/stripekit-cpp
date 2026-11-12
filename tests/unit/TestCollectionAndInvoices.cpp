@@ -131,6 +131,95 @@ TEST_F(CollectionAndInvoicesTest, InvoiceRequestsEncodeFiltersAndReturnTypedConf
     EXPECT_TRUE(client.invoices().list_async().result().data.empty());
 }
 
+TEST_F(CollectionAndInvoicesTest, DraftInvoiceTaxSettingsCanBeUpdatedBeforeFinalization) {
+    http.set_response(
+        { .status_code = 200,
+          .body =
+              R"({"object":"invoice","id":"in_tax","status":"draft","automatic_tax":{"enabled":true,"status":"requires_location_inputs"}})" });
+    const auto invoice = client.invoices()
+                             .update_async("in_tax",
+                                           { .automatic_tax_enabled = true, .auto_advance = false },
+                                           { .idempotency_key = "tax-recovery" })
+                             .result();
+    EXPECT_EQ(invoice.id, "in_tax");
+    ASSERT_TRUE(invoice.automatic_tax.has_value());
+    EXPECT_TRUE(invoice.automatic_tax->enabled);
+    EXPECT_EQ(invoice.automatic_tax->status, "requires_location_inputs");
+    const auto sent = http.get_recorded_requests().back();
+    EXPECT_EQ(sent.path, "/v1/invoices/in_tax");
+    EXPECT_EQ(sent.method, HttpMethod::Post);
+    EXPECT_EQ(sent.body, "automatic_tax%5Benabled%5D=true&auto_advance=false");
+    EXPECT_EQ(sent.headers.at("Idempotency-Key"), "tax-recovery");
+    int calls = 0;
+    client.invoices().update(
+        "in_tax", { .automatic_tax_enabled = false }, {}, [&](CallbackResult<Invoice> result) {
+            ++calls;
+            EXPECT_TRUE(std::holds_alternative<Invoice>(result));
+        });
+    EXPECT_EQ(calls, 1);
+}
+
+TEST_F(CollectionAndInvoicesTest, InvoiceLineItemPagesExposePriceQuantityAndPaginationIds) {
+    http.set_response(
+        { .status_code = 200,
+          .body =
+              R"({"object":"list","has_more":true,"data":[{"id":"il_tax","pricing":{"price_details":{"price":"price_vat"}},"quantity":3,"amount":7500}]})" });
+    const auto page =
+        client.invoices()
+            .list_line_items_async("in/tax",
+                                   { .limit = 1, .starting_after = "il_previous" },
+                                   { .headers = { { "Stripe-Version", "2025-03-31.basil" } } })
+            .result();
+    ASSERT_EQ(page.data.size(), 1U);
+    EXPECT_TRUE(page.has_more);
+    EXPECT_EQ(page.data[0].id, "il_tax");
+    EXPECT_EQ(page.data[0].price_id, "price_vat");
+    EXPECT_EQ(page.data[0].quantity.value(), 3);
+    EXPECT_EQ(page.data[0].amount.value(), 7500);
+    const auto sent = http.get_recorded_requests().back();
+    EXPECT_EQ(sent.path, "/v1/invoices/in%2Ftax/lines?limit=1&starting_after=il_previous");
+    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2025-03-31.basil");
+}
+
+TEST_F(CollectionAndInvoicesTest, InvoiceParserExposesTaxTotalsLocationErrorsAndPurchasedPrices) {
+    JsonStripeResponseParser parser;
+    const auto invoice = parser.parse_invoice({ .body = R"({
+            "object":"invoice","id":"in_tax","status":"draft","currency":"usd",
+            "subtotal":5000,"total":5499,"amount_due":5499,
+            "total_discount_amounts":[{"amount":500}],
+            "total_taxes":[{"amount":999}],
+            "automatic_tax":{"enabled":false,"status":"requires_location_inputs","disabled_reason":"requires_location_inputs"},
+            "last_finalization_error":{"code":"customer_tax_location_invalid"},
+            "lines":{"has_more":false,"data":[{"id":"il_service","pricing":{"price_details":{"price":"price_service"}},"quantity":2,"amount":5000}]}
+        })" });
+    EXPECT_EQ(invoice.subtotal.value(), 5000);
+    EXPECT_EQ(invoice.amount_discount.value(), 500);
+    EXPECT_EQ(invoice.amount_tax.value(), 999);
+    EXPECT_EQ(invoice.total.value(), 5499);
+    ASSERT_TRUE(invoice.automatic_tax.has_value());
+    EXPECT_FALSE(invoice.automatic_tax->enabled);
+    EXPECT_EQ(invoice.automatic_tax->disabled_reason, "requires_location_inputs");
+    EXPECT_EQ(invoice.last_finalization_error_code, "customer_tax_location_invalid");
+    ASSERT_EQ(invoice.line_items.size(), 1U);
+    EXPECT_EQ(invoice.line_items[0].price_id, "price_service");
+    EXPECT_EQ(invoice.line_items[0].quantity.value(), 2);
+}
+
+TEST_F(CollectionAndInvoicesTest, InvoiceParserSupportsLegacyTaxAndRejectsMalformedTaxTotals) {
+    JsonStripeResponseParser parser;
+    const auto invoice =
+        parser.parse_invoice({ .body = R"({"id":"in_legacy_tax","tax":425,"status":"draft"})" });
+    ASSERT_TRUE(invoice.amount_tax.has_value());
+    EXPECT_EQ(invoice.amount_tax.value(), 425);
+    EXPECT_THROW(
+        parser.parse_invoice({ .body = R"({"id":"in_bad_tax","tax":"425","status":"draft"})" }),
+        ConfigurationException);
+    EXPECT_THROW(
+        parser.parse_invoice(
+            { .body = R"({"id":"in_bad_tax","total_taxes":[{"amount":"425"}],"status":"draft"})" }),
+        ConfigurationException);
+}
+
 TEST_F(CollectionAndInvoicesTest, ValidationErrorsNeverSendAndCallbacksReceiveFailures) {
     EXPECT_THROW(client.subscriptions().set_cancel_at_period_end_async("", true).result(),
                  ConfigurationException);
@@ -141,6 +230,9 @@ TEST_F(CollectionAndInvoicesTest, ValidationErrorsNeverSendAndCallbacksReceiveFa
     EXPECT_THROW(client.invoices().void_async("").result(), ConfigurationException);
     EXPECT_THROW(client.invoices().finalize_async("").result(), ConfigurationException);
     EXPECT_THROW(client.invoices().delete_async("").result(), ConfigurationException);
+    EXPECT_THROW(client.invoices().update_async("", { .automatic_tax_enabled = true }).result(),
+                 ConfigurationException);
+    EXPECT_THROW(client.invoices().update_async("in_test", {}).result(), ConfigurationException);
     for (const auto limit : { 0, 101 })
         EXPECT_THROW(client.invoices().list_async({ .limit = limit }).result(),
                      ConfigurationException);
