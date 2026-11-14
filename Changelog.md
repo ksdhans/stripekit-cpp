@@ -5,6 +5,10 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.7.1 2026-11-14
+
+- Added billing address collection and tax ID collection fields to StripeKit's CheckoutSession.
+
 ## 0.7.0 2026-11-12
 
 - Default API requests to `2026-10-28.endive`, with per-request version overrides.
