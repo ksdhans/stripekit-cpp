@@ -248,9 +248,13 @@ protected:
 TEST_F(SandboxTrialTest, CheckoutTrialSettingsRetrievalAndIdempotentRetry) {
     for (const bool existing_customer : { false, true }) {
         auto request = checkout_request();
+        request.billing_address_collection = existing_customer ? "required" : "auto";
+        request.tax_id_collection_enabled = true;
         if (existing_customer) {
             request.customer_id =
                 create_customer_with_card(*environment, "pm_card_visa", "trial_checkout");
+            request.customer_update_address = true;
+            request.customer_update_name = true;
         } else {
             request.customer_email = sandbox_email(*environment, "trial_checkout_new");
         }
@@ -271,6 +275,11 @@ TEST_F(SandboxTrialTest, CheckoutTrialSettingsRetrievalAndIdempotentRetry) {
                                .sessions()
                                .retrieve_async(session.id, options)
                                .result();
+        for (const auto* result : { &session, &retry, &saved }) {
+            EXPECT_EQ(result->billing_address_collection, request.billing_address_collection);
+            ASSERT_TRUE(result->tax_id_collection_enabled.has_value());
+            EXPECT_TRUE(result->tax_id_collection_enabled.value());
+        }
         EXPECT_EQ(saved.status, "open");
         EXPECT_EQ(saved.mode, "subscription");
         EXPECT_EQ(saved.expires_at_unix, request.expires_at.value());
@@ -278,6 +287,8 @@ TEST_F(SandboxTrialTest, CheckoutTrialSettingsRetrievalAndIdempotentRetry) {
         EXPECT_TRUE(saved.subscription_id.empty());
         EXPECT_EQ(saved.metadata.at("session_only"), environment->run_id());
         const auto raw = get_object("/v1/checkout/sessions/" + session.id);
+        EXPECT_EQ(raw["billing_address_collection"].asString(), request.billing_address_collection);
+        EXPECT_TRUE(raw["tax_id_collection"]["enabled"].asBool());
         EXPECT_EQ(raw["payment_method_collection"].asString(), "always");
         ASSERT_EQ(raw["payment_method_types"].size(), 1U);
         EXPECT_EQ(raw["payment_method_types"][0].asString(), "card");

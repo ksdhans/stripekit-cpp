@@ -260,7 +260,8 @@ void expect_tax_result(SandboxEnvironment& environment,
     EXPECT_EQ(line_items.data.front().quantity.value(), 1);
 }
 
-/** Verify a Checkout session accepts tax settings without completing hosted Checkout. */
+/** Verify tax and collection settings on created and retrieved sessions without completing
+ * Checkout. */
 void expect_checkout_tax_enabled(SandboxEnvironment& environment,
                                  TaxTestResources& resources,
                                  const std::string& customer,
@@ -280,10 +281,17 @@ void expect_checkout_tax_enabled(SandboxEnvironment& environment,
     const auto session =
         environment.stripe_client().checkout().sessions().create_async(request).result();
     resources.sessions.push_back(session.id);
-    ASSERT_TRUE(session.automatic_tax.has_value());
-    EXPECT_TRUE(session.automatic_tax->enabled);
-    EXPECT_EQ(session.mode, mode);
-    EXPECT_EQ(session.status, "open");
+    const auto saved =
+        environment.stripe_client().checkout().sessions().retrieve_async(session.id).result();
+    for (const auto* result : { &session, &saved }) {
+        ASSERT_TRUE(result->automatic_tax.has_value());
+        EXPECT_TRUE(result->automatic_tax->enabled);
+        EXPECT_EQ(result->mode, mode);
+        EXPECT_EQ(result->status, "open");
+        EXPECT_EQ(result->billing_address_collection, request.billing_address_collection);
+        ASSERT_TRUE(result->tax_id_collection_enabled.has_value());
+        EXPECT_TRUE(result->tax_id_collection_enabled.value());
+    }
 }
 
 /** Return the first matching currency's Price pair. */

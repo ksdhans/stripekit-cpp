@@ -36,7 +36,11 @@ unregistered customer locations, including a VAT ID case. It does not assert
 fixed tax rates or amounts. The tests create subscription and one-off invoice
 payments, then check that automatic tax and a time-limited discount remain
 correct after a schedule update and renewal. The Checkout test creates and
-expires a session; it does not complete the hosted payment.
+expires a session; it does not complete the hosted payment. Checkout tests verify
+returned billing-address and tax-ID collection settings for one-time and
+subscription sessions on creation and retrieval. Card-required trial tests also
+check these fields on idempotent retries, including both `auto` and `required`
+address collection and new and existing customers.
 
 Recovery tests verify that a missing customer location prevents manual invoice
 finalization, and that correcting the address with immediate tax-location

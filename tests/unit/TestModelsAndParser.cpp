@@ -81,6 +81,8 @@ TEST_F(ModelsAndParserTest, ParseCheckoutSessionSuccess) {
             "amount_subtotal": 5000,
             "amount_total": 4999,
             "payment_status": "paid",
+            "billing_address_collection": "auto",
+            "tax_id_collection": {"enabled": true},
             "automatic_tax": {
                 "enabled": true,
                 "status": "complete"
@@ -117,6 +119,9 @@ TEST_F(ModelsAndParserTest, ParseCheckoutSessionSuccess) {
     EXPECT_EQ(session.amount_discount.value(), 500);
     EXPECT_EQ(session.amount_tax.value(), 499);
     EXPECT_EQ(session.payment_status, "paid");
+    EXPECT_EQ(session.billing_address_collection, "auto");
+    ASSERT_TRUE(session.tax_id_collection_enabled.has_value());
+    EXPECT_TRUE(*session.tax_id_collection_enabled);
     ASSERT_TRUE(session.automatic_tax.has_value());
     EXPECT_TRUE(session.automatic_tax->enabled);
     EXPECT_EQ(session.automatic_tax->status, "complete");

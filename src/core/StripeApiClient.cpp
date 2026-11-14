@@ -1611,6 +1611,13 @@ JsonStripeResponseParser::parse_checkout_session(const HttpResponse& response) c
     else if (!object["amount_subtotal"].isNull())
         throw ConfigurationException("Stripe returned a malformed Checkout subtotal");
     session.payment_status = json_value::string(object, "payment_status");
+    session.billing_address_collection = json_value::string(object, "billing_address_collection");
+    const auto& tax_ids = object["tax_id_collection"];
+    if (!tax_ids.isNull()) {
+        if (!tax_ids.isObject() || !tax_ids["enabled"].isBool())
+            throw ConfigurationException("Stripe returned malformed Checkout tax-ID collection");
+        session.tax_id_collection_enabled = tax_ids["enabled"].asBool();
+    }
     const auto& totals = object["total_details"];
     if (!totals.isNull()) {
         if (!totals.isObject() ||

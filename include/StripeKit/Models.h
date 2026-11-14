@@ -238,6 +238,10 @@ struct CheckoutSession {
     std::unordered_map<std::string, std::string> metadata;
     /** Session expiry as Unix seconds; zero when absent. */
     std::int64_t expires_at_unix = 0;
+    /** Billing address collection mode, such as auto or required; empty when unavailable. */
+    std::string billing_address_collection;
+    /** Whether hosted Checkout offers business tax-ID collection; absent when unavailable. */
+    std::optional<bool> tax_id_collection_enabled;
 };
 
 /**
