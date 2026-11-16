@@ -5,6 +5,9 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Added a sandbox test for detecting an invalid tax location in renewal invoice
+  webhooks, holding the draft, and canceling without creating further invoices.
+
 ## 0.7.1 2026-11-14
 
 - Added billing address collection and tax ID collection fields to StripeKit's CheckoutSession.

@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -494,6 +495,142 @@ TEST_F(SandboxTaxTest, InvalidLocationBlocksFinalizationUntilCustomerAndDraftAre
     expect_tax_result(*environment, invoice_id, true);
     EXPECT_TRUE(
         client.invoices().retrieve_async(invoice_id).result().last_finalization_error_code.empty());
+}
+
+TEST_F(SandboxTaxTest, InvalidRenewalWebhookCanBeHeldAndCanceled) {
+    resources = std::make_unique<TaxTestResources>(*environment);
+    const auto prices = create_tax_prices(*environment, *resources, fixtures);
+    const auto frozen = std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+    const auto clock = create_sandbox_clock(*environment, frozen);
+    resources->clocks.push_back(clock);
+    const auto invalid_customer =
+        create_tax_customer(*environment, *resources, fixtures.new_zealand, "tax_invalid", clock);
+    const auto valid_customer =
+        create_tax_customer(*environment, *resources, fixtures.new_zealand, "tax_valid", clock);
+    const auto invalid_first = create_tax_subscription(
+        *environment, *resources, invalid_customer, prices_for(prices, "nzd").recurring);
+    const auto invalid_id = resources->subscriptions.back();
+    const auto valid_first = create_tax_subscription(
+        *environment, *resources, valid_customer, prices_for(prices, "nzd").recurring);
+    const auto valid_id = resources->subscriptions.back();
+    expect_tax_result(*environment, invalid_first, true);
+    expect_tax_result(*environment, valid_first, true);
+
+    auto& client = environment->stripe_client();
+    const auto invalid_subscription = client.subscriptions().retrieve_async(invalid_id).result();
+    const auto valid_subscription = client.subscriptions().retrieve_async(valid_id).result();
+    ASSERT_EQ(invalid_subscription.items.size(), 1U);
+    ASSERT_EQ(valid_subscription.items.size(), 1U);
+    const auto renewal = invalid_subscription.items.front().current_period_end_unix.value_or(
+        invalid_subscription.current_period_end_unix);
+    ASSERT_TRUE(renewal > frozen);
+    ASSERT_EQ(valid_subscription.items.front().current_period_end_unix.value_or(
+                  valid_subscription.current_period_end_unix),
+              renewal);
+
+    // Keep a valid control while forcing the other customer into a confirmed invalid state.
+    client.customers()
+        .update_async(valid_customer,
+                      { .validate_tax_location = TaxLocationValidation::Immediately })
+        .result();
+    client.customers()
+        .update_async(
+            invalid_customer,
+            { .address =
+                  BillingAddress{
+                      .line1 = "", .city = "", .state = "", .postal_code = "", .country = "" },
+              .validate_tax_location = TaxLocationValidation::Deferred })
+        .result();
+    expect_tax_location_error([&] {
+        client.customers()
+            .update_async(invalid_customer,
+                          { .validate_tax_location = TaxLocationValidation::Immediately })
+            .result();
+    });
+
+    advance_sandbox_clock(*environment, clock, renewal + 1);
+    const auto invalid_invoice =
+        client.subscriptions().retrieve_async(invalid_id).result().latest_invoice_id;
+    const auto valid_invoice =
+        client.subscriptions().retrieve_async(valid_id).result().latest_invoice_id;
+    ASSERT_FALSE(invalid_invoice.empty());
+    ASSERT_FALSE(valid_invoice.empty());
+    ASSERT_NE(invalid_invoice, invalid_first);
+    ASSERT_NE(valid_invoice, valid_first);
+    const auto invalid_event = environment->wait_for_event("invoice.created", invalid_invoice);
+    const auto valid_event = environment->wait_for_event("invoice.created", valid_invoice);
+    ASSERT_TRUE(invalid_event.has_value());
+    ASSERT_TRUE(valid_event.has_value());
+    const auto invalid_envelope = invalid_event->json();
+    const auto valid_envelope = valid_event->json();
+    const auto& invalid_object = invalid_envelope["data"]["object"];
+    const auto& valid_object = valid_envelope["data"]["object"];
+    ASSERT_EQ(invalid_object["id"].asString(), invalid_invoice);
+    ASSERT_EQ(valid_object["id"].asString(), valid_invoice);
+    ASSERT_EQ(invalid_object["status"].asString(), "draft");
+    ASSERT_EQ(valid_object["status"].asString(), "draft");
+    ASSERT_TRUE(invalid_object["automatic_tax"]["enabled"].isBool());
+    ASSERT_TRUE(valid_object["automatic_tax"]["enabled"].isBool());
+    ASSERT_TRUE(invalid_object["automatic_tax"]["enabled"].asBool());
+    ASSERT_TRUE(valid_object["automatic_tax"]["enabled"].asBool());
+    // The draft reports the location problem before Stripe disables automatic tax.
+    const auto& invalid_tax = invalid_object["automatic_tax"];
+    const auto& valid_tax = valid_object["automatic_tax"];
+    ASSERT_TRUE(invalid_tax["status"].isString());
+    ASSERT_TRUE(valid_tax["status"].isString());
+    EXPECT_EQ(invalid_tax["status"].asString(), "requires_location_inputs");
+    EXPECT_EQ(valid_tax["status"].asString(), "complete");
+    ASSERT_TRUE(invalid_tax.isMember("disabled_reason"));
+    ASSERT_TRUE(valid_tax.isMember("disabled_reason"));
+    EXPECT_TRUE(invalid_tax["disabled_reason"].isNull());
+    EXPECT_TRUE(valid_tax["disabled_reason"].isNull());
+    ASSERT_TRUE(invalid_envelope["api_version"].isString());
+    ASSERT_FALSE(invalid_envelope["api_version"].asString().empty());
+    EXPECT_EQ(invalid_envelope["api_version"].asString(), valid_envelope["api_version"].asString());
+
+    // Hold the invalid draft while the valid renewal is collected normally.
+    const auto held =
+        client.invoices().update_async(invalid_invoice, { .auto_advance = false }).result();
+    ASSERT_EQ(held.status, "draft");
+    ASSERT_TRUE(held.auto_advance.has_value());
+    ASSERT_FALSE(*held.auto_advance);
+    advance_sandbox_clock(*environment, clock, renewal + 7200);
+    expect_tax_result(*environment, valid_invoice, true);
+    const auto result = client.invoices().retrieve_async(invalid_invoice).result();
+    EXPECT_EQ(result.status, "draft");
+    EXPECT_FALSE(result.paid);
+    EXPECT_EQ(result.amount_paid, 0);
+    EXPECT_EQ(result.attempt_count, 0);
+    ASSERT_TRUE(result.auto_advance.has_value());
+    EXPECT_FALSE(*result.auto_advance);
+    const auto subscription = client.subscriptions().retrieve_async(invalid_id).result();
+    EXPECT_EQ(subscription.status, "active");
+    ASSERT_EQ(subscription.items.size(), 1U);
+    const auto next_renewal = subscription.items.front().current_period_end_unix.value_or(
+        subscription.current_period_end_unix);
+    ASSERT_TRUE(next_renewal > renewal);
+
+    // Cancel and confirm that no later invoices are created; the held draft remains.
+    const auto canceled =
+        environment->stripe_api().require_delete("/v1/subscriptions/" + invalid_id);
+    ASSERT_EQ(std::erase(resources->subscriptions, invalid_id), 1U);
+    ASSERT_EQ(canceled.body["status"].asString(), "canceled");
+    const auto before = client.invoices().list_async({ .subscription_id = invalid_id }).result();
+    ASSERT_FALSE(before.has_more);
+    std::set<std::string> invoice_ids;
+    for (const auto& invoice : before.data)
+        invoice_ids.insert(invoice.id);
+    EXPECT_TRUE(invoice_ids.contains(invalid_invoice));
+    advance_sandbox_clock(*environment, clock, next_renewal + 7200);
+    const auto after = client.invoices().list_async({ .subscription_id = invalid_id }).result();
+    ASSERT_FALSE(after.has_more);
+    std::set<std::string> later_invoice_ids;
+    for (const auto& invoice : after.data)
+        later_invoice_ids.insert(invoice.id);
+    EXPECT_EQ(later_invoice_ids, invoice_ids);
+    EXPECT_EQ(client.invoices().retrieve_async(invalid_invoice).result().status, "draft");
 }
 
 TEST_F(SandboxTaxTest, InvalidRenewalLocationDisablesTaxAndScheduleRecoveryRestoresIt) {
