@@ -13,6 +13,25 @@
 
 using namespace stripekit;
 
+TEST(TestFrameworkTest, SuiteSelectionIsExactAndSubstringFilteringStillWorks) {
+    stripekit::testing::TestRegistry registry;
+    int first = 0;
+    int second = 0;
+    registry.add_test("BillingTest", "First", [&] { ++first; });
+    registry.add_test("OtherBillingTest", "Second", [&] { ++second; });
+
+    EXPECT_TRUE(registry.has_matching_tests("BillingTest", true));
+    EXPECT_FALSE(registry.has_matching_tests("Billing", true));
+    EXPECT_TRUE(registry.has_matching_tests("Second"));
+    EXPECT_FALSE(registry.has_matching_tests("Missing"));
+    EXPECT_EQ(registry.run_all("BillingTest", true), 0);
+    EXPECT_EQ(first, 1);
+    EXPECT_EQ(second, 0);
+    EXPECT_EQ(registry.run_all("Second"), 0);
+    EXPECT_EQ(first, 1);
+    EXPECT_EQ(second, 1);
+}
+
 TEST(VersionAndErrorsTest, VersionFunctionsReturnNonEmpty) {
     EXPECT_FALSE(version().empty());
     EXPECT_GE(version_major(), 0);

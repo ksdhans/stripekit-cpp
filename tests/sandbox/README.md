@@ -172,8 +172,13 @@ expire registrations in Stripe or reset the sandbox when you need a clean slate.
 For StripeKit development, run its own suite from the StripeKit directory:
 
 ```bash
-ctest --test-dir build -R stripekit.sandbox -V
+ctest --test-dir build -L sandbox --no-tests=error -V
 ```
+
+CTest lists each sandbox fixture separately. To run just one, use for example
+`ctest --test-dir build -R '^stripekit\.sandbox\.SandboxTaxTest$' -V`.
+The groups run serially within one CTest invocation. Do not run separate
+invocations against the same sandbox at the same time.
 
 ## Running Locally
 
@@ -215,7 +220,7 @@ Then run the suite:
    set -a
    . ./.env.local
    set +a
-   ctest --test-dir build -R stripekit.sandbox -V
+   ctest --test-dir build -L sandbox --no-tests=error -V
 )
 ```
 
@@ -234,8 +239,8 @@ Or run the binary directly, optionally filtering by name:
    set -a
    . ./.env.local
    set +a
-   ./build/bin/stripekit_sandbox_tests --list
-   ./build/bin/stripekit_sandbox_tests SandboxWebhookDeliveryTest
+   ./build/tests/stripekit_sandbox_tests --list
+   ./build/tests/stripekit_sandbox_tests SandboxWebhookDeliveryTest
 )
 ```
 

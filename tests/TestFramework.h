@@ -58,13 +58,26 @@ public:
         }
     }
 
-    int run_all(const std::string& filter = "") {
+    /** Return whether a filter matches at least one registered test. */
+    bool has_matching_tests(const std::string& filter, bool match_suite = false) const {
+        for (const auto& test : tests) {
+            if (match_suite
+                    ? test.suite_name == filter
+                    : (test.suite_name + "." + test.test_name).find(filter) != std::string::npos)
+                return true;
+        }
+        return false;
+    }
+
+    /** Run matching tests, optionally matching the suite name exactly. */
+    int run_all(const std::string& filter = "", bool match_suite = false) {
         int passed = 0;
         int failed = 0;
 
         for (const auto& test : tests) {
             const std::string full_name = test.suite_name + "." + test.test_name;
-            if (!filter.empty() && full_name.find(filter) == std::string::npos) {
+            if (match_suite ? test.suite_name != filter
+                            : (!filter.empty() && full_name.find(filter) == std::string::npos)) {
                 continue;
             }
 

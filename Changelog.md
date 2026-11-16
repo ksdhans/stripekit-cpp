@@ -5,6 +5,7 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Split sandbox tests into separately runnable groups.
 - Add immediate and scheduled subscription pause/resume, with flexible billing
   support and preservation of existing schedule settings.
 - Now require Stripe API `2026-10-28.endive` or later throughout, including examples

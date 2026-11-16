@@ -21,8 +21,20 @@ int main(int argc, char* argv[]) {
     }
 
     std::string filter;
-    if (argc > 1) {
+    const bool match_suite = argc > 1 && std::string(argv[1]) == "--suite";
+    if (match_suite) {
+        if (argc != 3 || std::string(argv[2]).empty()) {
+            std::cerr << "A registered suite name is required after --suite." << std::endl;
+            return 1;
+        }
+        filter = argv[2];
+    } else if (argc > 1) {
         filter = argv[1];
+    }
+    if (!filter.empty() &&
+        !stripekit::testing::TestRegistry::instance().has_matching_tests(filter, match_suite)) {
+        std::cerr << "No sandbox tests match: " << filter << std::endl;
+        return 1;
     }
 
     auto& environment = stripekit::testing::SandboxEnvironment::get();
@@ -46,7 +58,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    const int result = stripekit::testing::TestRegistry::instance().run_all(filter);
+    const int result = stripekit::testing::TestRegistry::instance().run_all(filter, match_suite);
     environment.stop();
 
     return result;

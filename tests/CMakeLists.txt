@@ -180,15 +180,47 @@ if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
                 StripeKit::sandbox_support
         )
 
-        add_test(NAME stripekit.sandbox COMMAND stripekit_sandbox_tests)
-
-        # Sandbox tests share one Stripe sandbox and wait on live event delivery,
-        # so they must not compete with other tests for it.
-        set_tests_properties(stripekit.sandbox PROPERTIES
-            LABELS sandbox
-            ENVIRONMENT "STRIPEKIT_TEST_PROGRESS_LOG=${CMAKE_BINARY_DIR}/stripekit-sandbox-progress.log"
-            RUN_SERIAL TRUE
-            TIMEOUT 1800
+        file(GENERATE
+            OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/DiscoverSandboxTests-$<CONFIG>.cmake"
+            CONTENT "set(sandbox_executable [==[$<TARGET_FILE:stripekit_sandbox_tests>]==])
+set(sandbox_log_directory [==[${CMAKE_BINARY_DIR}]==])
+include([==[${CMAKE_CURRENT_SOURCE_DIR}/sandbox/DiscoverSandboxTests.cmake]==])
+"
+        )
+        get_property(sandbox_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+        file(CONFIGURE
+            OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/IncludeSandboxTests.cmake"
+            CONTENT [=[
+if(@sandbox_multi_config@)
+    string(TOLOWER "${CTEST_CONFIGURATION_TYPE}" requested_configuration)
+    foreach(configuration IN ITEMS @CMAKE_CONFIGURATION_TYPES@)
+        string(TOLOWER "${configuration}" lowercase_configuration)
+        if(lowercase_configuration STREQUAL requested_configuration)
+            set(sandbox_configuration "${configuration}")
+            break()
+        endif()
+    endforeach()
+    if(NOT DEFINED sandbox_configuration)
+        add_test(stripekit.sandbox.CONFIGURATION_REQUIRED "@CMAKE_COMMAND@" -E false)
+        set_tests_properties(stripekit.sandbox.CONFIGURATION_REQUIRED PROPERTIES LABELS sandbox)
+        return()
+    endif()
+else()
+    set(sandbox_configuration "@CMAKE_BUILD_TYPE@")
+endif()
+include("@CMAKE_CURRENT_BINARY_DIR@/DiscoverSandboxTests-${sandbox_configuration}.cmake")
+]=]
+            @ONLY
+        )
+        set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+            "${CMAKE_CURRENT_BINARY_DIR}/IncludeSandboxTests.cmake")
+        add_test(NAME stripekit.sandbox-discovery
+            COMMAND ${CMAKE_COMMAND}
+                "-DCTEST_EXECUTABLE=${CMAKE_CTEST_COMMAND}"
+                "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
+                "-DSANDBOX_EXECUTABLE=$<TARGET_FILE:stripekit_sandbox_tests>"
+                "-DTEST_CONFIGURATION=$<CONFIG>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/sandbox/TestSandboxDiscovery.cmake"
         )
     endif()
 endif()

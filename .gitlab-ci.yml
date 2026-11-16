@@ -82,7 +82,7 @@ test:sandbox:
     - tar -xzf /tmp/stripe.tar.gz -C /usr/local/bin stripe
     - cmake -S . -B build -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DSTRIPEKIT_BUILD_SANDBOX_TESTS=ON
     - cmake --build build --config ${CMAKE_BUILD_TYPE}
-    - ctest --test-dir build -R stripekit.sandbox --output-on-failure
+    - ctest --test-dir build -L sandbox --no-tests=error --output-on-failure
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     # Forks never receive the protected key, so pre-merge runs are limited to
