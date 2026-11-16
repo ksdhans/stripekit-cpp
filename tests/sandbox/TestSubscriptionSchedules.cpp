@@ -13,11 +13,12 @@ using namespace stripekit::testing;
 
 namespace {
 /** Wait for a callback and report its original failure to the test runner. */
-SubscriptionSchedule completed(std::future<CallbackResult<SubscriptionSchedule>>& result) {
+template <typename T>
+T completed(std::future<CallbackResult<T>>& result) {
     auto value = result.get();
     if (std::holds_alternative<std::exception_ptr>(value))
         std::rethrow_exception(std::get<std::exception_ptr>(value));
-    return std::get<SubscriptionSchedule>(std::move(value));
+    return std::get<T>(std::move(value));
 }
 } // namespace
 
@@ -54,6 +55,7 @@ protected:
         subscription = environment->stripe_api()
                            .require_post("/v1/subscriptions",
                                          { { "customer", customer },
+                                           { "billing_mode[type]", "classic" },
                                            { "items[0][price]", prices[0] },
                                            { "items[0][quantity]", "2" },
                                            { "items[1][price]", prices[2] },
@@ -148,12 +150,269 @@ protected:
         return saved;
     }
 
+    /** Upgrade this test's subscription, checking the saved mode and safe retry. */
+    void migrate_to_flexible() {
+        auto& api = environment->stripe_client().subscriptions();
+        const RequestOptions migration_options{ .idempotency_key = subscription + "_flexible" };
+        const auto migrated = api.migrate_async(subscription, {}, migration_options).result();
+        ASSERT_TRUE(migrated.billing_mode.has_value());
+        EXPECT_EQ(migrated.billing_mode->type, "flexible");
+        EXPECT_EQ(migrated.collection_method, "charge_automatically");
+        EXPECT_EQ(
+            api.migrate_async(subscription, {}, migration_options).result().billing_mode->type,
+            "flexible");
+        EXPECT_EQ(api.retrieve_async(subscription).result().billing_mode->type, "flexible");
+    }
+
     SandboxEnvironment* environment = nullptr;
     std::string clock, customer, product, subscription, paid_invoice, coupon, tax_rate;
     std::vector<std::string> prices;
     std::int64_t frozen = 0, renewal = 0;
     RequestOptions options;
 };
+
+TEST_F(SandboxSubscriptionSchedulesTest,
+       TruePauseRequiresFlexibleBillingAndStopsRenewalsUntilResumed) {
+    auto& client = environment->stripe_client();
+    auto& api = client.subscriptions();
+    EXPECT_THROW(api.pause_async(subscription).result(), StripeApiException);
+    EXPECT_EQ(api.retrieve_async(subscription).result().status, "active");
+    migrate_to_flexible();
+    const auto pause_at = frozen + 86400;
+    advance_sandbox_clock(*environment, clock, pause_at);
+    const PauseSubscriptionRequest request{ .bill_for = { .unused_time_from = { "now" },
+                                                          .outstanding_usage_through = { "none" } },
+                                            .invoicing_behavior = "pending_invoice_item" };
+    const RequestOptions pause_options{ .idempotency_key = subscription + "_pause" };
+    const auto paused = api.pause_async(subscription, request, pause_options).result();
+    EXPECT_EQ(paused.status, "paused");
+    EXPECT_FALSE(paused.pause_collection.has_value());
+    ASSERT_TRUE(paused.status_details.has_value());
+    ASSERT_TRUE(paused.status_details->paused.has_value());
+    EXPECT_EQ(paused.status_details->paused->subscription.type, "pause_requested");
+    EXPECT_EQ(paused.status_details->paused->transitioned_at_unix, pause_at);
+    for (const auto& item : paused.items)
+        EXPECT_EQ(item.current_period_end_unix.value(), pause_at);
+    EXPECT_EQ(api.pause_async(subscription, request, pause_options).result().status, "paused");
+    const auto pause_event =
+        environment->wait_for_event("customer.subscription.paused", subscription);
+    ASSERT_TRUE(pause_event.has_value());
+    EXPECT_EQ(json_path(pause_event->json(), "data.object.status").asString(), "paused");
+    advance_sandbox_clock(*environment, clock, renewal + 3600);
+    EXPECT_EQ(api.retrieve_async(subscription).result().status, "paused");
+    const auto invoices =
+        client.invoices().list_async({ .subscription_id = subscription }).result();
+    ASSERT_EQ(invoices.data.size(), 1U);
+    EXPECT_EQ(invoices.data.front().id, paid_invoice);
+    EXPECT_EQ(invoices.data.front().amount_paid, 3900);
+    std::promise<CallbackResult<Subscription>> completion;
+    auto result = completion.get_future();
+    api.resume(subscription,
+               { .billing_cycle_anchor = ResumeSubscriptionBillingCycleAnchor{ "now" },
+                 .payment_behavior = "resume_on_payment_success",
+                 .proration_behavior = ProrationBehavior::CreateProrations },
+               { .idempotency_key = subscription + "_resume" },
+               [&](CallbackResult<Subscription> value) { completion.set_value(std::move(value)); });
+    const auto resumed = completed(result);
+    EXPECT_EQ(resumed.status, "active");
+    EXPECT_FALSE(resumed.pending_update.has_value());
+    EXPECT_NE(resumed.latest_invoice_id, paid_invoice);
+    EXPECT_EQ(api.retrieve_async(subscription).result().status, "active");
+    const auto invoice = client.invoices().retrieve_async(resumed.latest_invoice_id).result();
+    EXPECT_TRUE(invoice.paid);
+    EXPECT_TRUE(invoice.amount_paid > 0);
+    const auto resume_event =
+        environment->wait_for_event("customer.subscription.resumed", subscription);
+    ASSERT_TRUE(resume_event.has_value());
+    EXPECT_EQ(json_path(resume_event->json(), "data.object.status").asString(), "active");
+}
+
+TEST_F(SandboxSubscriptionSchedulesTest, TruePauseUpdatesPreserveAnAttachedSchedulesFuturePhases) {
+    migrate_to_flexible();
+    auto& client = environment->stripe_client();
+    auto& api = client.subscription_schedules();
+    const auto created = create_schedule();
+    UpdateSubscriptionScheduleRequest phases;
+    phases.end_behavior = SubscriptionScheduleEndBehavior::Cancel;
+    phases.metadata["operation"] = subscription;
+    phases.phases = { { .start_date = created.current_phase->start_date_unix,
+                        .end_date = renewal,
+                        .items = { { prices[0], 2 }, { prices[2], 3 } } },
+                      { .start_date = renewal,
+                        .duration = SubscriptionSchedulePhaseDuration{ "month", 1 },
+                        .items = { { prices[1], 2 }, { prices[2], 3 } },
+                        .metadata = { { "billing_stage", "future" } } } };
+    const auto saved = api.update_async(created.id, phases).result();
+    const auto pause_at = frozen + 86400;
+    SubscriptionSchedulePauseScheduleRequest entry{
+        .pause =
+            SubscriptionSchedulePauseRequest{
+                .pause_at = SubscriptionPauseTime{ .type = "timestamp", .timestamp = pause_at },
+                .settings =
+                    SubscriptionPauseSettings{ .bill_for = { .unused_time_from = { "pause_at" } },
+                                               .invoicing_behavior = "pending_invoice_item" } },
+        .resume =
+            SubscriptionScheduleResumeRequest{
+                .resume_at =
+                    SubscriptionPauseTime{ .type = "timestamp", .timestamp = frozen + 3 * 86400 } }
+    };
+    UpdateSubscriptionScheduleRequest update;
+    update.pause_schedules = std::vector{ entry };
+    const auto scheduled =
+        api.update_async(created.id, update, { .idempotency_key = created.id + "_pause" }).result();
+    EXPECT_EQ(scheduled.end_behavior, "cancel");
+    EXPECT_EQ(scheduled.metadata.at("operation"), subscription);
+    ASSERT_EQ(scheduled.phases.size(), saved.phases.size());
+    for (std::size_t i = 0; i < saved.phases.size(); ++i) {
+        EXPECT_EQ(scheduled.phases[i].start_date_unix, saved.phases[i].start_date_unix);
+        EXPECT_EQ(scheduled.phases[i].end_date_unix, saved.phases[i].end_date_unix);
+        EXPECT_EQ(scheduled.phases[i].items[0].price_id, saved.phases[i].items[0].price_id);
+        EXPECT_EQ(scheduled.phases[i].items[0].quantity, saved.phases[i].items[0].quantity);
+    }
+    ASSERT_EQ(scheduled.pause_schedules.size(), 1U);
+    entry.key = scheduled.pause_schedules.front().key;
+    EXPECT_FALSE(entry.key.empty());
+    EXPECT_EQ(scheduled.pause_schedules.front().pause->status.type, "scheduled");
+    EXPECT_EQ(scheduled.pause_schedules.front().resume->status.type, "scheduled");
+    EXPECT_EQ(client.subscriptions().retrieve_async(subscription).result().status, "active");
+    EXPECT_THROW(client.subscriptions().pause_async(subscription).result(), StripeApiException);
+    entry.pause.reset();
+    entry.resume->resume_at->timestamp = frozen + 4 * 86400;
+    update.pause_schedules = std::vector{ entry };
+    const auto edited = api.update_async(created.id, update).result();
+    EXPECT_EQ(edited.pause_schedules.front().key, entry.key);
+    EXPECT_EQ(edited.pause_schedules.front().pause->pause_at_unix, pause_at);
+    EXPECT_EQ(edited.pause_schedules.front().pause->settings->invoicing_behavior,
+              "pending_invoice_item");
+    EXPECT_EQ(edited.pause_schedules.front().resume->resume_at_unix, frozen + 4 * 86400);
+    advance_sandbox_clock(*environment, clock, pause_at + 1);
+    EXPECT_EQ(client.subscriptions().retrieve_async(subscription).result().status, "paused");
+    EXPECT_EQ(api.retrieve_async(created.id).result().pause_schedules.front().pause->status.type,
+              "succeeded");
+    EXPECT_THROW(client.subscriptions().resume_async(subscription).result(), StripeApiException);
+    entry.resume->resume_at = SubscriptionPauseTime{ .type = "now" };
+    update.pause_schedules = std::vector{ entry };
+    std::promise<CallbackResult<SubscriptionSchedule>> completion;
+    auto result = completion.get_future();
+    api.update(created.id,
+               update,
+               { .idempotency_key = created.id + "_resume_now" },
+               [&](CallbackResult<SubscriptionSchedule> value) {
+                   completion.set_value(std::move(value));
+               });
+    EXPECT_EQ(completed(result).pause_schedules.front().key, entry.key);
+    ASSERT_TRUE(
+        environment->wait_for_event("customer.subscription.resumed", subscription).has_value());
+    EXPECT_EQ(client.subscriptions().retrieve_async(subscription).result().status, "active");
+    const auto resumed = api.retrieve_async(created.id).result();
+    EXPECT_EQ(resumed.pause_schedules.front().resume->status.type, "succeeded");
+    EXPECT_EQ(resumed.end_behavior, "cancel");
+    EXPECT_EQ(resumed.phases[1].items[0].price_id, prices[1]);
+    EXPECT_EQ(resumed.phases[1].metadata.at("billing_stage"), "future");
+    update.pause_schedules->clear();
+    EXPECT_TRUE(api.update_async(created.id, update).result().pause_schedules.empty());
+    EXPECT_EQ(client.subscriptions().retrieve_async(subscription).result().status, "active");
+}
+
+TEST_F(SandboxSubscriptionSchedulesTest, TruePauseCreationAndRemovalDoNotImplicitlyResume) {
+    migrate_to_flexible();
+    auto& client = environment->stripe_client();
+    auto& api = client.subscription_schedules();
+    const SubscriptionSchedulePauseScheduleRequest entry{
+        .pause =
+            SubscriptionSchedulePauseRequest{ .pause_at = SubscriptionPauseTime{ .type = "now" } },
+        .resume =
+            SubscriptionScheduleResumeRequest{
+                .resume_at =
+                    SubscriptionPauseTime{ .type = "duration",
+                                           .duration = SubscriptionPauseDuration{ "day", 2 } } }
+    };
+    std::promise<CallbackResult<SubscriptionSchedule>> completion;
+    auto result = completion.get_future();
+    api.create({ subscription, { entry } },
+               { .idempotency_key = subscription + "_pause_schedule" },
+               [&](CallbackResult<SubscriptionSchedule> value) {
+                   completion.set_value(std::move(value));
+               });
+    const auto created = completed(result);
+    ASSERT_EQ(created.pause_schedules.size(), 1U);
+    EXPECT_EQ(created.pause_schedules.front().pause->status.type, "succeeded");
+    EXPECT_EQ(created.pause_schedules.front().resume->resume_at_unix, frozen + 2 * 86400);
+    EXPECT_EQ(client.subscriptions().retrieve_async(subscription).result().status, "paused");
+    UpdateSubscriptionScheduleRequest update;
+    update.pause_schedules = std::vector<SubscriptionSchedulePauseScheduleRequest>{
+        { .key = created.pause_schedules.front().key, .clear_resume = true }
+    };
+    const auto without_resume = api.update_async(created.id, update).result();
+    EXPECT_FALSE(without_resume.pause_schedules.front().resume.has_value());
+    advance_sandbox_clock(*environment, clock, frozen + 3 * 86400);
+    EXPECT_EQ(client.subscriptions().retrieve_async(subscription).result().status, "paused");
+    update.pause_schedules->clear();
+    EXPECT_TRUE(api.update_async(created.id, update).result().pause_schedules.empty());
+    const auto paused = client.subscriptions().retrieve_async(subscription).result();
+    EXPECT_EQ(paused.status, "paused");
+    EXPECT_EQ(paused.schedule_id, created.id);
+}
+
+TEST_F(SandboxSubscriptionSchedulesTest, TruePauseFailedResumeCanBeVoidedAndScheduledAgain) {
+    migrate_to_flexible();
+    auto& client = environment->stripe_client();
+    auto& api = client.subscriptions();
+    advance_sandbox_clock(*environment, clock, frozen + 86400);
+    const auto paused = api.pause_async(subscription,
+                                        { .bill_for = { .unused_time_from = { "none" },
+                                                        .outstanding_usage_through = { "none" } } })
+                            .result();
+    EXPECT_EQ(paused.status, "paused");
+    const auto failing = environment->stripe_api().require_post(
+        "/v1/payment_methods/pm_card_chargeCustomerFail/attach", { { "customer", customer } });
+    environment->stripe_api().require_post("/v1/subscriptions/" + subscription,
+                                           { { "default_payment_method", failing.id() } });
+    advance_sandbox_clock(*environment, clock, renewal + 3600);
+    const auto pending =
+        api.resume_async(subscription, { .payment_behavior = "resume_on_payment_success" })
+            .result();
+    EXPECT_EQ(pending.status, "paused");
+    ASSERT_TRUE(pending.pending_update.has_value());
+    EXPECT_NE(pending.latest_invoice_id, paid_invoice);
+    ASSERT_TRUE(environment->wait_for_event("invoice.payment_failed", pending.latest_invoice_id)
+                    .has_value());
+    EXPECT_EQ(api.retrieve_async(subscription).result().status, "paused");
+    EXPECT_EQ(client.invoices().void_async(pending.latest_invoice_id).result().status, "void");
+    const auto abandoned = api.retrieve_async(subscription).result();
+    EXPECT_EQ(abandoned.status, "paused");
+    EXPECT_FALSE(abandoned.pending_update.has_value());
+    const auto working = environment->stripe_api().require_post(
+        "/v1/payment_methods/pm_card_visa/attach", { { "customer", customer } });
+    environment->stripe_api().require_post("/v1/subscriptions/" + subscription,
+                                           { { "default_payment_method", working.id() } });
+    const SubscriptionSchedulePauseScheduleRequest entry{
+        .resume =
+            SubscriptionScheduleResumeRequest{
+                .resume_at =
+                    SubscriptionPauseTime{ .type = "timestamp", .timestamp = renewal + 86400 } }
+    };
+    const auto created = client.subscription_schedules()
+                             .create_async({ subscription, { entry } },
+                                           { .idempotency_key = subscription + "_resume_schedule" })
+                             .result();
+    ASSERT_EQ(created.pause_schedules.size(), 1U);
+    EXPECT_EQ(created.pause_schedules.front().resume->status.type, "scheduled");
+    EXPECT_EQ(api.retrieve_async(subscription).result().status, "paused");
+    advance_sandbox_clock(*environment, clock, renewal + 86400 + 3600);
+    ASSERT_TRUE(
+        environment->wait_for_event("customer.subscription.resumed", subscription).has_value());
+    const auto resumed = api.retrieve_async(subscription).result();
+    EXPECT_EQ(resumed.status, "active");
+    EXPECT_FALSE(resumed.pending_update.has_value());
+    EXPECT_TRUE(client.invoices().retrieve_async(resumed.latest_invoice_id).result().paid);
+    EXPECT_EQ(client.subscription_schedules()
+                  .retrieve_async(created.id)
+                  .result()
+                  .pause_schedules.front()
+                  .resume->status.type,
+              "succeeded");
+}
 
 TEST_F(SandboxSubscriptionSchedulesTest, DefaultApiVersionSupportsExplicitPhaseDates) {
     auto& schedules = environment->stripe_client().subscription_schedules();

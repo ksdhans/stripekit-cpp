@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <string_view>
 #include <utility>
 #include <unordered_set>
 
@@ -288,6 +289,165 @@ std::string proration_value(ProrationBehavior behavior) {
     throw ConfigurationException("Invalid proration behavior");
 }
 
+/** Append a supplied policy, rejecting unsupported choices before contacting Stripe. */
+void append_policy(std::string& body,
+                   const std::string& key,
+                   const std::string& value,
+                   std::initializer_list<std::string_view> choices) {
+    if (value.empty()) return;
+    if (std::find(choices.begin(), choices.end(), value) == choices.end())
+        throw ConfigurationException("Invalid " + key);
+    append_form_value(body, key, value);
+}
+
+/** Append billing choices using the endpoint's name for the pause time. */
+void append_pause_settings(std::string& body,
+                           const std::string& prefix,
+                           const SubscriptionPauseSettings& settings,
+                           bool scheduled) {
+    const auto key = [&](const std::string& field) {
+        return prefix.empty() ? field : prefix + "[" + field + "]";
+    };
+    const auto at = scheduled ? "pause_at" : "now";
+    append_policy(body,
+                  key("bill_for") + "[unused_time_from][type]",
+                  settings.bill_for.unused_time_from.type,
+                  { at, "none", "item_current_period_start" });
+    append_policy(body,
+                  key("bill_for") + "[outstanding_usage_through][type]",
+                  settings.bill_for.outstanding_usage_through.type,
+                  { at, "none" });
+    append_policy(body,
+                  key("invoicing_behavior"),
+                  settings.invoicing_behavior,
+                  { "invoice", "pending_invoice_item" });
+    append_policy(body, key("type"), settings.type, { "subscription" });
+}
+
+/** Encode a direct pause without substituting a collection pause. */
+std::string subscription_pause_body(const PauseSubscriptionRequest& request) {
+    std::string body;
+    append_pause_settings(body, "", request, false);
+    return body;
+}
+
+/** Encode direct resume choices, preserving Stripe's defaults for omitted values. */
+std::string subscription_resume_body(const ResumeSubscriptionRequest& request) {
+    std::string body;
+    if (request.billing_cycle_anchor) {
+        if (request.billing_cycle_anchor->type.empty())
+            throw ConfigurationException("A resume billing cycle anchor requires a type");
+        append_policy(body,
+                      "billing_cycle_anchor[type]",
+                      request.billing_cycle_anchor->type,
+                      { "now", "unchanged" });
+    }
+    append_policy(body,
+                  "payment_behavior",
+                  request.payment_behavior,
+                  { "resume_on_payment_attempt", "resume_on_payment_success" });
+    if (request.proration_behavior)
+        append_form_value(body, "proration_behavior", proration_value(*request.proration_behavior));
+    if (request.proration_date) {
+        if (*request.proration_date <= 0)
+            throw ConfigurationException("A proration date must be positive");
+        append_form_value(body, "proration_date", std::to_string(*request.proration_date));
+    }
+    return body;
+}
+
+/** Encode an explicit upgrade to flexible billing mode. */
+std::string subscription_migrate_body(const MigrateSubscriptionRequest& request) {
+    if (request.billing_mode.type != "flexible")
+        throw ConfigurationException("Subscription migration requires flexible billing mode");
+    std::string body;
+    append_form_value(body, "billing_mode[type]", request.billing_mode.type);
+    return body;
+}
+
+/** Append an action time, rejecting ambiguous timestamp and duration choices. */
+void append_pause_time(std::string& body,
+                       const std::string& prefix,
+                       const SubscriptionPauseTime& time,
+                       bool resume) {
+    const bool timestamp = time.type == "timestamp";
+    const bool duration = time.type == "duration";
+    if ((time.type != "now" && !timestamp && !(resume && duration)) ||
+        timestamp != time.timestamp.has_value() || duration != time.duration.has_value() ||
+        (time.timestamp && *time.timestamp <= 0))
+        throw ConfigurationException("Invalid pause schedule action time");
+    append_form_value(body, prefix + "[type]", time.type);
+    if (time.timestamp)
+        append_form_value(body, prefix + "[timestamp]", std::to_string(*time.timestamp));
+    if (time.duration) {
+        if (time.duration->interval.empty() || time.duration->interval_count <= 0)
+            throw ConfigurationException("A resume duration requires a positive interval count");
+        append_policy(body,
+                      prefix + "[duration][interval]",
+                      time.duration->interval,
+                      { "day", "week", "month", "year" });
+        append_form_value(body,
+                          prefix + "[duration][interval_count]",
+                          std::to_string(time.duration->interval_count));
+    }
+}
+
+/** Append a replacement pause schedule, or an explicit clear, without changing phases. */
+void append_pause_schedules(std::string& body,
+                            const std::vector<SubscriptionSchedulePauseScheduleRequest>& entries) {
+    if (entries.size() > 1)
+        throw ConfigurationException("A subscription schedule accepts only one pause schedule");
+    if (entries.empty()) {
+        append_form_value(body, "pause_schedules", "");
+        return;
+    }
+    const auto& entry = entries.front();
+    if (entry.key.size() > 40 || (entry.clear_resume && entry.resume) ||
+        (!entry.pause && !entry.resume && !entry.clear_resume) ||
+        (entry.clear_resume && entry.key.empty()) ||
+        (entry.key.empty() &&
+         ((!entry.pause || !entry.pause->pause_at) && (!entry.resume || !entry.resume->resume_at))))
+        throw ConfigurationException("Invalid pause schedule entry");
+    if (entry.pause && entry.resume && entry.pause->pause_at && entry.resume->resume_at) {
+        const auto& pause = *entry.pause->pause_at;
+        const auto& resume = *entry.resume->resume_at;
+        if (pause.timestamp && resume.timestamp && *resume.timestamp <= *pause.timestamp)
+            throw ConfigurationException("The resume date must be after the pause date");
+    }
+    const std::string prefix = "pause_schedules[0]";
+    if (!entry.key.empty()) append_form_value(body, prefix + "[key]", entry.key);
+    if (entry.pause) {
+        if (!entry.pause->pause_at && !entry.pause->settings)
+            throw ConfigurationException("A scheduled pause requires a date or settings");
+        if (entry.pause->pause_at)
+            append_pause_time(body, prefix + "[pause][pause_at]", *entry.pause->pause_at, false);
+        if (entry.pause->settings)
+            append_pause_settings(body, prefix + "[pause][settings]", *entry.pause->settings, true);
+    }
+    if (entry.resume) {
+        if (!entry.resume->resume_at && !entry.resume->settings)
+            throw ConfigurationException("A scheduled resume requires a date or settings");
+        if (entry.resume->resume_at)
+            append_pause_time(body, prefix + "[resume][resume_at]", *entry.resume->resume_at, true);
+        if (entry.resume->settings) {
+            const auto& settings = *entry.resume->settings;
+            append_policy(body,
+                          prefix + "[resume][settings][billing_cycle_anchor]",
+                          settings.billing_cycle_anchor,
+                          { "resume_at", "unchanged" });
+            append_policy(body,
+                          prefix + "[resume][settings][payment_behavior]",
+                          settings.payment_behavior,
+                          { "resume_on_payment_attempt", "resume_on_payment_success" });
+            append_policy(body,
+                          prefix + "[resume][settings][proration_behavior]",
+                          settings.proration_behavior,
+                          { "create_prorations", "always_invoice", "none" });
+        }
+    }
+    if (entry.clear_resume) append_form_value(body, prefix + "[resume]", "");
+}
+
 /** Build the request body for creating a schedule from an existing subscription.
  *
  * @param request Identifies the existing subscription.
@@ -301,6 +461,7 @@ std::string schedule_create_body(const CreateSubscriptionScheduleRequest& reques
         throw ConfigurationException("Schedule creation requires a subscription ID");
     std::string body;
     append_form_value(body, "from_subscription", request.from_subscription);
+    if (!request.pause_schedules.empty()) append_pause_schedules(body, request.pause_schedules);
     return body;
 }
 
@@ -329,10 +490,11 @@ void append_schedule_discount(std::string& body,
  * @throws ConfigurationException If a phase has invalid dates, items, or settings.
  */
 std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& request) {
-    if (request.phases.empty() || request.phases.size() > 10)
-        throw ConfigurationException("A schedule update requires one through ten phases");
+    if ((request.phases.empty() && !request.pause_schedules) || request.phases.size() > 10)
+        throw ConfigurationException(
+            "A schedule update requires pause changes or one through ten phases");
     std::string end;
-    switch (request.end_behavior) {
+    switch (request.end_behavior.value_or(SubscriptionScheduleEndBehavior::Release)) {
     case SubscriptionScheduleEndBehavior::Release:
         end = "release";
         break;
@@ -343,13 +505,27 @@ std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& reques
         throw ConfigurationException("Invalid schedule end behavior");
     }
     std::string body;
-    append_form_value(body, "end_behavior", end);
-    append_form_value(body, "proration_behavior", proration_value(request.proration_behavior));
+    if (request.end_behavior || !request.phases.empty())
+        append_form_value(body, "end_behavior", end);
+    if (request.proration_behavior || !request.phases.empty())
+        append_form_value(
+            body,
+            "proration_behavior",
+            proration_value(request.proration_behavior.value_or(ProrationBehavior::None)));
     append_metadata(body, request.metadata);
     if (request.default_automatic_tax_enabled)
         append_form_value(body,
                           "default_settings[automatic_tax][enabled]",
                           *request.default_automatic_tax_enabled ? "true" : "false");
+    if (request.default_collection_method) {
+        if (request.default_collection_method->empty())
+            throw ConfigurationException("A collection method cannot be empty");
+        append_policy(body,
+                      "default_settings[collection_method]",
+                      *request.default_collection_method,
+                      { "charge_automatically", "send_invoice" });
+    }
+    if (request.pause_schedules) append_pause_schedules(body, *request.pause_schedules);
     for (std::size_t i = 0; i < request.phases.size(); ++i) {
         const auto& phase = request.phases[i];
         if (phase.start_date <= 0 || phase.end_date.has_value() == phase.duration.has_value() ||
@@ -378,6 +554,14 @@ std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& reques
         }
         append_form_value(
             body, prefix + "[proration_behavior]", proration_value(phase.proration_behavior));
+        if (phase.collection_method) {
+            if (phase.collection_method->empty())
+                throw ConfigurationException("A phase collection method cannot be empty");
+            append_policy(body,
+                          prefix + "[collection_method]",
+                          *phase.collection_method,
+                          { "charge_automatically", "send_invoice" });
+        }
         if (phase.automatic_tax_enabled)
             append_form_value(body,
                               prefix + "[automatic_tax][enabled]",
@@ -445,6 +629,14 @@ std::string subscription_body(const UpdateSubscriptionRequest& request) {
     if (request.items.size() > 20)
         throw ConfigurationException("Subscription updates accept at most twenty items");
     std::string body;
+    if (request.collection_method) {
+        if (request.collection_method->empty())
+            throw ConfigurationException("A collection method cannot be empty");
+        append_policy(body,
+                      "collection_method",
+                      *request.collection_method,
+                      { "charge_automatically", "send_invoice" });
+    }
     if (request.proration_behavior)
         append_form_value(body, "proration_behavior", proration_value(*request.proration_behavior));
     if (request.payment_behavior)
@@ -679,6 +871,15 @@ std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
         (request.customer_update_address.has_value() || request.customer_update_name.has_value()))
         throw ConfigurationException("Checkout customer updates require an existing Customer");
     std::string body;
+    if (request.subscription_billing_mode) {
+        if (session_mode != "subscription" || request.subscription_billing_mode->type.empty())
+            throw ConfigurationException(
+                "Checkout billing mode requires a subscription and a type");
+        append_policy(body,
+                      "subscription_data[billing_mode][type]",
+                      request.subscription_billing_mode->type,
+                      { "classic", "flexible" });
+    }
     append_form_value(body, "mode", session_mode);
     if (!request.customer_id.empty()) {
         append_form_value(body, "customer", request.customer_id);
@@ -1114,6 +1315,110 @@ std::optional<std::int64_t> optional_unix_timestamp(const Json::Value& value) {
     return value.asInt64();
 }
 
+/** Read an optional string without treating malformed data as an absent setting. */
+std::string optional_string(const Json::Value& value) {
+    if (value.isNull()) return {};
+    if (!value.isString())
+        throw ConfigurationException("Stripe returned a malformed string setting");
+    return value.asString();
+}
+
+/** Read a billing mode, preserving unknown types and accepting Stripe's string or object forms. */
+std::optional<SubscriptionBillingMode> billing_mode_value(const Json::Value& value) {
+    if (value.isNull()) return std::nullopt;
+    const auto type = value.isObject() ? optional_string(value["type"]) : optional_string(value);
+    if (type.empty()) throw ConfigurationException("Stripe returned a billing mode without a type");
+    return SubscriptionBillingMode{ type };
+}
+
+/** Read a pause billing point when supplied. */
+SubscriptionPauseBillingPoint pause_billing_point(const Json::Value& value) {
+    if (value.isNull()) return {};
+    if (!value.isObject() || !value["type"].isString() || value["type"].asString().empty())
+        throw ConfigurationException("Stripe returned a malformed pause billing point");
+    return { value["type"].asString() };
+}
+
+/** Read pause billing settings while preserving future policy names. */
+std::optional<SubscriptionPauseSettings> pause_settings_value(const Json::Value& value) {
+    if (value.isNull()) return std::nullopt;
+    if (!value.isObject() || (!value["bill_for"].isNull() && !value["bill_for"].isObject()))
+        throw ConfigurationException("Stripe returned malformed pause settings");
+    SubscriptionPauseSettings settings;
+    if (value["bill_for"].isObject()) {
+        settings.bill_for.unused_time_from =
+            pause_billing_point(value["bill_for"]["unused_time_from"]);
+        settings.bill_for.outstanding_usage_through =
+            pause_billing_point(value["bill_for"]["outstanding_usage_through"]);
+    }
+    settings.type = optional_string(value["type"]);
+    settings.invoicing_behavior = optional_string(value["invoicing_behavior"]);
+    return settings;
+}
+
+/** Read scheduled resume choices without guessing omitted billing policies. */
+std::optional<SubscriptionScheduleResumeSettings> resume_settings_value(const Json::Value& value) {
+    if (value.isNull()) return std::nullopt;
+    if (!value.isObject())
+        throw ConfigurationException("Stripe returned malformed resume settings");
+    return SubscriptionScheduleResumeSettings{
+        .billing_cycle_anchor = optional_string(value["billing_cycle_anchor"]),
+        .payment_behavior = optional_string(value["payment_behavior"]),
+        .proration_behavior = optional_string(value["proration_behavior"])
+    };
+}
+
+/** Read the status of an individual pause or resume action, including Stripe's error. */
+SubscriptionScheduleActionStatus schedule_action_status(const Json::Value& value) {
+    if (!value.isObject() || !value["type"].isString() || value["type"].asString().empty())
+        throw ConfigurationException("Stripe returned a malformed pause schedule action status");
+    SubscriptionScheduleActionStatus status{ .type = value["type"].asString() };
+    const auto& error = value["error"];
+    if (!error.isNull()) {
+        if (!error.isObject() || !error["message"].isString())
+            throw ConfigurationException("Stripe returned a malformed pause schedule error");
+        status.error = SubscriptionScheduleActionError{ optional_string(error["code"]),
+                                                        error["message"].asString() };
+    }
+    return status;
+}
+
+/** Read the pause schedule's resolved timestamps, settings, and action statuses. */
+std::vector<SubscriptionSchedulePauseSchedule> pause_schedules_value(const Json::Value& value) {
+    if (value.isNull()) return {};
+    if (!value.isArray()) throw ConfigurationException("Stripe returned malformed pause schedules");
+    std::vector<SubscriptionSchedulePauseSchedule> entries;
+    for (const auto& entry : value) {
+        if (!entry.isObject() || !entry["key"].isString() || entry["key"].asString().empty())
+            throw ConfigurationException("Stripe returned a pause schedule without a key");
+        SubscriptionSchedulePauseSchedule parsed{ .key = entry["key"].asString() };
+        const auto& pause = entry["pause"];
+        if (!pause.isNull()) {
+            if (!pause.isObject())
+                throw ConfigurationException("Stripe returned a malformed scheduled pause");
+            const auto time = optional_unix_timestamp(pause["pause_at"]);
+            if (!time) throw ConfigurationException("Stripe returned a pause without a timestamp");
+            parsed.pause = SubscriptionSchedulePause{ *time,
+                                                      pause_settings_value(pause["settings"]),
+                                                      schedule_action_status(pause["status"]) };
+        }
+        const auto& resume = entry["resume"];
+        if (!resume.isNull()) {
+            if (!resume.isObject())
+                throw ConfigurationException("Stripe returned a malformed scheduled resume");
+            const auto time = optional_unix_timestamp(resume["resume_at"]);
+            if (!time) throw ConfigurationException("Stripe returned a resume without a timestamp");
+            parsed.resume = SubscriptionScheduleResume{ *time,
+                                                        resume_settings_value(resume["settings"]),
+                                                        schedule_action_status(resume["status"]) };
+        }
+        if (!parsed.pause && !parsed.resume)
+            throw ConfigurationException("Stripe returned a pause schedule without actions");
+        entries.push_back(std::move(parsed));
+    }
+    return entries;
+}
+
 /** Read a nullable Stripe reference as an ID, accepting expanded objects. */
 std::string reference_id(const Json::Value& value) {
     if (value.isNull()) return {};
@@ -1269,6 +1574,8 @@ StripeResponseParser::parse_subscription_schedule(const HttpResponse& response) 
     schedule.subscription_id = reference_id(value["subscription"]);
     schedule.released_subscription_id = reference_id(value["released_subscription"]);
     schedule.metadata = metadata_value(value);
+    schedule.billing_mode = billing_mode_value(value["billing_mode"]);
+    schedule.pause_schedules = pause_schedules_value(value["pause_schedules"]);
     const auto& default_settings = value["default_settings"];
     if (!default_settings.isNull()) {
         if (!default_settings.isObject())
@@ -1276,6 +1583,7 @@ StripeResponseParser::parse_subscription_schedule(const HttpResponse& response) 
         const auto& automatic_tax = default_settings["automatic_tax"];
         if (!automatic_tax.isNull())
             schedule.default_automatic_tax = automatic_tax_value(automatic_tax);
+        schedule.default_collection_method = optional_string(default_settings["collection_method"]);
     }
     const auto dates = [](const Json::Value& entry) {
         if (!entry.isObject() || !entry["start_date"].isInt64() || !entry["end_date"].isInt64() ||
@@ -1298,6 +1606,7 @@ StripeResponseParser::parse_subscription_schedule(const HttpResponse& response) 
         phase.end_date_unix = period.end_date_unix;
         phase.proration_behavior = entry["proration_behavior"].asString();
         phase.metadata = metadata_value(entry);
+        phase.collection_method = optional_string(entry["collection_method"]);
         const auto& automatic_tax = entry["automatic_tax"];
         if (!automatic_tax.isNull()) phase.automatic_tax = automatic_tax_value(automatic_tax);
         phase.discounts = schedule_discounts(entry["discounts"]);
@@ -1679,6 +1988,33 @@ Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& re
     subscription.trial_end_unix = optional_unix_timestamp(object["trial_end"]);
     subscription.cancel_at_unix = optional_unix_timestamp(object["cancel_at"]);
     subscription.schedule_id = reference_id(object["schedule"]);
+    subscription.billing_mode = billing_mode_value(object["billing_mode"]);
+    subscription.collection_method = optional_string(object["collection_method"]);
+    const auto& details = object["status_details"];
+    if (!details.isNull()) {
+        if (!details.isObject())
+            throw ConfigurationException("Stripe returned malformed subscription status details");
+        SubscriptionStatusDetails parsed;
+        const auto& paused = details["paused"];
+        if (!paused.isNull()) {
+            if (!paused.isObject() || !paused["type"].isString() ||
+                paused["type"].asString().empty() ||
+                (!paused["subscription"].isNull() && !paused["subscription"].isObject()))
+                throw ConfigurationException("Stripe returned malformed paused status details");
+            const auto time = optional_unix_timestamp(paused["transitioned_at"]);
+            if (!time)
+                throw ConfigurationException("Stripe returned paused status without a timestamp");
+            SubscriptionPauseReason reason;
+            if (!paused["subscription"].isNull()) {
+                reason.type = optional_string(paused["subscription"]["type"]);
+                if (reason.type.empty())
+                    throw ConfigurationException("Stripe returned a pause reason without a type");
+            }
+            parsed.paused =
+                SubscriptionPausedStatusDetails{ reason, *time, paused["type"].asString() };
+        }
+        subscription.status_details = std::move(parsed);
+    }
     subscription.discount_ids = reference_ids(object["discounts"]);
     subscription.default_tax_rate_ids = reference_ids(object["default_tax_rates"]);
     const auto& automatic_tax = object["automatic_tax"];
@@ -2176,6 +2512,123 @@ CheckoutSessions& StripeApiClient::CheckoutOperations::sessions() {
 
 StripeApiClient::SubscriptionOperations::SubscriptionOperations(StripeApiClient& owner)
     : owner(owner) {}
+
+Task<Subscription> StripeApiClient::SubscriptionOperations::pause_async(
+    std::string id, const PauseSubscriptionRequest& request, const RequestOptions& options) {
+    return send_and_parse_async<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post,
+                     catalog_path("subscriptions", id) + "/pause",
+                     subscription_pause_body(request),
+                     options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        });
+}
+
+void StripeApiClient::SubscriptionOperations::pause(std::string id,
+                                                    const PauseSubscriptionRequest& request,
+                                                    const RequestOptions& options,
+                                                    UpdateCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            catalog_path("subscriptions", id) + "/pause",
+                            subscription_pause_body(request),
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        },
+        std::move(completion));
+}
+
+Task<Subscription> StripeApiClient::SubscriptionOperations::resume_async(
+    std::string id, const ResumeSubscriptionRequest& request, const RequestOptions& options) {
+    return send_and_parse_async<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post,
+                     catalog_path("subscriptions", id) + "/resume",
+                     subscription_resume_body(request),
+                     options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        });
+}
+
+void StripeApiClient::SubscriptionOperations::resume(std::string id,
+                                                     const ResumeSubscriptionRequest& request,
+                                                     const RequestOptions& options,
+                                                     UpdateCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            catalog_path("subscriptions", id) + "/resume",
+                            subscription_resume_body(request),
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        },
+        std::move(completion));
+}
+
+Task<Subscription> StripeApiClient::SubscriptionOperations::migrate_async(
+    std::string id, const MigrateSubscriptionRequest& request, const RequestOptions& options) {
+    return send_and_parse_async<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Post,
+                     catalog_path("subscriptions", id) + "/migrate",
+                     subscription_migrate_body(request),
+                     options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        });
+}
+
+void StripeApiClient::SubscriptionOperations::migrate(std::string id,
+                                                      const MigrateSubscriptionRequest& request,
+                                                      const RequestOptions& options,
+                                                      UpdateCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            catalog_path("subscriptions", id) + "/migrate",
+                            subscription_migrate_body(request),
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Subscription>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_subscription(response);
+        },
+        std::move(completion));
+}
 
 Task<Subscription> StripeApiClient::SubscriptionOperations::update_async(
     std::string id, const UpdateSubscriptionRequest& request, const RequestOptions& options) {

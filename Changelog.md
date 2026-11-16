@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Add immediate and scheduled subscription pause/resume, with flexible billing
+  support and preservation of existing schedule settings.
 - Now require Stripe API `2026-10-28.endive` or later throughout, including examples
   and sandbox tests.
 - Add options to set and clear subscription cancellation dates, with unit and

@@ -174,6 +174,8 @@ struct CreateCheckoutSessionRequest {
 
     /** Collect an optional business tax ID in hosted Checkout when set. */
     std::optional<bool> tax_id_collection_enabled;
+    /** Billing mode for subscriptions created by Checkout; flexible allows true pauses. */
+    std::optional<SubscriptionBillingMode> subscription_billing_mode;
 };
 
 /** Which task a billing portal session should take the customer straight to. */
@@ -429,6 +431,8 @@ struct UpdateSubscriptionRequest {
     std::optional<bool> cancel_at_period_end;
     /** Metadata entries to update; empty values remove keys, and omitted keys are unchanged. */
     std::unordered_map<std::string, std::string> metadata;
+    /** charge_automatically or send_invoice. Pausing and resuming require charge_automatically. */
+    std::optional<std::string> collection_method;
 };
 
 /** Create a fixed per-unit price. Does not change existing subscriptions. */
@@ -917,10 +921,59 @@ public:
 /** What Stripe should do when a subscription schedule reaches its final phase. */
 enum class SubscriptionScheduleEndBehavior { Release, Cancel };
 
+/** Calendar duration from a scheduled pause to its resume attempt. */
+struct SubscriptionPauseDuration {
+    /** day, week, month, or year. */
+    std::string interval;
+    /** Positive number of calendar intervals. */
+    std::int64_t interval_count = 1;
+};
+
+/** When a scheduled action runs. A pause accepts now or timestamp; a resume also accepts duration.
+ */
+struct SubscriptionPauseTime {
+    /** now, timestamp, or (for resumes only) duration. */
+    std::string type;
+    /** Positive Unix seconds; required only for type timestamp. */
+    std::optional<std::int64_t> timestamp;
+    /** Required only for type duration. */
+    std::optional<SubscriptionPauseDuration> duration;
+};
+
+/** Scheduled pause changes. Supply the existing key to keep settings you leave unset. */
+struct SubscriptionSchedulePauseRequest {
+    /** Pause time; leave unset to keep the existing date when using the same key. */
+    std::optional<SubscriptionPauseTime> pause_at;
+    /** Optional credits, usage, and invoicing choices. */
+    std::optional<SubscriptionPauseSettings> settings;
+};
+
+/** Scheduled resume changes. Supply the existing key to keep settings you leave unset. */
+struct SubscriptionScheduleResumeRequest {
+    /** Resume time; leave unset to keep the existing date when using the same key. */
+    std::optional<SubscriptionPauseTime> resume_at;
+    /** Optional billing and payment choices. */
+    std::optional<SubscriptionScheduleResumeSettings> settings;
+};
+
+/** Add or edit a pause schedule. Include key to preserve existing settings and status. */
+struct SubscriptionSchedulePauseScheduleRequest {
+    /** Existing key to edit, or empty to replace the pause schedule with a new one. */
+    std::string key;
+    /** Omit when scheduling a resume for an already-paused subscription. */
+    std::optional<SubscriptionSchedulePauseRequest> pause;
+    /** Leave unset for a new pause without a resume, or to keep a resume with the same key. */
+    std::optional<SubscriptionScheduleResumeRequest> resume;
+    /** Remove the planned resume. Supply the existing key and leave resume unset. */
+    bool clear_resume = false;
+};
+
 /** Create a schedule for an existing subscription, copying its current billing settings. */
 struct CreateSubscriptionScheduleRequest {
-    /** Existing subscription ID. Stripe permits no other settings in this creation request. */
+    /** Existing subscription ID. Update an attached schedule instead of creating another. */
     std::string from_subscription;
+    /** At most one pause schedule, applied as part of creation. */
+    std::vector<SubscriptionSchedulePauseScheduleRequest> pause_schedules;
 };
 
 /** How long a schedule phase lasts, independently of its prices' billing intervals. */
@@ -944,17 +997,24 @@ struct SubscriptionSchedulePhaseRequest {
     std::optional<bool> automatic_tax_enabled;
     /** Discounts to retain or apply for this phase. */
     std::vector<SubscriptionScheduleDiscount> discounts;
+    /** Optional override; scheduled pauses require charge_automatically in every phase. */
+    std::optional<std::string> collection_method;
 };
 
-/** Replace current and future phases. Omitted past phases are left in Stripe's history. */
+/** Update phases or pause schedules. Leave phases empty for pause-only changes. */
 struct UpdateSubscriptionScheduleRequest {
     std::vector<SubscriptionSchedulePhaseRequest> phases;
-    SubscriptionScheduleEndBehavior end_behavior = SubscriptionScheduleEndBehavior::Release;
-    /** Adjustments to make when changing the currently running phase. */
-    ProrationBehavior proration_behavior = ProrationBehavior::None;
+    /** Defaults to Release for phase replacements; otherwise omitted. */
+    std::optional<SubscriptionScheduleEndBehavior> end_behavior;
+    /** Defaults to None for phase replacements; otherwise omitted. */
+    std::optional<ProrationBehavior> proration_behavior;
     std::unordered_map<std::string, std::string> metadata;
     /** Default automatic-tax setting for the schedule. */
     std::optional<bool> default_automatic_tax_enabled;
+    /** Leave unset to keep pause settings, or supply an empty vector to remove them. */
+    std::optional<std::vector<SubscriptionSchedulePauseScheduleRequest>> pause_schedules;
+    /** charge_automatically or send_invoice; unset leaves the default unchanged. */
+    std::optional<std::string> default_collection_method;
 };
 
 /** Create, read, and change future billing settings through StripeClient::subscription_schedules().
@@ -989,7 +1049,7 @@ public:
     /**
      * Create a schedule from an existing subscription, preserving its current settings.
      *
-     * @param request ID of the existing subscription to create a schedule for.
+     * @param request Existing subscription ID and optional pause and resume settings.
      * @param options Per-request settings; use a saved idempotency key for retries.
      *
      * @return Schedule linked to the subscription.
@@ -1004,7 +1064,7 @@ public:
     /**
      * Create a schedule and report its result or failure exactly once.
      *
-     * @param request ID of the existing subscription to create a schedule for.
+     * @param request Existing subscription ID and optional pause and resume settings.
      * @param options Per-request settings.
      * @param completion Receives the schedule or failure.
      */
@@ -1012,14 +1072,15 @@ public:
                         const RequestOptions& options,
                         Completion completion) = 0;
     /**
-     * Replace current and future phases with explicit prices, quantities, and dates.
+     * Update pause schedules or replace current and future phases.
      *
-     * This is not a partial phase update: include every setting you intend to retain.
-     * Include the existing automatic-tax and discount settings when replacing phases.
+     * Supplied phases replace current and future phases: include every setting you intend to
+     * retain. Include the existing automatic-tax and discount settings when replacing phases.
      * Release keeps the subscription running after the final phase; cancel ends it.
+     * For pause-only changes, leave phases and billing policies unset to retain them.
      *
      * @param schedule_id Existing schedule ID.
-     * @param request One through ten phases and end and adjustment policies.
+     * @param request Pause changes or one through ten replacement phases and billing policies.
      * @param options Per-request settings; use a saved idempotency key for retries.
      *
      * @return Updated schedule; inspect its phases to confirm the intended change.
@@ -1035,7 +1096,7 @@ public:
      * Update a schedule and report its result or failure exactly once.
      *
      * @param schedule_id Existing schedule ID.
-     * @param request Replacement phases and policies.
+     * @param request Pause changes or replacement phases and billing settings.
      * @param options Per-request settings.
      * @param completion Receives the schedule or failure.
      */
@@ -1050,6 +1111,33 @@ struct PauseSubscriptionCollectionRequest {
     CollectionPauseBehavior behavior = CollectionPauseBehavior::Void;
     std::optional<std::int64_t>
         resumes_at; ///< Positive Unix timestamp; absent pauses until explicitly resumed.
+};
+
+/** Pause service and invoice generation, not merely payment collection. */
+using PauseSubscriptionRequest = SubscriptionPauseSettings;
+
+/** Billing cycle anchor for a direct resume. */
+struct ResumeSubscriptionBillingCycleAnchor {
+    /** now or unchanged. */
+    std::string type;
+};
+
+/** Resume a paused subscription. Leave fields unset to use Stripe's defaults. */
+struct ResumeSubscriptionRequest {
+    /** now (Stripe default) or unchanged. */
+    std::optional<ResumeSubscriptionBillingCycleAnchor> billing_cycle_anchor;
+    /** resume_on_payment_attempt (Stripe default) or resume_on_payment_success. */
+    std::string payment_behavior;
+    /** Adjustment policy; omission uses create_prorations. */
+    std::optional<ProrationBehavior> proration_behavior;
+    /** Positive Unix seconds at which to calculate adjustments. */
+    std::optional<std::int64_t> proration_date;
+};
+
+/** Upgrade a classic-billing subscription to flexible billing mode. */
+struct MigrateSubscriptionRequest {
+    /** Must be flexible; switching back to classic is not supported. */
+    SubscriptionBillingMode billing_mode{ "flexible" };
 };
 
 /** Filters for one invoice page. Empty subscription_id lists all invoices. */
@@ -1068,7 +1156,7 @@ struct UpdateInvoiceRequest {
 };
 
 /**
- * Read subscriptions, change prices, control collection, and cancel billing.
+ * Read subscriptions and manage billing, pauses, and cancellations.
  *
  * Reach an instance through StripeClient::subscriptions(). Subscriptions are
  * created by Checkout rather than here. Application access decisions remain
@@ -1078,6 +1166,77 @@ struct UpdateInvoiceRequest {
  */
 class Subscriptions {
 public:
+    /**
+     * Pause service and invoice generation immediately, unlike pause_collection().
+     * Requires flexible billing and charge_automatically. For an attached schedule,
+     * update its pause_schedules instead.
+     *
+     * @param subscription_id Existing subscription ID.
+     * @param request Pause credits, metered usage, and invoicing choices.
+     * @param options Per-request headers, timeout, and retry key.
+     * @return Subscription state returned by Stripe.
+     * @throws ConfigurationException If the ID or pause settings are invalid.
+     * @throws StripeApiException If Stripe rejects the pause.
+     */
+    virtual Task<Subscription> pause_async(std::string subscription_id,
+                                           const PauseSubscriptionRequest& request = {},
+                                           const RequestOptions& options = {}) = 0;
+    /**
+     * Pause and deliver the returned subscription or failure exactly once.
+     * @param subscription_id Existing subscription ID.
+     * @param request Pause billing choices.
+     * @param options Per-request settings.
+     * @param completion Receives the subscription or failure.
+     */
+    virtual void pause(std::string subscription_id,
+                       const PauseSubscriptionRequest& request,
+                       const RequestOptions& options,
+                       std::function<void(CallbackResult<Subscription>)> completion) = 0;
+    /**
+     * Start a resume attempt. Requires charge_automatically; update an attached schedule instead.
+     * A successful request can remain paused awaiting payment: inspect status,
+     * pending_update, and latest_invoice_id before restoring access.
+     *
+     * @param subscription_id Existing subscription ID.
+     * @param request Billing anchor, payment behavior, and proration choices.
+     * @param options Per-request headers, timeout, and retry key.
+     * @return Subscription state, possibly still paused awaiting payment.
+     */
+    virtual Task<Subscription> resume_async(std::string subscription_id,
+                                            const ResumeSubscriptionRequest& request = {},
+                                            const RequestOptions& options = {}) = 0;
+    /**
+     * Resume and deliver the returned subscription or failure exactly once.
+     * @param subscription_id Existing subscription ID.
+     * @param request Resume billing and payment choices.
+     * @param options Per-request settings.
+     * @param completion Receives the subscription or failure.
+     */
+    virtual void resume(std::string subscription_id,
+                        const ResumeSubscriptionRequest& request,
+                        const RequestOptions& options,
+                        std::function<void(CallbackResult<Subscription>)> completion) = 0;
+    /**
+     * Upgrade to flexible billing mode. Stripe checks whether the upgrade is allowed.
+     * @param subscription_id Existing subscription ID.
+     * @param request Target flexible billing mode.
+     * @param options Per-request headers, timeout, and retry key.
+     * @return Subscription state after migration.
+     */
+    virtual Task<Subscription> migrate_async(std::string subscription_id,
+                                             const MigrateSubscriptionRequest& request = {},
+                                             const RequestOptions& options = {}) = 0;
+    /**
+     * Migrate and deliver the returned subscription or failure exactly once.
+     * @param subscription_id Existing subscription ID.
+     * @param request Target flexible billing mode.
+     * @param options Per-request settings.
+     * @param completion Receives the subscription or failure.
+     */
+    virtual void migrate(std::string subscription_id,
+                         const MigrateSubscriptionRequest& request,
+                         const RequestOptions& options,
+                         std::function<void(CallbackResult<Subscription>)> completion) = 0;
     /**
      * Set or clear cancellation at the end of the current billing period.
      * This does not cancel immediately or decide application access.

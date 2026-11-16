@@ -28,6 +28,15 @@ The suite covers:
 - Scheduled price changes at renewal, preserved quantities and additional items,
   safe retries, and continuing or ending the subscription after the last phase.
   Subscription reads also check discounts, tax rates, and automatic tax settings.
+- True subscription pause/resume and flexible-billing migration, including paused
+  and resumed webhooks. Tests check that schedule edits keep future phases,
+  removing a planned resume does not resume service, and a failed resume payment
+  leaves the subscription paused until a later successful attempt.
+
+The pause scenarios delete their test clocks and the related billing objects,
+and archive their prices and products after each test, including failed tests.
+Stripe does not allow deleting prices that have been used, so those archived
+catalog entries remain in the sandbox. Cleanup errors fail the test.
 
 The automated suite does not complete hosted Checkout in a browser. It checks
 that a payment filter excludes unrelated sessions, but does not check finding

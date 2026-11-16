@@ -23,6 +23,187 @@ protected:
     StripeApiClient client{ http };
 };
 
+TEST_F(CollectionAndInvoicesTest, TruePauseResumeAndMigrationUseDedicatedEndpoints) {
+    http.set_response({ .status_code = 200, .body = R"({
+        "id":"sub_test","status":"paused","billing_mode":{"type":"flexible"},
+        "collection_method":"charge_automatically","latest_invoice":{"id":"in_resume"},
+        "pending_update":{"expires_at":2000000000},
+        "status_details":{"paused":{"type":"subscription","transitioned_at":1800000000,
+            "subscription":{"type":"pause_requested"}}}
+    })" });
+    const RequestOptions options{ .idempotency_key = "pause-operation",
+                                  .timeout = std::chrono::seconds(8),
+                                  .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
+    auto& api = client.subscriptions();
+    const PauseSubscriptionRequest pause{ .bill_for = { .unused_time_from = { "now" },
+                                                        .outstanding_usage_through = { "none" } },
+                                          .invoicing_behavior = "invoice",
+                                          .type = "subscription" };
+    const auto paused = api.pause_async("sub/a?", pause, options).result();
+    EXPECT_EQ(paused.status, "paused");
+    EXPECT_EQ(paused.billing_mode->type, "flexible");
+    EXPECT_EQ(paused.collection_method, "charge_automatically");
+    EXPECT_EQ(paused.status_details->paused->subscription.type, "pause_requested");
+    EXPECT_EQ(paused.status_details->paused->transitioned_at_unix, 1800000000);
+    EXPECT_FALSE(paused.pause_collection.has_value());
+    EXPECT_EQ(http.get_recorded_requests().back().path, "/v1/subscriptions/sub%2Fa%3F/pause");
+    EXPECT_EQ(http.get_recorded_requests().back().body,
+              "bill_for%5Bunused_time_from%5D%5Btype%5D=now"
+              "&bill_for%5Boutstanding_usage_through%5D%5Btype%5D=none"
+              "&invoicing_behavior=invoice&type=subscription");
+    const ResumeSubscriptionRequest resume{ .billing_cycle_anchor =
+                                                ResumeSubscriptionBillingCycleAnchor{ "unchanged" },
+                                            .payment_behavior = "resume_on_payment_success",
+                                            .proration_behavior = ProrationBehavior::AlwaysInvoice,
+                                            .proration_date = 1800000000 };
+    const auto pending = api.resume_async("sub/a?", resume, options).result();
+    EXPECT_EQ(pending.status, "paused");
+    EXPECT_EQ(pending.pending_update->expires_at_unix, 2000000000);
+    EXPECT_EQ(pending.latest_invoice_id, "in_resume");
+    EXPECT_EQ(http.get_recorded_requests().back().path, "/v1/subscriptions/sub%2Fa%3F/resume");
+    EXPECT_EQ(http.get_recorded_requests().back().body,
+              "billing_cycle_anchor%5Btype%5D=unchanged&payment_behavior=resume_on_payment_success"
+              "&proration_behavior=always_invoice&proration_date=1800000000");
+    api.migrate_async("sub/a?", {}, options).result();
+    EXPECT_EQ(http.get_recorded_requests().back().path, "/v1/subscriptions/sub%2Fa%3F/migrate");
+    EXPECT_EQ(http.get_recorded_requests().back().body, "billing_mode%5Btype%5D=flexible");
+    int calls = 0;
+    const auto completion = [&](CallbackResult<Subscription> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<Subscription>(result));
+    };
+    api.pause("sub/a?", pause, options, completion);
+    EXPECT_EQ(http.get_recorded_requests().back().body, http.get_recorded_requests()[0].body);
+    api.resume("sub/a?", resume, options, completion);
+    EXPECT_EQ(http.get_recorded_requests().back().body, http.get_recorded_requests()[1].body);
+    api.migrate("sub/a?", {}, options, completion);
+    EXPECT_EQ(calls, 3);
+    for (const auto& sent : http.get_recorded_requests()) {
+        EXPECT_EQ(sent.method, HttpMethod::Post);
+        EXPECT_EQ(sent.options.timeout, options.timeout);
+        EXPECT_EQ(sent.headers.at("Idempotency-Key"), "pause-operation");
+        EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
+    }
+    api.pause_async("sub_test").result();
+    EXPECT_TRUE(http.get_recorded_requests().back().body.empty());
+    api.resume_async("sub_test").result();
+    EXPECT_TRUE(http.get_recorded_requests().back().body.empty());
+}
+
+TEST_F(CollectionAndInvoicesTest, TruePauseOperationsRejectInvalidInputAndPropagateFailures) {
+    auto& api = client.subscriptions();
+    int calls = 0;
+    const auto failure = [&](CallbackResult<Subscription> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+    };
+    EXPECT_THROW(api.pause_async("").result(), ConfigurationException);
+    EXPECT_THROW(api.resume_async("").result(), ConfigurationException);
+    EXPECT_THROW(api.migrate_async("").result(), ConfigurationException);
+    api.pause("", {}, {}, failure);
+    api.resume("", {}, {}, failure);
+    api.migrate("", {}, {}, failure);
+    for (const auto& request : std::vector<PauseSubscriptionRequest>{
+             { .bill_for = { .unused_time_from = { "pause_at" } } },
+             { .bill_for = { .outstanding_usage_through = { "item_current_period_start" } } },
+             { .invoicing_behavior = "invalid" },
+             { .type = "collection" } }) {
+        EXPECT_THROW(api.pause_async("sub", request).result(), ConfigurationException);
+        api.pause("sub", request, {}, failure);
+    }
+    for (const auto& request : std::vector<ResumeSubscriptionRequest>{
+             { .billing_cycle_anchor = ResumeSubscriptionBillingCycleAnchor{ "resume_at" } },
+             { .billing_cycle_anchor = ResumeSubscriptionBillingCycleAnchor{} },
+             { .payment_behavior = "allow_incomplete" },
+             { .proration_behavior = static_cast<ProrationBehavior>(99) },
+             { .proration_date = 0 } }) {
+        EXPECT_THROW(api.resume_async("sub", request).result(), ConfigurationException);
+        api.resume("sub", request, {}, failure);
+    }
+    EXPECT_THROW(api.migrate_async("sub", { { "classic" } }).result(), ConfigurationException);
+    api.migrate("sub", { { "classic" } }, {}, failure);
+    EXPECT_EQ(calls, 13);
+    EXPECT_TRUE(http.get_recorded_requests().empty());
+    for (int kind = 0; kind < 3; ++kind) {
+        const auto configure = [&] {
+            if (kind == 0)
+                http.set_response(
+                    { .status_code = 400,
+                      .body =
+                          R"({"error":{"type":"invalid_request_error","message":"Not eligible"}})" });
+            else if (kind == 1)
+                http.set_exception(std::make_exception_ptr(std::runtime_error("Offline")));
+            else http.set_response({ .status_code = 200, .body = "{}" });
+        };
+        configure();
+        EXPECT_THROW(api.pause_async("sub").result(), std::exception);
+        configure();
+        EXPECT_THROW(api.resume_async("sub").result(), std::exception);
+        configure();
+        EXPECT_THROW(api.migrate_async("sub").result(), std::exception);
+        configure();
+        api.pause("sub", {}, {}, failure);
+        configure();
+        api.resume("sub", {}, {}, failure);
+        configure();
+        api.migrate("sub", {}, {}, failure);
+    }
+    EXPECT_EQ(calls, 22);
+}
+
+TEST_F(CollectionAndInvoicesTest, PauseStatusDetailsRejectMalformedDataAndPreserveUnknownReasons) {
+    JsonStripeResponseParser parser;
+    const auto parsed = parser.parse_subscription({ .body = R"({
+        "id":"sub","status":"paused","billing_mode":"future_mode",
+        "status_details":{"paused":{"type":"subscription","transitioned_at":1800000000,
+            "subscription":{"type":"future_reason"}}}
+    })" });
+    EXPECT_EQ(parsed.billing_mode->type, "future_mode");
+    EXPECT_EQ(parsed.status_details->paused->subscription.type, "future_reason");
+    const auto absent = parser.parse_subscription({ .body = R"({"id":"sub","status":"active"})" });
+    EXPECT_FALSE(absent.billing_mode.has_value());
+    EXPECT_FALSE(absent.status_details.has_value());
+    for (
+        const auto* fields :
+        { R"("billing_mode":false)",
+          R"("billing_mode":{})",
+          R"("collection_method":false)",
+          R"("status_details":false)",
+          R"("status_details":{"paused":false})",
+          R"("status_details":{"paused":{"type":"subscription"}})",
+          R"("status_details":{"paused":{"type":"subscription","transitioned_at":"1800000000"}})",
+          R"("status_details":{"paused":{"type":"subscription","transitioned_at":1800000000,"subscription":false}})" }) {
+        EXPECT_THROW(
+            parser.parse_subscription(
+                { .body = std::string(R"({"id":"sub","status":"paused",)") + fields + "}" }),
+            ConfigurationException);
+    }
+}
+
+TEST_F(CollectionAndInvoicesTest, CheckoutBillingModeAndCollectionMethodAreExplicitChoices) {
+    http.set_response({ .status_code = 200, .body = R"({"id":"cs","status":"open"})" });
+    CreateCheckoutSessionRequest checkout;
+    checkout.subscription_billing_mode = SubscriptionBillingMode{ "flexible" };
+    client.checkout().sessions().create_async(checkout).result();
+    EXPECT_NE(http.get_recorded_requests().back().body.find(
+                  "subscription_data%5Bbilling_mode%5D%5Btype%5D=flexible"),
+              std::string::npos);
+    checkout.mode = "payment";
+    EXPECT_THROW(client.checkout().sessions().create_async(checkout).result(),
+                 ConfigurationException);
+    checkout.mode = "subscription";
+    checkout.subscription_billing_mode->type = "invalid";
+    EXPECT_THROW(client.checkout().sessions().create_async(checkout).result(),
+                 ConfigurationException);
+    http.set_response({ .status_code = 200, .body = subscription_json });
+    client.subscriptions()
+        .update_async("sub", { .collection_method = "charge_automatically" })
+        .result();
+    EXPECT_EQ(http.get_recorded_requests().back().body, "collection_method=charge_automatically");
+    EXPECT_THROW(client.subscriptions().update_async("sub", { .collection_method = "" }).result(),
+                 ConfigurationException);
+}
+
 TEST_F(CollectionAndInvoicesTest, SubscriptionControlsEncodeBodiesAndPreserveOptions) {
     http.set_response({ .status_code = 200, .body = subscription_json });
     const RequestOptions options{ .idempotency_key = "saved-control",

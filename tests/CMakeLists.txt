@@ -188,7 +188,7 @@ if("drogon" IN_LIST STRIPEKIT_ENABLED_ADAPTERS)
             LABELS sandbox
             ENVIRONMENT "STRIPEKIT_TEST_PROGRESS_LOG=${CMAKE_BINARY_DIR}/stripekit-sandbox-progress.log"
             RUN_SERIAL TRUE
-            TIMEOUT 900
+            TIMEOUT 1800
         )
     endif()
 endif()

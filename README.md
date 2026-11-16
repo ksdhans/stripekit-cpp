@@ -12,7 +12,8 @@ This is part of a larger project of mine, which is a full web app [foundation/st
 
 StripeKit supports Stripe-hosted Checkout for subscriptions, including
 card-required trials, and one-time card payments, reusable products and prices,
-and customer billing portal sessions.
+and customer billing portal sessions. Subscription controls include true pauses
+and resume attempts, scheduled pauses, and separate payment-collection pauses.
 It sends API requests, parses responses, and verifies and parses webhooks.
 
 It covers a subset of Stripe's API, focused on hosted Checkout. Embedded/custom

@@ -210,8 +210,8 @@ phase starts.
 
 Create a schedule from an existing subscription to copy its current billing
 settings. This does not create another subscription or immediately change its
-price. Stripe allows only the subscription ID in this creation request; set
-metadata and future phases in a separate update.
+price. You can also include `pause_schedules` when creating from a subscription;
+set metadata and future phases in a separate update.
 
 @code{.cpp}
 stripekit::RequestOptions options;
@@ -249,21 +249,22 @@ const auto changed = co_await stripe->subscription_schedules().update_async(
 
 Things to know:
 
-- Updates replace the current and future phases, rather than changing just one
-  field. Include every price, quantity, automatic-tax setting, and discount you
-  want to keep. Reuse the returned coupon or promotion-code IDs so Stripe
-  retains the discount's configured duration.
+- Supplying phases replaces the current and future phases, rather than changing
+  just one field. Include every price, quantity, automatic-tax setting, and
+  discount you want to keep. Reuse the returned coupon or promotion-code IDs so
+  Stripe retains the discount's configured duration.
 - Specify either `end_date` or `duration` for each phase, not both.
   A duration of `{ "month", 1 }` means one calendar month, independently of
   the prices' billing intervals.
   Dates are Unix seconds, and adjacent phases must meet at the same timestamp.
-- The default adjustment policy is `ProrationBehavior::None`, meaning no
-  partial-period charges or credits. Set the request's `proration_behavior` to
-  control adjustments to the current phase, and each phase's policy to control
-  adjustments when that phase starts.
-- The default `end_behavior` is `SubscriptionScheduleEndBehavior::Release`.
-  After the final phase, the subscription keeps running at its last settings;
-  it does not revert to the old price. `Cancel` ends the subscription instead.
+- When replacing phases, `proration_behavior` defaults to
+  `ProrationBehavior::None`: no partial-period charges or credits. Set it on
+  the request to control adjustments to the current phase, and on each phase
+  to control adjustments when that phase starts.
+- When replacing phases, `end_behavior` defaults to
+  `SubscriptionScheduleEndBehavior::Release`. After the final phase, the
+  subscription keeps running at its last settings; it does not revert to the
+  old price. `Cancel` ends the subscription instead.
 - Schedule metadata belongs to the schedule. Phase metadata is applied to the
   subscription when that phase starts.
 - Read `schedule_id`, `discount_ids`, `default_tax_rate_ids`, and
@@ -286,6 +287,180 @@ The callback methods are `create()`, `retrieve()`, and `update()`. They report a
 schedule or a failure exactly once. Invalid dates, empty IDs, or invalid
 quantities fail with `ConfigurationException`; Stripe rejections throw
 `StripeApiException`.
+
+@section subscription_pause Pause and resume subscriptions
+
+Use `pause_async()` when a customer temporarily stops using the service.
+It changes the subscription's `status` to `paused` and stops new invoices
+without canceling the subscription. Your application must stop service access.
+Use `pause_collection_async()` instead if the customer should keep access;
+it leaves the subscription's status and invoice generation unchanged.
+
+@subsection subscription_pause_requirements Before you pause
+
+Pausing requires **flexible billing mode** and `charge_automatically`
+collection. Scheduled pauses also require these settings on the schedule and
+every phase. Check `subscription.billing_mode` and `collection_method`.
+Stripe rejects subscriptions that cannot pause, such as those with an active
+subscription-level trial. See Stripe's
+[pause requirements](https://docs.stripe.com/billing/subscriptions/pause#limitations)
+for the full list.
+
+For new Checkout subscriptions, set
+`CreateCheckoutSessionRequest::subscription_billing_mode` to
+`SubscriptionBillingMode{ "flexible" }`. To upgrade an existing subscription:
+
+@code{.cpp}
+const auto migrated = co_await stripe->subscriptions().migrate_async(
+    subscription_id, {}, { .idempotency_key = "saved-billing-mode-migration" });
+@endcode
+
+For classic billing, call `migrate_async()` before pausing; Stripe checks
+whether the upgrade is allowed. To change collection, set
+`UpdateSubscriptionRequest::collection_method`. Schedules report collection
+settings in `default_collection_method` and each phase's `collection_method`.
+
+@subsection subscription_pause_now Pause immediately
+
+For a subscription **without an attached schedule**:
+
+@code{.cpp}
+stripekit::PauseSubscriptionRequest pause;
+pause.bill_for.unused_time_from.type = "now";
+pause.bill_for.outstanding_usage_through.type = "now";
+pause.invoicing_behavior = "pending_invoice_item";
+const auto paused = co_await stripe->subscriptions().pause_async(
+    subscription_id, pause, { .idempotency_key = "saved-pause" });
+@endcode
+
+Choose how to handle the current billing period:
+
+| Setting | Choices |
+|---------|---------|
+| `bill_for.unused_time_from.type` | Credit unused time from `now` (default) or `item_current_period_start`; `none` gives no credit. |
+| `bill_for.outstanding_usage_through.type` | Bill metered usage through `now` (default); `none` skips it. |
+| `invoicing_behavior` | `invoice` bills immediately; `pending_invoice_item` (default) saves credits and charges for a later invoice. |
+
+Existing invoices and payment retries continue. Coupon validity periods also
+continue during a pause.
+
+@subsection subscription_resume_now Resume immediately
+
+For a paused subscription **without an attached schedule**:
+
+@code{.cpp}
+stripekit::ResumeSubscriptionRequest resume;
+resume.billing_cycle_anchor = stripekit::ResumeSubscriptionBillingCycleAnchor{ "now" };
+resume.payment_behavior = "resume_on_payment_success";
+resume.proration_behavior = stripekit::ProrationBehavior::CreateProrations;
+const auto resumed = co_await stripe->subscriptions().resume_async(
+    subscription_id, resume, { .idempotency_key = "saved-resume" });
+@endcode
+
+The billing anchor accepts `now` (default) to start a new billing period, or
+`unchanged` to keep the existing billing dates. Use `proration_date` to choose
+the Unix timestamp for calculating partial-period adjustments.
+
+With `resume_on_payment_success`, Stripe attempts payment if it creates a
+resume invoice. The subscription stays paused while payment is outstanding.
+Without an explicit payment behavior, `resume_async()` uses
+`resume_on_payment_attempt`: Stripe finalizes any resume invoice without
+attempting payment. If no invoice is needed, the subscription can become
+active immediately.
+
+A successful request **does not mean the subscription is active**. Check
+`status`, `pending_update`, and `latest_invoice_id` before restoring access.
+
+@subsection subscription_pause_schedules Schedule pauses and resume attempts
+
+If `subscription.schedule_id` is present, read and update that schedule instead
+of using the subscription's `pause_async()` or `resume_async()` methods.
+Do not create another schedule or release the existing one just to pause.
+
+This example adds a new pause and resume date to an existing schedule.
+If it already has a pause schedule, edit that entry as shown in
+@ref subscription_pause_edit instead.
+Leave `phases`, `end_behavior`, and `proration_behavior` unset to keep its
+current prices, future phases, and billing settings:
+
+@code{.cpp}
+stripekit::SubscriptionSchedulePauseScheduleRequest entry;
+entry.pause = stripekit::SubscriptionSchedulePauseRequest{
+    .pause_at = stripekit::SubscriptionPauseTime{ .type = "now" } };
+entry.resume = stripekit::SubscriptionScheduleResumeRequest{
+    .resume_at = stripekit::SubscriptionPauseTime{
+        .type = "timestamp", .timestamp = future_resume_unix_seconds } };
+
+stripekit::UpdateSubscriptionScheduleRequest changes;
+changes.pause_schedules =
+    std::vector<stripekit::SubscriptionSchedulePauseScheduleRequest>{ entry };
+const auto changed = co_await stripe->subscription_schedules().update_async(
+    subscription.schedule_id, changes, { .idempotency_key = "saved-scheduled-pause" });
+@endcode
+
+When there is **no attached schedule**, create one with the same pause entry:
+
+@code{.cpp}
+const auto created = co_await stripe->subscription_schedules().create_async(
+    { .from_subscription = subscription_id, .pause_schedules = { entry } });
+@endcode
+
+- Use `pause_at.type = "timestamp"` with `timestamp` for a future pause.
+  When creating a pause, omit `resume` to leave it paused until you resume it.
+- To schedule a resume for an already-paused subscription, omit `pause` and
+  supply only `resume`.
+- A resume time accepts `now`, `timestamp`, or `duration`. For duration, set
+  `duration = SubscriptionPauseDuration{ "month", 1 }` to start a resume
+  attempt one month after pausing.
+- Pause `settings` use the same billing choices as `pause_async()`, but use
+  `pause_at` instead of `now` for billing points. Resume `settings` accept
+  `billing_cycle_anchor` (`resume_at` or `unchanged`), `payment_behavior`, and
+  `proration_behavior`.
+- Scheduled resumes default to `resume_at`, `resume_on_payment_success`, and
+  `create_prorations`. Unlike `resume_async()`, they attempt payment by default.
+- Resume must be after pause. Dates must fit the schedule's start and end dates,
+  avoid trials, and be no more than 20 years in the future. Stripe checks these
+  dates when you save the schedule.
+
+@subsection subscription_pause_edit Change or remove planned actions
+
+Each schedule supports one pause schedule. **Include its existing `key` when
+editing** to keep settings you do not supply. Without that key, your entry
+replaces the pause schedule. For example, to resume now without changing the
+saved billing settings:
+
+@code{.cpp}
+stripekit::SubscriptionSchedulePauseScheduleRequest edit;
+edit.key = changed.pause_schedules.at(0).key;
+edit.resume = stripekit::SubscriptionScheduleResumeRequest{
+    .resume_at = stripekit::SubscriptionPauseTime{ .type = "now" } };
+changes.pause_schedules =
+    std::vector<stripekit::SubscriptionSchedulePauseScheduleRequest>{ edit };
+const auto result = co_await stripe->subscription_schedules().update_async(
+    changed.id, changes);
+@endcode
+
+To remove only a planned resume, send the entry's key and `clear_resume = true`,
+with `resume` unset. To clear the whole pause schedule, set `pause_schedules`
+to an empty vector. Leaving `pause_schedules` unset makes no pause changes.
+Removing a planned action does not undo a pause or resume a subscription.
+
+The returned `pause` and `resume` report their dates and `status.type`.
+Read `status.error` if an action fails. If a resume is `pending` or
+`requires_action`, handle its unpaid invoice before editing or removing the
+attempt. Even a `succeeded` resume can leave the subscription `past_due`;
+check subscription and invoice status before restoring access.
+Schedule phases can still change while the subscription is paused.
+
+Follow verified `customer.subscription.paused`, `customer.subscription.resumed`,
+and `customer.subscription.updated` webhooks for access changes. Merely
+scheduling an action does not emit paused or resumed events. A paused
+subscription's `status_details.paused` reports its transition time and reason.
+The subscription methods also have callback forms: `pause()`, `resume()`, and
+`migrate()`. They report a result or failure exactly once.
+
+See Stripe's [scheduled pause guide](https://docs.stripe.com/billing/subscriptions/pause/schedules)
+for date restrictions, payment outcomes, and rescheduling failed actions.
 
 @section collection_controls Schedule cancellation or pause collection
 

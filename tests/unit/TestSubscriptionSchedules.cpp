@@ -59,6 +59,276 @@ protected:
     StripeApiClient client{ http };
 };
 
+TEST_F(SubscriptionSchedulesTest, PauseSchedulesSupportCreationAndKeyedPartialUpdates) {
+    http.set_response(response(schedule_json()));
+    SubscriptionSchedulePauseScheduleRequest entry{
+        .pause =
+            SubscriptionSchedulePauseRequest{
+                .pause_at = SubscriptionPauseTime{ .type = "now" },
+                .settings =
+                    SubscriptionPauseSettings{
+                        .bill_for = { .unused_time_from = { "pause_at" },
+                                      .outstanding_usage_through = { "none" } },
+                        .invoicing_behavior = "invoice",
+                        .type = "subscription" } },
+        .resume =
+            SubscriptionScheduleResumeRequest{
+                .resume_at =
+                    SubscriptionPauseTime{ .type = "duration",
+                                           .duration = SubscriptionPauseDuration{ "month", 1 } },
+                .settings = SubscriptionScheduleResumeSettings{ .billing_cycle_anchor = "resume_at",
+                                                                .payment_behavior =
+                                                                    "resume_on_payment_success",
+                                                                .proration_behavior = "none" } }
+    };
+    auto& api = client.subscription_schedules();
+    api.create_async({ .from_subscription = "sub/a?", .pause_schedules = { entry } }).result();
+    EXPECT_EQ(
+        http.get_recorded_requests().back().body,
+        "from_subscription=sub%2Fa%3F"
+        "&pause_schedules%5B0%5D%5Bpause%5D%5Bpause_at%5D%5Btype%5D=now"
+        "&pause_schedules%5B0%5D%5Bpause%5D%5Bsettings%5D%5Bbill_for%5D%5Bunused_time_from%5D%"
+        "5Btype%5D=pause_at"
+        "&pause_schedules%5B0%5D%5Bpause%5D%5Bsettings%5D%5Bbill_for%5D%5Boutstanding_usage_"
+        "through%5D%5Btype%5D=none"
+        "&pause_schedules%5B0%5D%5Bpause%5D%5Bsettings%5D%5Binvoicing_behavior%5D=invoice"
+        "&pause_schedules%5B0%5D%5Bpause%5D%5Bsettings%5D%5Btype%5D=subscription"
+        "&pause_schedules%5B0%5D%5Bresume%5D%5Bresume_at%5D%5Btype%5D=duration"
+        "&pause_schedules%5B0%5D%5Bresume%5D%5Bresume_at%5D%5Bduration%5D%5Binterval%5D=month"
+        "&pause_schedules%5B0%5D%5Bresume%5D%5Bresume_at%5D%5Bduration%5D%5Binterval_count%5D=1"
+        "&pause_schedules%5B0%5D%5Bresume%5D%5Bsettings%5D%5Bbilling_cycle_anchor%5D=resume_at"
+        "&pause_schedules%5B0%5D%5Bresume%5D%5Bsettings%5D%5Bpayment_behavior%5D=resume_on_payment_"
+        "success"
+        "&pause_schedules%5B0%5D%5Bresume%5D%5Bsettings%5D%5Bproration_behavior%5D=none");
+    entry = { .key = "pause/key?",
+              .resume = SubscriptionScheduleResumeRequest{
+                  .resume_at = SubscriptionPauseTime{ .type = "now" } } };
+    UpdateSubscriptionScheduleRequest update;
+    update.pause_schedules = std::vector{ entry };
+    const RequestOptions options{ .idempotency_key = "edit-pause",
+                                  .timeout = std::chrono::seconds(7),
+                                  .headers = { { "Stripe-Version", default_stripe_api_version } } };
+    int calls = 0;
+    api.update("sched/a?", update, options, [&](CallbackResult<SubscriptionSchedule> value) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<SubscriptionSchedule>(value));
+    });
+    EXPECT_EQ(calls, 1);
+    const auto sent = http.get_recorded_requests().back();
+    EXPECT_EQ(sent.path, "/v1/subscription_schedules/sched%2Fa%3F");
+    EXPECT_EQ(sent.body,
+              "pause_schedules%5B0%5D%5Bkey%5D=pause%2Fkey%3F"
+              "&pause_schedules%5B0%5D%5Bresume%5D%5Bresume_at%5D%5Btype%5D=now");
+    EXPECT_EQ(sent.headers.at("Idempotency-Key"), "edit-pause");
+    EXPECT_EQ(sent.headers.at("Stripe-Version"), default_stripe_api_version);
+    EXPECT_EQ(sent.options.timeout, options.timeout);
+    update.pause_schedules =
+        std::vector<SubscriptionSchedulePauseScheduleRequest>{ { .key = "existing",
+                                                                 .clear_resume = true } };
+    api.update_async("sched", update).result();
+    EXPECT_EQ(http.get_recorded_requests().back().body,
+              "pause_schedules%5B0%5D%5Bkey%5D=existing&pause_schedules%5B0%5D%5Bresume%5D=");
+    update.pause_schedules->clear();
+    api.update_async("sched", update).result();
+    EXPECT_EQ(http.get_recorded_requests().back().body, "pause_schedules=");
+}
+
+TEST_F(SubscriptionSchedulesTest,
+       PauseSchedulesAllowFuturePauseAndResumeOnlyForPausedSubscriptions) {
+    http.set_response(response(schedule_json()));
+    SubscriptionSchedulePauseScheduleRequest entry{
+        .pause =
+            SubscriptionSchedulePauseRequest{
+                .pause_at = SubscriptionPauseTime{ .type = "timestamp", .timestamp = 1900000000 } },
+        .resume =
+            SubscriptionScheduleResumeRequest{
+                .resume_at = SubscriptionPauseTime{ .type = "timestamp", .timestamp = 1901000000 } }
+    };
+    UpdateSubscriptionScheduleRequest update;
+    update.pause_schedules = std::vector{ entry };
+    client.subscription_schedules().update_async("sched", update).result();
+    const auto both = http.get_recorded_requests().back().body;
+    EXPECT_NE(both.find("pause_at%5D%5Btimestamp%5D=1900000000"), std::string::npos);
+    EXPECT_NE(both.find("resume_at%5D%5Btimestamp%5D=1901000000"), std::string::npos);
+    entry.pause.reset();
+    client.subscription_schedules().create_async({ "sub_paused", { entry } }).result();
+    const auto resume_only = http.get_recorded_requests().back().body;
+    EXPECT_EQ(resume_only.find("%5Bpause%5D"), std::string::npos);
+    EXPECT_NE(resume_only.find("resume_at%5D%5Btimestamp%5D=1901000000"), std::string::npos);
+    auto phases = update_request();
+    phases.default_collection_method = "charge_automatically";
+    phases.phases[0].collection_method = "charge_automatically";
+    phases.pause_schedules = std::vector{ entry };
+    client.subscription_schedules().update_async("sched", phases).result();
+    const auto body = http.get_recorded_requests().back().body;
+    EXPECT_NE(body.find("default_settings%5Bcollection_method%5D=charge_automatically"),
+              std::string::npos);
+    EXPECT_NE(body.find("phases%5B0%5D%5Bcollection_method%5D=charge_automatically"),
+              std::string::npos);
+}
+
+TEST_F(SubscriptionSchedulesTest, PauseSchedulesRejectAmbiguousTimesAndConflictingChanges) {
+    int calls = 0;
+    for (int invalid = 0; invalid < 16; ++invalid) {
+        SubscriptionSchedulePauseScheduleRequest entry{
+            .pause =
+                SubscriptionSchedulePauseRequest{
+                    .pause_at =
+                        SubscriptionPauseTime{ .type = "timestamp", .timestamp = 1900000000 } },
+            .resume =
+                SubscriptionScheduleResumeRequest{
+                    .resume_at =
+                        SubscriptionPauseTime{ .type = "timestamp", .timestamp = 1901000000 } }
+        };
+        switch (invalid) {
+        case 0:
+            entry.pause->pause_at->timestamp.reset();
+            break;
+        case 1:
+            entry.pause->pause_at->timestamp = 0;
+            break;
+        case 2:
+            entry.pause->pause_at->type = "now";
+            break;
+        case 3:
+            entry.pause->pause_at->type = "invalid";
+            break;
+        case 4:
+            entry.pause->pause_at =
+                SubscriptionPauseTime{ .type = "duration",
+                                       .duration = SubscriptionPauseDuration{ "month", 1 } };
+            break;
+        case 5:
+            entry.resume->resume_at->timestamp = 1900000000;
+            break;
+        case 6:
+            entry.resume->resume_at =
+                SubscriptionPauseTime{ .type = "duration",
+                                       .duration = SubscriptionPauseDuration{ "hour", 1 } };
+            break;
+        case 7:
+            entry.resume->resume_at =
+                SubscriptionPauseTime{ .type = "duration",
+                                       .duration = SubscriptionPauseDuration{ "month", 0 } };
+            break;
+        case 8:
+            entry.key = std::string(41, 'a');
+            break;
+        case 9:
+            entry.clear_resume = true;
+            break;
+        case 10:
+            entry = {};
+            break;
+        case 11:
+            entry.pause->settings =
+                SubscriptionPauseSettings{ .bill_for = { .unused_time_from = { "now" } } };
+            break;
+        case 12:
+            entry.resume->settings =
+                SubscriptionScheduleResumeSettings{ .billing_cycle_anchor = "now" };
+            break;
+        case 13:
+            entry.resume->settings =
+                SubscriptionScheduleResumeSettings{ .payment_behavior = "allow_incomplete" };
+            break;
+        case 14:
+            entry.resume->settings =
+                SubscriptionScheduleResumeSettings{ .proration_behavior = "invalid" };
+            break;
+        case 15:
+            entry = { .clear_resume = true };
+            break;
+        }
+        UpdateSubscriptionScheduleRequest request;
+        request.pause_schedules = std::vector{ entry };
+        EXPECT_THROW(client.subscription_schedules().update_async("sched", request).result(),
+                     ConfigurationException);
+        client.subscription_schedules().update(
+            "sched", request, {}, [&](CallbackResult<SubscriptionSchedule> value) {
+                ++calls;
+                EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(value));
+            });
+        EXPECT_THROW(client.subscription_schedules().create_async({ "sub", { entry } }).result(),
+                     ConfigurationException);
+    }
+    UpdateSubscriptionScheduleRequest too_many;
+    too_many.pause_schedules = std::vector<SubscriptionSchedulePauseScheduleRequest>(2);
+    EXPECT_THROW(client.subscription_schedules().update_async("sched", too_many).result(),
+                 ConfigurationException);
+    EXPECT_EQ(calls, 16);
+    EXPECT_TRUE(http.get_recorded_requests().empty());
+}
+
+TEST_F(SubscriptionSchedulesTest, PauseScheduleResponsesExposeSettingsActionStatusesAndErrors) {
+    auto value = schedule_json();
+    value["billing_mode"]["type"] = "flexible";
+    value["default_settings"]["collection_method"] = "charge_automatically";
+    value["phases"][0]["collection_method"] = "charge_automatically";
+    auto& entry = value["pause_schedules"][0];
+    entry["key"] = "saved-key";
+    entry["pause"]["pause_at"] = 1900000000;
+    entry["pause"]["settings"]["bill_for"]["unused_time_from"]["type"] = "pause_at";
+    entry["pause"]["settings"]["invoicing_behavior"] = "invoice";
+    entry["pause"]["status"]["type"] = "succeeded";
+    entry["resume"]["resume_at"] = 1901000000;
+    entry["resume"]["settings"]["billing_cycle_anchor"] = "resume_at";
+    entry["resume"]["settings"]["payment_behavior"] = "resume_on_payment_success";
+    entry["resume"]["settings"]["proration_behavior"] = "create_prorations";
+    JsonStripeResponseParser parser;
+    for (const auto* status :
+         { "scheduled", "pending", "requires_action", "succeeded", "error", "future" }) {
+        entry["resume"]["status"]["type"] = status;
+        entry["resume"]["status"]["error"]["code"] = "resume_failed";
+        entry["resume"]["status"]["error"]["message"] = "No payment method";
+        const auto parsed = parser.parse_subscription_schedule(response(value));
+        EXPECT_EQ(parsed.billing_mode->type, "flexible");
+        EXPECT_EQ(parsed.default_collection_method, "charge_automatically");
+        EXPECT_EQ(parsed.phases[0].collection_method, "charge_automatically");
+        const auto& saved = parsed.pause_schedules.at(0);
+        EXPECT_EQ(saved.key, "saved-key");
+        EXPECT_EQ(saved.pause->pause_at_unix, 1900000000);
+        EXPECT_EQ(saved.pause->settings->bill_for.unused_time_from.type, "pause_at");
+        EXPECT_EQ(saved.resume->resume_at_unix, 1901000000);
+        EXPECT_EQ(saved.resume->settings->payment_behavior, "resume_on_payment_success");
+        EXPECT_EQ(saved.resume->status.type, status);
+        EXPECT_EQ(saved.resume->status.error->code, "resume_failed");
+        EXPECT_EQ(saved.resume->status.error->message, "No payment method");
+    }
+    const auto original = value;
+    for (int invalid = 0; invalid < 8; ++invalid) {
+        value = original;
+        auto& changed = value["pause_schedules"][0];
+        switch (invalid) {
+        case 0:
+            value["pause_schedules"] = false;
+            break;
+        case 1:
+            changed["key"] = "";
+            break;
+        case 2:
+            changed["pause"]["pause_at"] = "1900000000";
+            break;
+        case 3:
+            changed["resume"]["resume_at"] = Json::nullValue;
+            break;
+        case 4:
+            changed["resume"]["status"] = false;
+            break;
+        case 5:
+            changed["pause"]["settings"]["bill_for"] = false;
+            break;
+        case 6:
+            changed["resume"]["settings"]["payment_behavior"] = false;
+            break;
+        case 7:
+            changed["resume"]["status"]["error"]["message"] = false;
+            break;
+        }
+        EXPECT_THROW(parser.parse_subscription_schedule(response(value)), ConfigurationException);
+    }
+}
+
 TEST_F(SubscriptionSchedulesTest, RequestsEncodeDatesQuantitiesMetadataAndOptionsInBothForms) {
     http.set_response(response(schedule_json()));
     const RequestOptions options{ .idempotency_key = "saved",

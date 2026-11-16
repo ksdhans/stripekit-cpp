@@ -689,6 +689,31 @@ private:
 
     class SubscriptionOperations final : public Subscriptions {
     public:
+        /** Pause service and invoice generation. */
+        Task<Subscription>
+        pause_async(std::string, const PauseSubscriptionRequest&, const RequestOptions&) override;
+        /** Deliver a pause result or failure once. */
+        void pause(std::string,
+                   const PauseSubscriptionRequest&,
+                   const RequestOptions&,
+                   UpdateCompletion) override;
+        /** Start a resume attempt. */
+        Task<Subscription>
+        resume_async(std::string, const ResumeSubscriptionRequest&, const RequestOptions&) override;
+        /** Deliver a resume result or failure once. */
+        void resume(std::string,
+                    const ResumeSubscriptionRequest&,
+                    const RequestOptions&,
+                    UpdateCompletion) override;
+        /** Explicitly upgrade billing mode. */
+        Task<Subscription> migrate_async(std::string,
+                                         const MigrateSubscriptionRequest&,
+                                         const RequestOptions&) override;
+        /** Deliver a migration result or failure once. */
+        void migrate(std::string,
+                     const MigrateSubscriptionRequest&,
+                     const RequestOptions&,
+                     UpdateCompletion) override;
         /** Set or clear cancellation at period end. */
         Task<Subscription>
         set_cancel_at_period_end_async(std::string, bool, const RequestOptions&) override;

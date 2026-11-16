@@ -47,6 +47,8 @@ namespace {
 constexpr const char* forwarded_event_types = "customer.created,"
                                               "customer.subscription.created,"
                                               "customer.subscription.updated,"
+                                              "customer.subscription.paused,"
+                                              "customer.subscription.resumed,"
                                               "customer.subscription.deleted,"
                                               "customer.subscription.trial_will_end,"
                                               "checkout.session.expired,"

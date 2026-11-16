@@ -363,6 +363,68 @@ struct SubscriptionCollectionPause {
     std::optional<std::int64_t> resumes_at_unix;
 };
 
+/** Billing mode used by a subscription or subscription schedule. */
+struct SubscriptionBillingMode {
+    /** classic or flexible; true subscription pauses require flexible. */
+    std::string type;
+};
+
+/** Point in the billing period from which to credit time or collect usage. */
+struct SubscriptionPauseBillingPoint {
+    /** now for direct pauses, pause_at for scheduled pauses, none, or item_current_period_start. */
+    std::string type;
+};
+
+/** Credits and usage charges to create when pausing a subscription. */
+struct SubscriptionPauseBillFor {
+    /** Credit unused licensed time from this point. */
+    SubscriptionPauseBillingPoint unused_time_from;
+    /** Charge metered usage through this point; only now, pause_at, or none is allowed. */
+    SubscriptionPauseBillingPoint outstanding_usage_through;
+};
+
+/** Pause billing choices. Leave fields empty to use defaults or keep settings with the same key. */
+struct SubscriptionPauseSettings {
+    /** Credits and metered charges to create when pausing. */
+    SubscriptionPauseBillFor bill_for;
+    /** invoice or pending_invoice_item. */
+    std::string invoicing_behavior;
+    /** subscription, or empty to use Stripe's default. */
+    std::string type;
+};
+
+/** Billing and payment choices for a scheduled resume. */
+struct SubscriptionScheduleResumeSettings {
+    /** resume_at or unchanged; empty preserves an existing choice or uses Stripe's default. */
+    std::string billing_cycle_anchor;
+    /** resume_on_payment_attempt or resume_on_payment_success. */
+    std::string payment_behavior;
+    /** create_prorations, always_invoice, or none. */
+    std::string proration_behavior;
+};
+
+/** Why a subscription was paused. */
+struct SubscriptionPauseReason {
+    /** For example pause_requested, trial_end_without_payment_method, or system. */
+    std::string type;
+};
+
+/** When and why the subscription entered its paused status. */
+struct SubscriptionPausedStatusDetails {
+    /** Reason from Stripe's status_details.paused.subscription object. */
+    SubscriptionPauseReason subscription;
+    /** Unix seconds when the subscription became paused. */
+    std::int64_t transitioned_at_unix = 0;
+    /** Source of the pause details, normally subscription. */
+    std::string type;
+};
+
+/** Details of the current status. Use Subscription::status to decide whether it is paused. */
+struct SubscriptionStatusDetails {
+    /** Present when Stripe reports details for a paused subscription. */
+    std::optional<SubscriptionPausedStatusDetails> paused;
+};
+
 /**
  * A Stripe subscription: a customer's recurring agreement to pay.
  *
@@ -427,6 +489,58 @@ struct Subscription {
     bool automatic_tax_enabled = false;
     /** Why Stripe disabled automatic tax, when present. */
     std::string automatic_tax_disabled_reason;
+    /** Absent when Stripe does not report the billing mode. */
+    std::optional<SubscriptionBillingMode> billing_mode;
+    /** charge_automatically is required for pause and resume. */
+    std::string collection_method;
+    /** Pause reason and transition time, when provided by Stripe. */
+    std::optional<SubscriptionStatusDetails> status_details;
+};
+
+/** Stripe's explanation of a failed scheduled pause or resume. */
+struct SubscriptionScheduleActionError {
+    /** Machine-readable code, empty when absent. */
+    std::string code;
+    /** Description of the failure. */
+    std::string message;
+};
+
+/** Status of one scheduled action, separate from the subscription's status. */
+struct SubscriptionScheduleActionStatus {
+    /** scheduled, pending, requires_action, succeeded, or error. Stripe may add other values. */
+    std::string type;
+    /** Details of a failed action, when supplied. */
+    std::optional<SubscriptionScheduleActionError> error;
+};
+
+/** A scheduled pause and its current result. */
+struct SubscriptionSchedulePause {
+    /** Pause date in Unix seconds. */
+    std::int64_t pause_at_unix = 0;
+    /** Billing settings, absent when Stripe omits them. */
+    std::optional<SubscriptionPauseSettings> settings;
+    /** Result of the pause, not the subscription's current status. */
+    SubscriptionScheduleActionStatus status;
+};
+
+/** A scheduled resume attempt; check subscription status before restoring service. */
+struct SubscriptionScheduleResume {
+    /** Resume-attempt date in Unix seconds. */
+    std::int64_t resume_at_unix = 0;
+    /** Billing and payment choices for the attempt. */
+    std::optional<SubscriptionScheduleResumeSettings> settings;
+    /** Attempt status; pending or requires_action does not restore access. */
+    SubscriptionScheduleActionStatus status;
+};
+
+/** One pause schedule returned by Stripe. Keep its key when editing it. */
+struct SubscriptionSchedulePauseSchedule {
+    /** Pass this key when editing to retain omitted settings. */
+    std::string key;
+    /** Pause date, choices, and result, when reported. */
+    std::optional<SubscriptionSchedulePause> pause;
+    /** Planned resume attempt, absent when no resume is scheduled. */
+    std::optional<SubscriptionScheduleResume> resume;
 };
 
 /** A discount reference that can be sent back when replacing schedule phases. */
@@ -458,6 +572,8 @@ struct SubscriptionSchedulePhase {
     std::unordered_map<std::string, std::string> metadata;
     std::optional<AutomaticTax> automatic_tax;
     std::vector<SubscriptionScheduleDiscount> discounts;
+    /** Empty when inherited from schedule defaults. */
+    std::string collection_method;
 };
 
 /** Start and end of the currently running schedule phase, absent after release or cancellation. */
@@ -482,6 +598,12 @@ struct SubscriptionSchedule {
     std::optional<AutomaticTax> default_automatic_tax;
     std::vector<SubscriptionSchedulePhase> phases;
     std::unordered_map<std::string, std::string> metadata;
+    /** Billing mode inherited by the subscription. */
+    std::optional<SubscriptionBillingMode> billing_mode;
+    /** Collection default inherited by phases without an override. */
+    std::string default_collection_method;
+    /** The pause schedule and each action's current result. */
+    std::vector<SubscriptionSchedulePauseSchedule> pause_schedules;
 };
 
 /**
