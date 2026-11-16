@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.8.0 2026-11-16
+
 - Split sandbox tests into separately runnable groups.
 - Add immediate and scheduled subscription pause/resume, with flexible billing
   support and preservation of existing schedule settings.
