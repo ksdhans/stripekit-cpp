@@ -30,17 +30,18 @@ For adding support for other web frameworks, see [Writing an Adapter](docs/Writi
 
 ## Stripe API version
 
-StripeKit sends `Stripe-Version: 2026-10-28.endive` by default, regardless of
-your Stripe account's default version. You do not need to set it for each call.
+StripeKit requires Stripe API `2026-10-28.endive` or later and sends that version
+by default, regardless of your Stripe account's default version.
+You do not need to set it for each call.
 The pinned version is available as `stripekit::default_stripe_api_version`.
 
 To use another version for a request, set
 `RequestOptions::headers["Stripe-Version"]`. The chosen version must support
-the operation and its parameters. StripeKit targets the pinned version;
-overrides do not automatically adapt requests to older API versions.
+the operation and its parameters and must not be older than the supported minimum.
 
 This setting does not change your account or webhook endpoint API versions.
-Configure webhook endpoint versions separately in Stripe.
+Configure webhook endpoint versions separately in Stripe, using the supported
+minimum or later.
 
 ## Roadmap
 

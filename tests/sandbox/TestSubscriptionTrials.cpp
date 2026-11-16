@@ -166,25 +166,14 @@ protected:
         EXPECT_TRUE(invoice.paid);
         check_event("invoice.paid", initial_invoice_id);
 
-        for (const auto& options :
-             { RequestOptions{ .headers = { { "Stripe-Version", "2024-06-20" } } },
-               RequestOptions{} }) {
-            const auto saved = environment->stripe_client()
-                                   .subscriptions()
-                                   .retrieve_async(subscription.id, options)
-                                   .result();
-            EXPECT_EQ(saved.trial_end_unix, subscription.trial_end_unix);
-            ASSERT_EQ(saved.items.size(), 1U);
-            EXPECT_EQ(saved.items.front().price_id, price_id);
-            if (saved.items.front().current_period_end_unix.has_value()) {
-                EXPECT_EQ(saved.items.front().current_period_end_unix.value(),
-                          subscription.trial_end_unix.value());
-                EXPECT_EQ(saved.items.front().current_period_start_unix.value(), frozen_time);
-            } else {
-                EXPECT_EQ(saved.current_period_end_unix, subscription.trial_end_unix.value());
-                EXPECT_EQ(saved.current_period_start_unix, frozen_time);
-            }
-        }
+        const auto saved =
+            environment->stripe_client().subscriptions().retrieve_async(subscription.id).result();
+        EXPECT_EQ(saved.trial_end_unix, subscription.trial_end_unix);
+        ASSERT_EQ(saved.items.size(), 1U);
+        EXPECT_EQ(saved.items.front().price_id, price_id);
+        EXPECT_EQ(saved.items.front().current_period_end_unix.value(),
+                  subscription.trial_end_unix.value());
+        EXPECT_EQ(saved.items.front().current_period_start_unix.value(), frozen_time);
         return subscription;
     }
 
@@ -261,7 +250,7 @@ TEST_F(SandboxTrialTest, CheckoutTrialSettingsRetrievalAndIdempotentRetry) {
         const RequestOptions options{ .idempotency_key =
                                           environment->run_id() +
                                           (existing_customer ? "_trial_existing" : "_trial_new"),
-                                      .headers = { { "Stripe-Version", "2024-06-20" } } };
+                                      .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
         const auto session = create_session(request, options);
         const auto retry = environment->stripe_client()
                                .checkout()
@@ -405,7 +394,8 @@ TEST_F(SandboxTrialTest, CheckoutManagementPaymentIntentFilterExcludesUnrelatedS
         "/v1/payment_intents",
         { { "amount", "1500" },
           { "currency", "usd" },
-          { "payment_method_types[]", "card" },
+          { "automatic_payment_methods[enabled]", "true" },
+          { "automatic_payment_methods[allow_redirects]", "never" },
           { "metadata[stripekit_run_id]", environment->run_id() } });
     environment->stripe_api().require_post("/v1/payment_intents/" + intent.id() + "/cancel", {});
     ListCheckoutSessionsRequest request;
@@ -468,8 +458,8 @@ TEST_F(SandboxTrialTest, TrialEndAuthenticationNeedsCustomerAction) {
     EXPECT_FALSE(invoice.paid);
     EXPECT_EQ(invoice.amount_remaining, 1500);
     EXPECT_FALSE(invoice.hosted_invoice_url.empty());
-    const auto raw = get_object("/v1/invoices/" + invoice.id);
-    const auto intent = get_object("/v1/payment_intents/" + raw["payment_intent"].asString());
+    const auto intent =
+        get_object("/v1/payment_intents/" + invoice_payment_intent(*environment, invoice.id));
     EXPECT_EQ(intent["status"].asString(), "requires_action");
     EXPECT_FALSE(intent["next_action"].isNull());
 }

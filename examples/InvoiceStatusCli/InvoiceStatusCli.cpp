@@ -22,7 +22,7 @@
 
 namespace {
 
-constexpr std::string_view stripe_api_version = "2024-06-20";
+constexpr std::string_view stripe_api_version = stripekit::default_stripe_api_version;
 
 constexpr std::string_view usage =
     "Usage: stripekit_invoice_status_cli (--invoice <id> | --subscription <id>)\n"

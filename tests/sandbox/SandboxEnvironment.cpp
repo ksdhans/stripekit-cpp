@@ -58,9 +58,6 @@ constexpr const char* forwarded_event_types = "customer.created,"
                                               "charge.dispute.created,"
                                               "charge.dispute.closed";
 
-/** Stripe API version used by sandbox REST calls for stable E2E semantics. */
-constexpr const char* sandbox_stripe_api_version = "2024-06-20";
-
 /** Reads an environment variable, falling back to a default when unset or empty. */
 std::string env_or(const char* name, std::string fallback) {
     const char* value = std::getenv(name);
@@ -541,7 +538,7 @@ SandboxStripeApi::send(HttpMethod method, std::string_view path, const FormParam
     request.path = std::string(path);
     request.body = encode_form(params);
     request.headers.emplace("Content-Type", "application/x-www-form-urlencoded");
-    request.headers.emplace("Stripe-Version", sandbox_stripe_api_version);
+    request.headers.emplace("Stripe-Version", default_stripe_api_version);
 
     HttpResponse response = http_client.send_async(request).result();
 
@@ -870,6 +867,22 @@ Json::Value json_path(const Json::Value& root, std::string_view dotted_path) {
 
 std::string sandbox_email(const SandboxEnvironment& environment, std::string_view label) {
     return "stripekit+" + std::string(label) + "-" + environment.run_id() + "@example.com";
+}
+
+std::string invoice_payment_intent(SandboxEnvironment& environment, const std::string& invoice_id) {
+    const auto payments =
+        environment.stripe_api().get("/v1/invoice_payments?invoice=" + invoice_id + "&limit=2");
+    if (!payments.ok())
+        throw std::runtime_error("Could not read invoice payments: " + payments.describe());
+    const auto& data = payments.body["data"];
+    if (!data.isArray() || data.size() != 1 || payments.body["has_more"].asBool() ||
+        !data[0]["is_default"].asBool() ||
+        json_path(data[0], "payment.type").asString() != "payment_intent")
+        throw std::runtime_error("Expected one default PaymentIntent for invoice " + invoice_id);
+    const auto intent = json_path(data[0], "payment.payment_intent");
+    if (!intent.isString() || intent.asString().empty())
+        throw std::runtime_error("Invoice payment has no PaymentIntent for " + invoice_id);
+    return intent.asString();
 }
 
 std::string create_sandbox_clock(SandboxEnvironment& environment, std::int64_t frozen_time) {

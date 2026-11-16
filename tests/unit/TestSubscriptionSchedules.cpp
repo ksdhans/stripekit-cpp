@@ -294,15 +294,14 @@ TEST_F(SubscriptionSchedulesTest, ParsesActiveReleasedAndFutureValuesAndRejectsM
     }
 }
 
-TEST_F(SubscriptionSchedulesTest, ParsesLegacyModernAndMalformedSubscriptionSafetySettings) {
+TEST_F(SubscriptionSchedulesTest, ParsesSubscriptionSafetySettingsAndRejectsMalformedValues) {
     JsonStripeResponseParser parser;
     Json::Value value;
     value["id"] = "sub";
     value["status"] = "active";
     value["customer"]["id"] = "cus";
     value["schedule"]["id"] = "sched";
-    value["discount"]["id"] = "di_legacy";
-    value["discounts"].append("di_legacy");
+    value["discounts"].append("di_first");
     value["discounts"].append(Json::Value(Json::objectValue));
     value["discounts"][1]["id"] = "di_other";
     value["default_tax_rates"].append("txr");
@@ -327,8 +326,7 @@ TEST_F(SubscriptionSchedulesTest, ParsesLegacyModernAndMalformedSubscriptionSafe
     EXPECT_FALSE(disabled.automatic_tax_enabled);
     EXPECT_EQ(disabled.automatic_tax_disabled_reason, "requires_location_inputs");
     const auto original = value;
-    for (const auto* field :
-         { "schedule", "discount", "discounts", "default_tax_rates", "automatic_tax" }) {
+    for (const auto* field : { "schedule", "discounts", "default_tax_rates", "automatic_tax" }) {
         value = original;
         value[field] = false;
         EXPECT_THROW(parser.parse_subscription(response(value)), ConfigurationException);

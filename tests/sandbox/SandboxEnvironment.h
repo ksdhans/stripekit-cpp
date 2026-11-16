@@ -106,7 +106,7 @@ public:
     /** Destroys the helper. */
     ~SandboxStripeApi();
 
-    /** Sends a form-encoded POST and returns the decoded response. */
+    /** Sends a POST using StripeKit's supported API version. */
     StripeApiResult post(std::string_view path, const FormParams& params);
 
     /** Sends a GET and returns the decoded response. */
@@ -122,6 +122,7 @@ public:
     int call_count() const;
 
 private:
+    /** Sends a versioned test request, checking the call budget and decoding its response. */
     StripeApiResult send(HttpMethod method, std::string_view path, const FormParams& params);
 
     stripekit::drogon::HTTPClient http_client;
@@ -233,6 +234,9 @@ Json::Value json_path(const Json::Value& root, std::string_view dotted_path);
 
 /** Returns an email address unique to this run, for creating sandbox customers. */
 std::string sandbox_email(const SandboxEnvironment& environment, std::string_view label);
+
+/** Returns the invoice's default PaymentIntent, throwing on API errors or unexpected payments. */
+std::string invoice_payment_intent(SandboxEnvironment& environment, const std::string& invoice_id);
 
 /** Creates a billing test clock frozen at the supplied Unix time. Delete it after use. */
 std::string create_sandbox_clock(SandboxEnvironment& environment, std::int64_t frozen_time);

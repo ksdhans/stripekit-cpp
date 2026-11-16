@@ -269,9 +269,8 @@ for an open, abandoned, or expired Checkout session. A trial can create a
 zero-value invoice and emit `invoice.paid` without charging the card; that
 event alone does not establish a paid subscription.
 
-Billing-period dates may be on `Subscription` with older Stripe API versions,
-or on each `SubscriptionItem` with newer versions. Prefer the item's optional
-dates when present; use the subscription dates only when nonzero. Neither
+Billing-period dates are on each `SubscriptionItem`. Check that its optional
+dates are present before using them. Neither
 the trial end nor an item's period end proves a payment succeeded.
 
 At trial end, check the current subscription and the specific new invoice.

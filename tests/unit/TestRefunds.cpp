@@ -53,7 +53,7 @@ TEST_F(RefundsTest, CreateEncodesAmountMetadataAndRetryOptions) {
                                        .metadata = { { "operation", "saved & retry" } } };
     const RequestOptions options{ .idempotency_key = "refund-key",
                                   .timeout = std::chrono::seconds(7),
-                                  .headers = { { "Stripe-Version", "2025-03-31.basil" } } };
+                                  .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
     const auto refund = client.refunds().create_async(request, options).result();
     EXPECT_EQ(refund.id, "re_test");
     EXPECT_EQ(refund.charge_id, "ch_test");
@@ -69,7 +69,7 @@ TEST_F(RefundsTest, CreateEncodesAmountMetadataAndRetryOptions) {
     EXPECT_EQ(sent.body,
               "charge=ch%2Fa%20%26b&amount=300&metadata%5Boperation%5D=saved%20%26%20retry");
     EXPECT_EQ(sent.headers.at("Idempotency-Key"), "refund-key");
-    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2025-03-31.basil");
+    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
     EXPECT_EQ(sent.options.timeout, options.timeout);
     int calls = 0;
     client.refunds().create(request, options, [&](CallbackResult<Refund> result) {

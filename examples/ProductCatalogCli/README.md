@@ -45,7 +45,7 @@ chmod 600 .env.live
 ```
 
 Use `--help` to display the required settings without contacting Stripe.
-Requests pin `Stripe-Version: 2024-06-20`.
+Requests pin `Stripe-Version: 2026-10-28.endive`.
 
 Output includes:
 

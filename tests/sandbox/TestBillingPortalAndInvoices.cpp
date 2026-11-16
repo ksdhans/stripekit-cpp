@@ -135,20 +135,9 @@ protected:
         return subscription;
     }
 
-    /**
-     * Returns the API versions invoices are read with: the account's default,
-     * which uses the current invoice layout, and an older version that keeps
-     * the legacy `paid` and `subscription` fields.
-     */
-    static std::vector<std::string> invoice_api_versions() {
-        return { "", "2024-06-20" };
-    }
-
-    /** Fetches an invoice through StripeKit, optionally pinned to an API version. */
-    Invoice retrieve_invoice(const std::string& invoice_id, const std::string& api_version) {
-        RequestOptions options;
-        if (!api_version.empty()) options.headers = { { "Stripe-Version", api_version } };
-        return environment->stripe_client().invoices().retrieve_async(invoice_id, options).result();
+    /** Fetches an invoice using StripeKit's supported API version. */
+    Invoice retrieve_invoice(const std::string& invoice_id) {
+        return environment->stripe_client().invoices().retrieve_async(invoice_id).result();
     }
 
     /** Portal features offering plan changes between the given prices of one product. */
@@ -252,41 +241,36 @@ TEST_F(SandboxBillingPortalAndInvoicesTest, DeclinedInvoiceReportsWhatIsOwedAndL
     const auto subscription =
         create_subscription(price, "pm_card_chargeCustomerFail", "invoice_declined");
     const auto invoice_id = subscription.latest_invoice_id;
-    for (const auto& version : invoice_api_versions()) {
-        const auto open = retrieve_invoice(invoice_id, version);
-        EXPECT_EQ(open.id, invoice_id);
-        EXPECT_EQ(open.customer_id, subscription.customer_id);
-        EXPECT_EQ(open.subscription_id, subscription.id);
-        EXPECT_EQ(open.status, "open");
-        EXPECT_FALSE(open.paid);
-        EXPECT_EQ(open.currency, "usd");
-        EXPECT_EQ(open.amount_due, 1500);
-        EXPECT_EQ(open.amount_paid, 0);
-        EXPECT_EQ(open.amount_remaining, 1500);
-        EXPECT_FALSE(open.billing_reason.empty());
-        EXPECT_TRUE(open.attempt_count >= 1);
-        EXPECT_FALSE(open.number.empty());
-        EXPECT_EQ(open.hosted_invoice_url.rfind("https://", 0), 0U);
-        EXPECT_TRUE(open.created_unix > 0);
-        EXPECT_FALSE(open.livemode);
-    }
-
+    const auto open = retrieve_invoice(invoice_id);
+    EXPECT_EQ(open.id, invoice_id);
+    EXPECT_EQ(open.customer_id, subscription.customer_id);
+    EXPECT_EQ(open.subscription_id, subscription.id);
+    EXPECT_EQ(open.status, "open");
+    EXPECT_FALSE(open.paid);
+    EXPECT_EQ(open.currency, "usd");
+    EXPECT_EQ(open.amount_due, 1500);
+    EXPECT_EQ(open.amount_paid, 0);
+    EXPECT_EQ(open.amount_remaining, 1500);
+    EXPECT_FALSE(open.billing_reason.empty());
+    EXPECT_TRUE(open.attempt_count >= 1);
+    EXPECT_FALSE(open.number.empty());
+    EXPECT_EQ(open.hosted_invoice_url.rfind("https://", 0), 0U);
+    EXPECT_TRUE(open.created_unix > 0);
+    EXPECT_FALSE(open.livemode);
     const auto card = environment->stripe_api().require_post(
         "/v1/payment_methods/pm_card_visa/attach", { { "customer", subscription.customer_id } });
     environment->stripe_api().require_post("/v1/invoices/" + invoice_id + "/pay",
                                            { { "payment_method", card.id() } });
-    for (const auto& version : invoice_api_versions()) {
-        const auto settled = retrieve_invoice(invoice_id, version);
-        EXPECT_EQ(settled.status, "paid");
-        EXPECT_TRUE(settled.paid);
-        EXPECT_EQ(settled.subscription_id, subscription.id);
-        EXPECT_EQ(settled.amount_paid, 1500);
-        EXPECT_EQ(settled.amount_remaining, 0);
-        // A manual payment after a decline does not always raise the attempt count.
-        EXPECT_TRUE(settled.attempt_count >= 1);
-        EXPECT_FALSE(settled.next_payment_attempt_unix.has_value());
-        EXPECT_FALSE(settled.invoice_pdf.empty());
-    }
+    const auto settled = retrieve_invoice(invoice_id);
+    EXPECT_EQ(settled.status, "paid");
+    EXPECT_TRUE(settled.paid);
+    EXPECT_EQ(settled.subscription_id, subscription.id);
+    EXPECT_EQ(settled.amount_paid, 1500);
+    EXPECT_EQ(settled.amount_remaining, 0);
+    // A manual payment after a decline does not always raise the attempt count.
+    EXPECT_TRUE(settled.attempt_count >= 1);
+    EXPECT_FALSE(settled.next_payment_attempt_unix.has_value());
+    EXPECT_FALSE(settled.invoice_pdf.empty());
 }
 
 TEST_F(SandboxBillingPortalAndInvoicesTest, AuthenticationRequiredInvoiceHasHostedPaymentPage) {
@@ -295,15 +279,13 @@ TEST_F(SandboxBillingPortalAndInvoicesTest, AuthenticationRequiredInvoiceHasHost
     const auto subscription =
         create_subscription(price, "pm_card_authenticationRequired", "invoice_authentication");
     EXPECT_EQ(subscription.status, "incomplete");
-    for (const auto& version : invoice_api_versions()) {
-        const auto pending = retrieve_invoice(subscription.latest_invoice_id, version);
-        EXPECT_EQ(pending.subscription_id, subscription.id);
-        EXPECT_EQ(pending.status, "open");
-        EXPECT_FALSE(pending.paid);
-        EXPECT_EQ(pending.amount_remaining, pending.amount_due);
-        EXPECT_TRUE(pending.amount_remaining > 0);
-        EXPECT_EQ(pending.hosted_invoice_url.rfind("https://", 0), 0U);
-    }
+    const auto pending = retrieve_invoice(subscription.latest_invoice_id);
+    EXPECT_EQ(pending.subscription_id, subscription.id);
+    EXPECT_EQ(pending.status, "open");
+    EXPECT_FALSE(pending.paid);
+    EXPECT_EQ(pending.amount_remaining, pending.amount_due);
+    EXPECT_TRUE(pending.amount_remaining > 0);
+    EXPECT_EQ(pending.hosted_invoice_url.rfind("https://", 0), 0U);
 }
 
 TEST_F(SandboxBillingPortalAndInvoicesTest, MissingInvoiceReportsStripeError) {

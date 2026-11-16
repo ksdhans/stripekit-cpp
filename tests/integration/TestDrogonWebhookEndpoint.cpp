@@ -39,31 +39,13 @@ protected:
             "object": "event",
             "type": ")" +
                type + R"(",
-            "api_version": "2024-06-20",
+            "api_version": "2026-10-28.endive",
             "created": )" +
                std::to_string(now_unix) + R"(,
             "livemode": false,
             "request": {
                 "id": "req_hook_123"
             }
-        })";
-    }
-
-    std::string make_legacy_event_payload(const std::string& event_id,
-                                          const std::string& type,
-                                          const std::string& request_id) {
-        return R"({
-            "id": ")" +
-               event_id + R"(",
-            "object": "event",
-            "type": ")" +
-               type + R"(",
-            "api_version": "2017-02-14",
-            "created": )" +
-               std::to_string(now_unix) + R"(,
-            "livemode": false,
-            "request": ")" +
-               request_id + R"("
         })";
     }
 };
@@ -114,14 +96,13 @@ TEST_F(DrogonWebhookEndpointIntegrationTest, CoroutineHandlerCanSuspendOnDrogonE
     EXPECT_EQ(DrogonIntegrationEnvironment::get().telemetry.handled_events_count.load(), 1);
 }
 
-TEST_F(DrogonWebhookEndpointIntegrationTest, LegacyStringRequestIdReturns200AndRecordsRequestId) {
+TEST_F(DrogonWebhookEndpointIntegrationTest, ClassEndpointRecordsRequestId) {
     ASSERT_TRUE(DrogonIntegrationEnvironment::get().class_endpoint_dispatcher != nullptr);
     DrogonIntegrationEnvironment::get().class_endpoint_dispatcher->clear();
     DrogonIntegrationEnvironment::get().class_endpoint_dispatcher->set_result(
         EventDispatchResult::Handled);
 
-    const std::string payload = make_legacy_event_payload(
-        "evt_legacy_string_request_1", "charge.refunded", "req_legacy_string_123");
+    const std::string payload = make_event_payload("evt_class_request_1", "charge.refunded");
     const std::string sig_header = make_stripe_signature_header(now_unix, payload, webhook_secret);
 
     auto [result, resp] = DrogonIntegrationEnvironment::get().send_raw_post(
@@ -134,9 +115,9 @@ TEST_F(DrogonWebhookEndpointIntegrationTest, LegacyStringRequestIdReturns200AndR
     const auto signals =
         DrogonIntegrationEnvironment::get().class_endpoint_dispatcher->get_recorded_signals();
     ASSERT_EQ(signals.size(), 1u);
-    EXPECT_EQ(signals[0].envelope.id, "evt_legacy_string_request_1");
+    EXPECT_EQ(signals[0].envelope.id, "evt_class_request_1");
     EXPECT_EQ(signals[0].envelope.type, "charge.refunded");
-    EXPECT_EQ(signals[0].envelope.request_id, "req_legacy_string_123");
+    EXPECT_EQ(signals[0].envelope.request_id, "req_hook_123");
 }
 
 TEST_F(DrogonWebhookEndpointIntegrationTest,

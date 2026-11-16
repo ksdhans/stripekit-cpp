@@ -17,7 +17,7 @@ namespace {
 
 const std::string charge_json = R"({
     "object":"charge","id":"ch_test","customer":"cus_test","payment_intent":"pi_test",
-    "invoice":"in_test","amount":1500,"amount_refunded":200,"currency":"usd",
+    "amount":1500,"amount_refunded":200,"currency":"usd",
     "status":"succeeded","paid":true,"disputed":false,"livemode":false
 })";
 const std::string allocation_json = R"({
@@ -57,12 +57,11 @@ protected:
 TEST_F(PaymentsTest, RetrieveChargeEncodesIdAndPreservesOptionsAndRelationships) {
     http.set_response({ .status_code = 200, .body = charge_json });
     const RequestOptions options{ .timeout = std::chrono::seconds(7),
-                                  .headers = { { "Stripe-Version", "2024-06-20" } } };
+                                  .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
     const auto charge = client.charges().retrieve_async("ch/a?b", options).result();
     EXPECT_EQ(charge.id, "ch_test");
     EXPECT_EQ(charge.customer_id, "cus_test");
     EXPECT_EQ(charge.payment_intent_id, "pi_test");
-    EXPECT_EQ(charge.invoice_id, "in_test");
     EXPECT_EQ(charge.amount, 1500);
     EXPECT_EQ(charge.amount_refunded, 200);
     EXPECT_TRUE(charge.paid);
@@ -73,7 +72,7 @@ TEST_F(PaymentsTest, RetrieveChargeEncodesIdAndPreservesOptionsAndRelationships)
     EXPECT_EQ(sent.path, "/v1/charges/ch%2Fa%3Fb");
     EXPECT_TRUE(sent.body.empty());
     EXPECT_EQ(sent.options.timeout, options.timeout);
-    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2024-06-20");
+    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
     int calls = 0;
     client.charges().retrieve("ch_test", options, [&](CallbackResult<Charge> result) {
         ++calls;
@@ -86,7 +85,7 @@ TEST_F(PaymentsTest, RetrieveChargeEncodesIdAndPreservesOptionsAndRelationships)
 TEST_F(PaymentsTest, ListsEncodeFiltersCursorsAndDoNotAutomaticallyTraverse) {
     http.set_response({ .status_code = 200, .body = page(charge_json, true) });
     const RequestOptions options{ .timeout = std::chrono::seconds(9),
-                                  .headers = { { "Stripe-Version", "2025-03-31.basil" } } };
+                                  .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
     const auto charges =
         client.charges()
             .list_async({ .customer_id = "cus &one", .limit = 100, .starting_after = "ch/a" },
@@ -117,7 +116,7 @@ TEST_F(PaymentsTest, ListsEncodeFiltersCursorsAndDoNotAutomaticallyTraverse) {
     EXPECT_EQ(sent.method, HttpMethod::Get);
     EXPECT_TRUE(sent.body.empty());
     EXPECT_EQ(sent.options.timeout, options.timeout);
-    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2025-03-31.basil");
+    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
     const auto& allocation = allocations.data.front();
     EXPECT_EQ(allocation.invoice_id, "in_test");
     EXPECT_EQ(allocation.payment_type, "payment_intent");
@@ -182,11 +181,9 @@ TEST_F(PaymentsTest, NullableAndExpandedReferencesAndFuturePaymentTypesArePreser
     charge["customer"]["id"] = "cus_expanded";
     charge["payment_intent"] = Json::Value(Json::objectValue);
     charge["payment_intent"]["id"] = "pi_expanded";
-    charge.removeMember("invoice");
     const auto parsed = parser.parse_charge({ .body = json_body(charge) });
     EXPECT_EQ(parsed.customer_id, "cus_expanded");
     EXPECT_EQ(parsed.payment_intent_id, "pi_expanded");
-    EXPECT_TRUE(parsed.invoice_id.empty());
     charge["customer"] = Json::nullValue;
     charge["payment_intent"] = Json::nullValue;
     EXPECT_TRUE(parser.parse_charge({ .body = json_body(charge) }).customer_id.empty());

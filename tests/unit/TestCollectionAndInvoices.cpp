@@ -27,7 +27,7 @@ TEST_F(CollectionAndInvoicesTest, SubscriptionControlsEncodeBodiesAndPreserveOpt
     http.set_response({ .status_code = 200, .body = subscription_json });
     const RequestOptions options{ .idempotency_key = "saved-control",
                                   .timeout = std::chrono::seconds(8),
-                                  .headers = { { "Stripe-Version", "2025-03-31.basil" } } };
+                                  .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
     const auto subscription =
         client.subscriptions().set_cancel_at_period_end_async("sub/a?", true, options).result();
     EXPECT_TRUE(subscription.cancel_at_period_end);
@@ -58,7 +58,7 @@ TEST_F(CollectionAndInvoicesTest, SubscriptionControlsEncodeBodiesAndPreserveOpt
         EXPECT_EQ(sent.method, HttpMethod::Post);
         EXPECT_EQ(sent.options.timeout, options.timeout);
         EXPECT_EQ(sent.headers.at("Idempotency-Key"), "saved-control");
-        EXPECT_EQ(sent.headers.at("Stripe-Version"), "2025-03-31.basil");
+        EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
     }
     int calls = 0;
     const auto callback = [&](CallbackResult<Subscription> result) {
@@ -168,7 +168,7 @@ TEST_F(CollectionAndInvoicesTest, InvoiceLineItemPagesExposePriceQuantityAndPagi
         client.invoices()
             .list_line_items_async("in/tax",
                                    { .limit = 1, .starting_after = "il_previous" },
-                                   { .headers = { { "Stripe-Version", "2025-03-31.basil" } } })
+                                   { .headers = { { "Stripe-Version", "2026-10-28.endive" } } })
             .result();
     ASSERT_EQ(page.data.size(), 1U);
     EXPECT_TRUE(page.has_more);
@@ -178,7 +178,7 @@ TEST_F(CollectionAndInvoicesTest, InvoiceLineItemPagesExposePriceQuantityAndPagi
     EXPECT_EQ(page.data[0].amount.value(), 7500);
     const auto sent = http.get_recorded_requests().back();
     EXPECT_EQ(sent.path, "/v1/invoices/in%2Ftax/lines?limit=1&starting_after=il_previous");
-    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2025-03-31.basil");
+    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
 }
 
 TEST_F(CollectionAndInvoicesTest, InvoiceParserExposesTaxTotalsLocationErrorsAndPurchasedPrices) {
@@ -205,15 +205,11 @@ TEST_F(CollectionAndInvoicesTest, InvoiceParserExposesTaxTotalsLocationErrorsAnd
     EXPECT_EQ(invoice.line_items[0].quantity.value(), 2);
 }
 
-TEST_F(CollectionAndInvoicesTest, InvoiceParserSupportsLegacyTaxAndRejectsMalformedTaxTotals) {
+TEST_F(CollectionAndInvoicesTest, InvoiceParserRejectsMalformedTaxTotals) {
     JsonStripeResponseParser parser;
-    const auto invoice =
-        parser.parse_invoice({ .body = R"({"id":"in_legacy_tax","tax":425,"status":"draft"})" });
-    ASSERT_TRUE(invoice.amount_tax.has_value());
-    EXPECT_EQ(invoice.amount_tax.value(), 425);
-    EXPECT_THROW(
-        parser.parse_invoice({ .body = R"({"id":"in_bad_tax","tax":"425","status":"draft"})" }),
-        ConfigurationException);
+    EXPECT_THROW(parser.parse_invoice(
+                     { .body = R"({"id":"in_bad_tax","total_taxes":{},"status":"draft"})" }),
+                 ConfigurationException);
     EXPECT_THROW(
         parser.parse_invoice(
             { .body = R"({"id":"in_bad_tax","total_taxes":[{"amount":"425"}],"status":"draft"})" }),

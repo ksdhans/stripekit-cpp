@@ -205,7 +205,7 @@ TEST_F(ModelsAndParserTest, InvoiceStructModelInstantiation) {
 TEST_F(ModelsAndParserTest, EventEnvelopeModelInstantiation) {
     EventEnvelope envelope{ .id = "evt_999",
                             .type = "invoice.payment_failed",
-                            .api_version = "2024-06-20",
+                            .api_version = "2026-10-28.endive",
                             .created_unix = 1700000000,
                             .livemode = false,
                             .request_id = "req_test",
@@ -214,7 +214,7 @@ TEST_F(ModelsAndParserTest, EventEnvelopeModelInstantiation) {
 
     EXPECT_EQ(envelope.id, "evt_999");
     EXPECT_EQ(envelope.type, "invoice.payment_failed");
-    EXPECT_EQ(envelope.api_version, "2024-06-20");
+    EXPECT_EQ(envelope.api_version, "2026-10-28.endive");
     EXPECT_EQ(envelope.created_unix, 1700000000);
     EXPECT_FALSE(envelope.livemode);
     EXPECT_EQ(envelope.request_id, "req_test");

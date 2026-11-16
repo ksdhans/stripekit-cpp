@@ -24,12 +24,11 @@ std::string require_env(const char* name) {
     return value;
 }
 
-/** Pins the API version and assigns each mutation its own stable retry identity. */
+/** Assigns each mutation its own stable retry identity and request timeout. */
 stripekit::RequestOptions options(const std::string& idempotency_key = "") {
     stripekit::RequestOptions request_options;
     if (!idempotency_key.empty()) request_options.idempotency_key = idempotency_key;
     request_options.timeout = std::chrono::seconds(30);
-    request_options.headers.emplace("Stripe-Version", "2024-06-20");
     return request_options;
 }
 

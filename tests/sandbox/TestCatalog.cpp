@@ -8,6 +8,7 @@
 
 #include "StripeKit/Errors.h"
 
+#include <algorithm>
 #include <future>
 #include <chrono>
 #include <thread>
@@ -176,12 +177,12 @@ protected:
                                                { { "default_payment_method", attached.id() } });
     }
 
-    /** Builds an immediate, single-item migration with both policies explicit. */
+    /** Builds a single-item change that invoices immediately unless another policy is supplied. */
     UpdateSubscriptionRequest
     migration_request(const Subscription& subscription,
                       const Price& price,
                       PaymentBehavior payment,
-                      ProrationBehavior proration = ProrationBehavior::None) {
+                      ProrationBehavior proration = ProrationBehavior::AlwaysInvoice) {
         return { .items = { { .item_id = subscription.items.front().id,
                               .price_id = price.id,
                               .quantity = subscription.items.front().quantity.value() } },
@@ -606,6 +607,77 @@ TEST_F(SandboxCatalogTest, ExplicitSubscriptionMigrationPreservesQuantityAndOthe
         "active");
 }
 
+// Monthly and quarterly items have different period ends. Stripe must choose the
+// requested earliest or latest boundary, while advance billing can move the
+// billed-through cancellation date beyond both current periods.
+TEST_F(SandboxCatalogTest, CancellationBoundariesResolveMixedPeriodsAndAdvanceBilling) {
+    // Give the subscription two different billing periods so the boundary choice matters.
+    const auto product = create_product("cancellation_boundaries");
+    const auto monthly = create_price(product, "cancellation_monthly", 1000);
+    const auto quarterly = create_price(product, "cancellation_quarterly", 3000, "month", 3);
+    const auto clock = create_clock();
+    const auto customer =
+        environment->stripe_api()
+            .require_post("/v1/customers",
+                          { { "test_clock", clock },
+                            { "payment_method", "pm_card_visa" },
+                            { "invoice_settings[default_payment_method]", "pm_card_visa" } })
+            .id();
+    const std::int64_t prepaid_until = 1782864000; // 1 July 2026.
+    // Use a fresh subscription for each option: an earlier cancellation can shorten item periods.
+    for (const auto boundary : { SubscriptionCancelAt::MinPeriodEnd,
+                                 SubscriptionCancelAt::MaxPeriodEnd,
+                                 SubscriptionCancelAt::MaxBilledUntil }) {
+        FormParams fields{ { "customer", customer },
+                           { "items[0][price]", monthly.id },
+                           { "items[1][price]", quarterly.id },
+                           { "billing_mode[type]", "flexible" },
+                           { "metadata[stripekit_run_id]", environment->run_id() } };
+        if (boundary == SubscriptionCancelAt::MaxBilledUntil) {
+            // Bill six months upfront without changing the monthly and quarterly service periods.
+            fields.emplace_back("billing_schedules[0][bill_until][type]", "timestamp");
+            fields.emplace_back("billing_schedules[0][bill_until][timestamp]",
+                                std::to_string(prepaid_until));
+            fields.emplace_back("proration_behavior", "always_invoice");
+        }
+        const auto created = environment->stripe_api().require_post("/v1/subscriptions", fields);
+        subscriptions.push_back(created.id());
+        auto& api = environment->stripe_client().subscriptions();
+        const auto before = api.retrieve_async(created.id()).result();
+        EXPECT_EQ(before.status, "active");
+        ASSERT_EQ(before.items.size(), 2U);
+        // Establish the real period boundaries before asking Stripe to choose a cancellation date.
+        const auto [minimum, maximum] =
+            std::minmax(before.items[0].current_period_end_unix.value(),
+                        before.items[1].current_period_end_unix.value());
+        ASSERT_TRUE(minimum < maximum);
+        const auto expected = boundary == SubscriptionCancelAt::MinPeriodEnd   ? minimum
+                              : boundary == SubscriptionCancelAt::MaxPeriodEnd ? maximum
+                                                                               : prepaid_until;
+        if (boundary == SubscriptionCancelAt::MaxBilledUntil) {
+            EXPECT_TRUE(expected > maximum);
+            const auto invoice = environment->stripe_client()
+                                     .invoices()
+                                     .retrieve_async(before.latest_invoice_id)
+                                     .result();
+            EXPECT_TRUE(invoice.paid);
+            EXPECT_EQ(invoice.amount_paid, 12000);
+        }
+        UpdateSubscriptionRequest request;
+        request.cancel_at = boundary;
+        request.proration_behavior = ProrationBehavior::None;
+        const auto changed = api.update_async(before.id, request).result();
+        EXPECT_EQ(changed.cancel_at_unix.value(), expected);
+        EXPECT_EQ(changed.status, "active");
+        EXPECT_FALSE(changed.livemode);
+        EXPECT_EQ(api.retrieve_async(before.id).result().cancel_at_unix.value(), expected);
+        // Withdrawing the cancellation must also persist, allowing normal billing to continue.
+        request.cancel_at = SubscriptionCancelAt::Clear;
+        EXPECT_FALSE(api.update_async(before.id, request).result().cancel_at_unix.has_value());
+        EXPECT_FALSE(api.retrieve_async(before.id).result().cancel_at_unix.has_value());
+    }
+}
+
 TEST_F(SandboxCatalogTest, InvalidDefaultPricesLeavePreviousDefaultUnchanged) {
     const auto product = create_product("default_validation");
     const auto original = create_price(product, "valid_default");
@@ -657,10 +729,11 @@ TEST_F(SandboxCatalogTest, FailedPaymentKeepsMandatoryNewPriceAndCanBeRecovered)
     check_subscription_event(before, replacement);
     const auto invoice = get_object("/v1/invoices/" + changed.latest_invoice_id);
     EXPECT_EQ(invoice["status"].asString(), "open");
-    EXPECT_FALSE(invoice["paid"].asBool());
-    EXPECT_EQ(invoice["amount_due"].asInt64(), 54000);
-    EXPECT_EQ(invoice["amount_remaining"].asInt64(), 54000);
-    const auto intent = get_object("/v1/payment_intents/" + invoice["payment_intent"].asString());
+    // Invoice the annual term now, crediting the unused monthly term: 54000 - 4500.
+    EXPECT_EQ(invoice["amount_due"].asInt64(), 49500);
+    EXPECT_EQ(invoice["amount_remaining"].asInt64(), 49500);
+    const auto intent = get_object("/v1/payment_intents/" +
+                                   invoice_payment_intent(*environment, changed.latest_invoice_id));
     EXPECT_EQ(intent["status"].asString(), "requires_payment_method");
     check_invoice_event("invoice.payment_failed", changed.latest_invoice_id);
     const auto retried = environment->stripe_client()
@@ -672,7 +745,7 @@ TEST_F(SandboxCatalogTest, FailedPaymentKeepsMandatoryNewPriceAndCanBeRecovered)
     set_payment_method(before, "pm_card_visa");
     const auto paid = environment->stripe_api().require_post(
         "/v1/invoices/" + changed.latest_invoice_id + "/pay", {});
-    EXPECT_TRUE(paid.body["paid"].asBool());
+    EXPECT_EQ(paid.body["status"].asString(), "paid");
     EXPECT_EQ(check_price(before, replacement).status, "active");
     check_invoice_event("invoice.paid", changed.latest_invoice_id);
 }
@@ -698,12 +771,12 @@ TEST_F(SandboxCatalogTest, PendingPriceChangeAppliesOnlyAfterInvoicePayment) {
     check_subscription_event(before, replacement);
     const auto invoice = get_object("/v1/invoices/" + changed.latest_invoice_id);
     EXPECT_EQ(invoice["status"].asString(), "open");
-    EXPECT_EQ(invoice["amount_due"].asInt64(), 54000);
+    EXPECT_EQ(invoice["amount_due"].asInt64(), 49500);
     check_invoice_event("invoice.payment_failed", changed.latest_invoice_id);
     set_payment_method(before, "pm_card_visa");
     const auto paid = environment->stripe_api().require_post(
         "/v1/invoices/" + changed.latest_invoice_id + "/pay", {});
-    EXPECT_TRUE(paid.body["paid"].asBool());
+    EXPECT_EQ(paid.body["status"].asString(), "paid");
     const auto saved = check_price(before, replacement);
     EXPECT_FALSE(saved.pending_update.has_value());
     EXPECT_EQ(saved.status, "active");
@@ -746,9 +819,9 @@ TEST_F(SandboxCatalogTest, AuthenticationRequiredKeepsNewPriceAndEmitsActionRequ
     EXPECT_EQ(check_price(before, replacement).status, "past_due");
     check_subscription_event(before, replacement);
     const auto invoice = get_object("/v1/invoices/" + changed.latest_invoice_id);
-    EXPECT_FALSE(invoice["paid"].asBool());
     EXPECT_EQ(invoice["status"].asString(), "open");
-    const auto intent = get_object("/v1/payment_intents/" + invoice["payment_intent"].asString());
+    const auto intent = get_object("/v1/payment_intents/" +
+                                   invoice_payment_intent(*environment, changed.latest_invoice_id));
     EXPECT_EQ(intent["status"].asString(), "requires_action");
     EXPECT_FALSE(intent["next_action"].isNull());
     check_invoice_event("invoice.payment_action_required", changed.latest_invoice_id);
@@ -768,8 +841,7 @@ TEST_F(SandboxCatalogTest, DefaultIncompleteRequiresExplicitPaymentConfirmation)
     check_subscription_event(before, replacement);
     const auto invoice = get_object("/v1/invoices/" + changed.latest_invoice_id);
     EXPECT_EQ(invoice["status"].asString(), "open");
-    EXPECT_FALSE(invoice["paid"].asBool());
-    const auto intent_id = invoice["payment_intent"].asString();
+    const auto intent_id = invoice_payment_intent(*environment, changed.latest_invoice_id);
     EXPECT_FALSE(intent_id.empty());
     const auto intent = get_object("/v1/payment_intents/" + intent_id);
     EXPECT_EQ(intent["status"].asString(), "requires_confirmation");
@@ -807,12 +879,13 @@ TEST_F(SandboxCatalogTest, ProrationPoliciesHaveDeterministicInvoiceOutcomes) {
         if (policy == ProrationBehavior::AlwaysInvoice) {
             EXPECT_FALSE(changed.latest_invoice_id == before.latest_invoice_id);
             const auto invoice = get_object("/v1/invoices/" + changed.latest_invoice_id);
-            EXPECT_TRUE(invoice["paid"].asBool());
+            EXPECT_EQ(invoice["status"].asString(), "paid");
             EXPECT_EQ(invoice["amount_paid"].asInt64(), 4800);
             EXPECT_EQ(invoice["lines"]["data"].size(), 2U);
             std::int64_t adjustments = 0;
             for (const auto& line : invoice["lines"]["data"]) {
-                EXPECT_TRUE(line["proration"].asBool());
+                const auto& parent = line["parent"];
+                EXPECT_TRUE(parent[parent["type"].asString()]["proration"].asBool());
                 adjustments += line["amount"].asInt64();
             }
             EXPECT_EQ(adjustments, 4800);
@@ -820,12 +893,17 @@ TEST_F(SandboxCatalogTest, ProrationPoliciesHaveDeterministicInvoiceOutcomes) {
         } else {
             EXPECT_EQ(changed.latest_invoice_id, before.latest_invoice_id);
         }
-        const auto upcoming = get_object("/v1/invoices/upcoming?subscription=" + before.id);
+        const auto upcoming =
+            environment->stripe_api()
+                .require_post("/v1/invoices/create_preview", { { "subscription", before.id } })
+                .body;
         EXPECT_EQ(upcoming["amount_due"].asInt64(),
                   policy == ProrationBehavior::CreateProrations ? 23400 : 18600);
         std::int64_t pending_adjustments = 0;
         for (const auto& line : upcoming["lines"]["data"]) {
-            if (line["proration"].asBool()) pending_adjustments += line["amount"].asInt64();
+            const auto& parent = line["parent"];
+            if (parent[parent["type"].asString()]["proration"].asBool())
+                pending_adjustments += line["amount"].asInt64();
         }
         EXPECT_EQ(pending_adjustments, policy == ProrationBehavior::CreateProrations ? 4800 : 0);
         const auto retried = environment->stripe_client()

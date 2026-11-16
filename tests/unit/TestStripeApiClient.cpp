@@ -92,10 +92,10 @@ TEST_F(StripeApiClientTest, DefaultApiVersionIsSentForAsyncAndCallbackRequests) 
 TEST_F(StripeApiClientTest, ApiVersionOverridesAreCaseInsensitiveAndDoNotChangeTheDefault) {
     http_client.set_response({ .status_code = 200, .body = R"({"id":"cus_version"})" });
     for (const auto* name : { "Stripe-Version", "stripe-version", "STRIPE-VERSION" }) {
-        const RequestOptions options{ .headers = { { name, "2024-06-20" } } };
+        const RequestOptions options{ .headers = { { name, "2026-10-28.endive" } } };
         client->customers().retrieve_async("cus_version", options).result();
         const auto sent = http_client.get_recorded_requests().back();
-        EXPECT_EQ(sent.headers.at("Stripe-Version"), "2024-06-20");
+        EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
         EXPECT_EQ(sent.headers.size(), 2U);
     }
     client->customers().retrieve_async("cus_version").result();
@@ -130,7 +130,7 @@ TEST_F(StripeApiClientTest, ExpireCheckoutPreservesOptionsAndEncodesIdentity) {
     RequestOptions options;
     options.idempotency_key = "expiry-key";
     options.timeout = std::chrono::seconds(7);
-    options.headers["Stripe-Version"] = "2024-06-20";
+    options.headers["Stripe-Version"] = "2026-10-28.endive";
     const auto session = client->checkout().sessions().expire_async("cs/a?b", options).result();
     EXPECT_EQ(session.status, "expired");
     EXPECT_EQ(session.metadata.at("owner"), "tenant");
@@ -140,7 +140,7 @@ TEST_F(StripeApiClientTest, ExpireCheckoutPreservesOptionsAndEncodesIdentity) {
     EXPECT_TRUE(sent.body.empty());
     EXPECT_EQ(sent.options.timeout, options.timeout);
     EXPECT_EQ(sent.headers.at("Idempotency-Key"), "expiry-key");
-    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2024-06-20");
+    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
     int calls = 0;
     client->checkout().sessions().expire(
         "cs_test", options, [&](CallbackResult<CheckoutSession> result) {
@@ -569,14 +569,14 @@ TEST_F(StripeApiClientTest, CheckoutLineItemListSupportsPaginationAndOptions) {
         EXPECT_EQ(req.method, HttpMethod::Get);
         EXPECT_EQ(req.path,
                   "/v1/checkout/sessions/cs%2Ftax/line_items?limit=1&starting_after=li%3F1");
-        EXPECT_EQ(req.headers.at("Stripe-Version"), "2025-03-31.basil");
+        EXPECT_EQ(req.headers.at("Stripe-Version"), "2026-10-28.endive");
         return HttpResponse{
             .status_code = 200,
             .body =
                 R"({"object":"list","has_more":true,"data":[{"id":"li_tax","pricing":{"price_details":{"price":"price_nz"}},"quantity":2,"amount_total":2500}]})"
         };
     });
-    RequestOptions options{ .headers = { { "Stripe-Version", "2025-03-31.basil" } } };
+    RequestOptions options{ .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
     const auto page =
         client->checkout()
             .sessions()

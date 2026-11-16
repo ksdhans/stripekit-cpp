@@ -188,7 +188,7 @@ std::string create_draft_tax_invoice(SandboxEnvironment& environment,
     api.require_post("/v1/invoiceitems",
                      { { "customer", customer },
                        { "invoice", invoice.id() },
-                       { "price", price },
+                       { "pricing[price]", price },
                        { "quantity", "1" } });
     return invoice.id();
 }

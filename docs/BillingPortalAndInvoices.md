@@ -303,6 +303,55 @@ const auto continued = co_await stripe->subscriptions().set_cancel_at_period_end
 Check `cancel_at_period_end` on the returned subscription to confirm the setting.
 Scheduling cancellation does not end the subscription immediately.
 
+For a specific cancellation date, use the general subscription update API:
+
+@code{.cpp}
+stripekit::UpdateSubscriptionRequest changes;
+changes.cancel_at = cancellation_unix_seconds;
+changes.proration_behavior = stripekit::ProrationBehavior::CreateProrations;
+const auto dated = co_await stripe->subscriptions().update_async(
+    subscription_id, changes, { .idempotency_key = "dated-cancellation" });
+@endcode
+
+`cancel_at` accepts a positive Unix timestamp or a `SubscriptionCancelAt` value:
+
+| Value | Meaning |
+|-------|---------|
+| `MinPeriodEnd` | Earliest current period end among the subscription's items. |
+| `MaxPeriodEnd` | Latest current period end among its items. |
+| `MaxBilledUntil` | Latest date through which an item has been billed, including advance billing. Billed does not necessarily mean paid. |
+| `Clear` | Remove the scheduled cancellation date by sending an empty `cancel_at`. |
+
+Stripe resolves named billing boundaries to a timestamp when it processes the
+request. Mixed billing intervals and advance billing require flexible billing mode. Inspect
+`Subscription::cancel_at_unix` for the resulting date; it is absent when Stripe
+returns no scheduled date.
+
+Choose any supported `ProrationBehavior`, or omit it to use Stripe's default.
+Moving cancellation into the current period can produce adjustments. Stripe
+also documents that cancellation during a future billing period produces
+prorations for that period even if you request `None`.
+
+To clear an explicit date:
+
+@code{.cpp}
+stripekit::UpdateSubscriptionRequest continue_billing;
+continue_billing.cancel_at = stripekit::SubscriptionCancelAt::Clear;
+const auto continued = co_await stripe->subscriptions().update_async(
+    subscription_id, continue_billing);
+@endcode
+
+The general update request also accepts `cancel_at_period_end = true` or `false`,
+without requiring item changes. Leave cancellation fields unset for unrelated
+metadata, automatic-tax, or item updates. Metadata entries with empty values
+remove those keys; unrelated metadata remains unchanged.
+
+The callback equivalent is `subscriptions().update(id, request, options, completion)`.
+Both forms preserve request options and report validation, transport, and Stripe
+errors. Scheduling cancellation does not prove that invoices have been paid;
+follow invoice and subscription webhooks. Once a subscription has actually
+canceled, clearing the date does not reactivate it.
+
 Use a collection pause to temporarily stop charging for future billing periods
 without ending the subscription. This does not change its status to `paused`.
 Choose what happens to invoices created during the pause:
@@ -398,9 +447,8 @@ Page sizes must be from 1 to 100. An empty customer filter lists all customers.
 Verify that returned charges belong to the customer your application expects.
 The charge's amounts, including `amount_refunded`, use the currency's smallest unit.
 
-On older Stripe API versions a charge can contain `invoice_id`. From
-`2025-03-31.basil`, use its `payment_intent_id` to find the invoice payment records
-instead. A **PaymentIntent** tracks a payment through any required customer
+Use the charge's `payment_intent_id` to find its invoice payment records.
+A **PaymentIntent** tracks a payment through any required customer
 authentication and payment attempts. An **invoice payment record** links that
 payment to an invoice and shows how much of the payment was applied to it:
 

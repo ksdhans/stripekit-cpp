@@ -35,7 +35,7 @@
 
 namespace {
 
-constexpr std::string_view stripe_api_version = "2024-06-20";
+constexpr std::string_view stripe_api_version = stripekit::default_stripe_api_version;
 constexpr std::string_view listener_log_filename = "stripe-listener.log";
 
 using stripekit::examples::CheckoutDemoViewData;

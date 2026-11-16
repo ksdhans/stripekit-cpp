@@ -405,16 +405,30 @@ struct UpdateSubscriptionItemRequest {
     std::int64_t quantity = 0;
 };
 
-/** Immediate subscription price changes. Both billing behaviors must be chosen explicitly. */
+/** Named values accepted by Stripe's subscription cancel_at parameter. */
+enum class SubscriptionCancelAt {
+    Clear,          ///< Remove an explicitly scheduled cancellation date.
+    MinPeriodEnd,   ///< Earliest current period end across the subscription's items.
+    MaxPeriodEnd,   ///< Latest current period end across the subscription's items.
+    MaxBilledUntil, ///< Latest date through which the subscription's items have been billed.
+};
+
+/** Fields to update on an existing subscription; omitted fields are not sent to Stripe. */
 struct UpdateSubscriptionRequest {
-    /** One through twenty existing items to reprice; other items remain unchanged. */
+    /** Existing items to reprice, at most twenty; other items remain unchanged. */
     std::vector<UpdateSubscriptionItemRequest> items;
-    /** Required; no implicit proration policy. */
+    /** Optional adjustment policy; omission uses Stripe's default. */
     std::optional<ProrationBehavior> proration_behavior;
-    /** Required; no implicit payment-failure policy. */
+    /** Optional payment-failure policy; omission uses Stripe's default. */
     std::optional<PaymentBehavior> payment_behavior;
-    /** Enable or disable automatic tax while changing subscription items. */
+    /** Enable or disable automatic tax. */
     std::optional<bool> automatic_tax_enabled;
+    /** Positive Unix timestamp or a named cancellation boundary; Clear sends an empty value. */
+    std::optional<std::variant<std::int64_t, SubscriptionCancelAt>> cancel_at;
+    /** Set or clear cancellation at period end; omission leaves the setting unchanged. */
+    std::optional<bool> cancel_at_period_end;
+    /** Metadata entries to update; empty values remove keys, and omitted keys are unchanged. */
+    std::unordered_map<std::string, std::string> metadata;
 };
 
 /** Create a fixed per-unit price. Does not change existing subscriptions. */
@@ -1155,25 +1169,31 @@ public:
     using UpdateCompletion = std::function<void(CallbackResult<Subscription>)>;
 
     /**
-     * Replace prices on existing licensed subscription items immediately.
+     * Update subscription items, cancellation timing, metadata, or automatic tax.
      *
-     * Choose proration and payment behaviors explicitly. A successful request
+     * Omitted billing behaviors use Stripe's defaults. A successful request
      * does not prove payment or that a pending change was applied: inspect
      * status, pending_update, and latest_invoice_id and follow billing webhooks.
-     * Use an idempotency key when retrying. This does not schedule a future change.
+     * Use an idempotency key when retrying. cancel_at schedules cancellation;
+     * item changes otherwise apply immediately, subject to the payment behavior.
      *
      * @param subscription_id Existing subscription ID.
-     * @param request Items, explicit quantities, and billing policies.
+     * @param request Fields to change and optional billing policies.
      * @param options Per-request settings.
+     *
      * @return Subscription state returned by Stripe.
+     *
+     * @throws ConfigurationException If the ID, cancellation date, or item fields are invalid.
+     * @throws StripeApiException If Stripe rejects the update.
      */
     virtual Task<Subscription> update_async(std::string subscription_id,
                                             const UpdateSubscriptionRequest& request,
                                             const RequestOptions& options = {}) = 0;
     /**
-     * Reprice a subscription, reporting failures through completion.
+     * Update a subscription, reporting failures through completion.
+     *
      * @param subscription_id Existing subscription ID.
-     * @param request Items, explicit quantities, and billing policies.
+     * @param request Fields to change and optional billing policies.
      * @param options Per-request settings.
      * @param completion Receives the returned subscription or failure exactly once.
      */
@@ -1801,8 +1821,7 @@ public:
 
 /**
  * Read invoice payment allocations through StripeClient::invoice_payments().
- * These endpoints require a Stripe API version supporting invoice payments
- * (2025-03-31.basil or later); older versions expose an invoice on the charge.
+ * Use a charge's payment_intent_id to find its invoice payment allocations.
  */
 class InvoicePayments {
 public:

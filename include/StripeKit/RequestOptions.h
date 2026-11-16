@@ -16,7 +16,7 @@
 
 namespace stripekit {
 
-/** Stripe API version used by StripeKit unless a request overrides it. */
+/** Minimum supported Stripe API version, also used by default for requests. */
 inline constexpr const char* default_stripe_api_version = "2026-10-28.endive";
 
 /**
@@ -52,7 +52,8 @@ struct RequestOptions {
      * Extra HTTP headers, merged over StripeKit's defaults.
      *
      * Set "Stripe-Version" to override default_stripe_api_version for this call.
-     * Overrides must be compatible with the operation and response parser.
+     * Overrides must not predate the supported minimum and must be compatible
+     * with the operation and response parser.
      */
     std::unordered_map<std::string, std::string> headers;
 };

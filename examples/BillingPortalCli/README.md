@@ -142,4 +142,4 @@ Opening the portal does not change anything by itself. The customer still has
 to confirm in the portal, and Stripe then reports the change through webhooks
 such as `customer.subscription.updated`.
 
-The example rejects live keys and pins `Stripe-Version: 2024-06-20`.
+The example rejects live keys and pins `Stripe-Version: 2026-10-28.endive`.

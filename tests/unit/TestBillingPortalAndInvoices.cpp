@@ -186,20 +186,21 @@ TEST_F(BillingPortalAndInvoicesTest, InvoiceRetrieveReadsCurrentApiShape) {
     EXPECT_EQ(*invoice.next_payment_attempt_unix, 1700086400);
 }
 
-TEST(InvoiceParser, ReadsOlderApiShapeAndPaidStatus) {
+TEST(InvoiceParser, ReadsPaidStatusAndNullableParent) {
     const JsonStripeResponseParser parser;
-    const auto older = parser.parse_invoice({ .status_code = 200, .body = R"({
-        "id":"in_old","customer":{"id":"cus_123"},"subscription":"sub_old","status":"open",
-        "paid":true,"amount_due":100,"amount_paid":100,"amount_remaining":0,
+    const auto paid = parser.parse_invoice({ .status_code = 200, .body = R"({
+        "id":"in_paid","customer":{"id":"cus_123"},"status":"paid",
+        "parent":{"type":"subscription_details","subscription_details":{"subscription":"sub_test"}},
+        "amount_due":100,"amount_paid":100,"amount_remaining":0,
         "due_date":1700000000,"livemode":true
     })" });
-    EXPECT_EQ(older.customer_id, "cus_123");
-    EXPECT_EQ(older.subscription_id, "sub_old");
-    EXPECT_TRUE(older.paid);
-    EXPECT_TRUE(older.livemode);
-    ASSERT_TRUE(older.due_date_unix.has_value());
-    EXPECT_EQ(*older.due_date_unix, 1700000000);
-    EXPECT_TRUE(older.hosted_invoice_url.empty());
+    EXPECT_EQ(paid.customer_id, "cus_123");
+    EXPECT_EQ(paid.subscription_id, "sub_test");
+    EXPECT_TRUE(paid.paid);
+    EXPECT_TRUE(paid.livemode);
+    ASSERT_TRUE(paid.due_date_unix.has_value());
+    EXPECT_EQ(*paid.due_date_unix, 1700000000);
+    EXPECT_TRUE(paid.hosted_invoice_url.empty());
 
     const auto current = parser.parse_invoice(
         { .status_code = 200, .body = R"({"id":"in_new","status":"paid","parent":null})" });

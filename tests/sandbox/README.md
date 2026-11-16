@@ -14,12 +14,15 @@ The suite covers:
 
 - Checkout session expiry and paginated listing.
 - Successful, declined, and disputed charge reads, and links between payments
-  and invoices on older and newer Stripe API versions.
+  and invoices using the supported Stripe API version.
 - Partial and remaining-balance refunds, safe retries, and refunds that complete
   or fail after the initial response.
 - Cancellation at renewal, collection pauses, and manual or scheduled resumption.
   Stripe test clocks simulate future billing dates so renewals can be tested
   without waiting for a real billing period.
+- Explicit cancellation dates, clearing and retrying cancellation updates, and
+  cancellation without another renewal invoice. Tests check proration policies
+  and named cancellation dates for mixed billing periods and advance billing.
 - Invoice listing, finalization without automatic collection, voiding, standalone
   draft deletion, and protection against changes to paid invoices.
 - Scheduled price changes at renewal, preserved quantities and additional items,
@@ -263,7 +266,7 @@ sets `resource_group` so two pipelines cannot drive the same sandbox at once.
 | Test file | Coverage |
 | --- | --- |
 | `TestCatalog.cpp` | Product creation, retrieval, updates, default-price selection and rejection of invalid defaults; price creation, mutable updates, clearing fields, lookup-key transfers, archiving and reactivation; filtering and pagination; Checkout using catalog prices; grandfathered subscriptions; migrations preserving quantities and other items; all four payment behaviors, failed-payment recovery, authentication-required payments, deterministic proration amounts, idempotent retries, and related invoice/subscription webhooks. |
-| `TestBillingPortalAndInvoices.cpp` | Invoice retrieval for a declined invoice before and after payment, an invoice awaiting authentication with its hosted payment page, and a missing invoice, read with both the account's default and an older Stripe API version; billing portal configuration creation, retrieval, updates, and deactivation; portal sessions for every task type; and Stripe's rejection of plan changes to prices outside the configuration. |
+| `TestBillingPortalAndInvoices.cpp` | Invoice retrieval for a declined invoice before and after payment, an invoice awaiting authentication with its hosted payment page, and a missing invoice; billing portal configuration creation, retrieval, updates, and deactivation; portal sessions for every task type; and Stripe's rejection of plan changes to prices outside the configuration. |
 | `TestSubscriptionLifecycle.cpp` | Checkout Session creation; typed retrieval of a real trial subscription's trial end and item billing-period dates; an active subscription emitting `invoice.paid`; a declined card emitting `invoice.payment_failed`; and subscription cancellation. |
 | `TestSubscriptionTrials.cpp` | Card-required trial Checkout for existing and Checkout-created customers; idempotent retries, session retrieval and expiry; old/default API-version subscription retrieval; zero-value trial invoices; trial reminders; clock-driven first-charge success, decline recovery, and authentication-required invoices; immediate and scheduled cancellation before billing. |
 | `TestDisputeAndRefund.cpp` | `charge.refunded`, and the dispute lifecycle through `charge.dispute.created` and `charge.dispute.closed`. |

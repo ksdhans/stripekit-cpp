@@ -108,4 +108,4 @@ be served by your own app if you want the browser to show a real confirmation
 page. If nothing is listening at `STRIPE_RETURN_BASE_URL`, session creation still
 works, but the final redirect will fail in the browser after leaving Stripe.
 
-The example rejects live keys and pins `Stripe-Version: 2024-06-20`.
+The example rejects live keys and pins `Stripe-Version: 2026-10-28.endive`.

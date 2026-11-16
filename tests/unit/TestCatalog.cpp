@@ -65,7 +65,7 @@ TEST_F(CatalogTest, ProductCreateEncodesFieldsAndOptions) {
                                         .metadata = { { "plan", "standard" } } };
     const RequestOptions options{ .idempotency_key = "product-key",
                                   .timeout = std::chrono::seconds(4),
-                                  .headers = { { "Stripe-Version", "2024-06-20" } } };
+                                  .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
     auto task = client.products().create_async(request, options);
     const auto result = task.result();
     EXPECT_EQ(result.id, "prod_test");
@@ -79,7 +79,7 @@ TEST_F(CatalogTest, ProductCreateEncodesFieldsAndOptions) {
     EXPECT_NE(sent.body.find("active=false"), std::string::npos);
     EXPECT_NE(sent.body.find("metadata%5Bplan%5D=standard"), std::string::npos);
     EXPECT_EQ(sent.headers.at("Idempotency-Key"), "product-key");
-    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2024-06-20");
+    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
     EXPECT_EQ(sent.options.timeout, options.timeout);
 }
 
@@ -484,13 +484,14 @@ TEST_F(CatalogTest, SubscriptionUpdatesReplaceItemsWithExplicitQuantitiesAndPoli
     auto request = subscription_request();
     request.automatic_tax_enabled = true;
     request.items.push_back({ .item_id = "si_second", .price_id = "price/two &", .quantity = 2 });
-    const auto result = client.subscriptions()
-                            .update_async("sub/a?b",
-                                          request,
-                                          { .idempotency_key = "migration",
-                                            .timeout = std::chrono::seconds(5),
-                                            .headers = { { "Stripe-Version", "2024-06-20" } } })
-                            .result();
+    const auto result =
+        client.subscriptions()
+            .update_async("sub/a?b",
+                          request,
+                          { .idempotency_key = "migration",
+                            .timeout = std::chrono::seconds(5),
+                            .headers = { { "Stripe-Version", "2026-10-28.endive" } } })
+            .result();
     EXPECT_EQ(result.id, "sub_test");
     EXPECT_EQ(result.items.size(), 2U);
     EXPECT_EQ(result.items.front().id, "si_first");
@@ -504,7 +505,7 @@ TEST_F(CatalogTest, SubscriptionUpdatesReplaceItemsWithExplicitQuantitiesAndPoli
     EXPECT_EQ(sent.method, HttpMethod::Post);
     EXPECT_EQ(sent.path, "/v1/subscriptions/sub%2Fa%3Fb");
     EXPECT_EQ(sent.headers.at("Idempotency-Key"), "migration");
-    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2024-06-20");
+    EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
     EXPECT_EQ(sent.headers.at("Content-Type"), "application/x-www-form-urlencoded");
     EXPECT_EQ(sent.options.timeout, std::chrono::seconds(5));
     EXPECT_EQ(sent.body,
@@ -610,28 +611,35 @@ TEST_F(CatalogTest, AllSubscriptionPoliciesAreEncodedForCallbacksAndCoroutines) 
     }
 }
 
+// Invalid subscription changes must fail before contacting Stripe. Both API styles
+// must report the same validation errors, with callbacks receiving one result.
 TEST_F(CatalogTest, InvalidPricingUpdatesNeverReachTransportAndCallbacksReceiveFailuresOnce) {
     const auto invalid_subscription = [&](std::string id,
                                           const UpdateSubscriptionRequest& request) {
         EXPECT_THROW(client.subscriptions().update_async(id, request).result(),
                      ConfigurationException);
         int calls = 0;
+        std::optional<CallbackResult<Subscription>> rejected;
         client.subscriptions().update(id, request, {}, [&](CallbackResult<Subscription> result) {
             ++calls;
-            EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+            rejected = std::move(result);
         });
         EXPECT_EQ(calls, 1);
+        ASSERT_TRUE(rejected.has_value());
+        ASSERT_TRUE(std::holds_alternative<std::exception_ptr>(*rejected));
+        EXPECT_THROW(std::rethrow_exception(std::get<std::exception_ptr>(*rejected)),
+                     ConfigurationException);
     };
     invalid_subscription("", subscription_request());
     auto request = subscription_request();
-    request.proration_behavior.reset();
+    request.cancel_at = 0;
     invalid_subscription("sub_test", request);
-    request = subscription_request();
-    request.payment_behavior.reset();
+    request.cancel_at = -1;
+    invalid_subscription("sub_test", request);
+    request.cancel_at = static_cast<SubscriptionCancelAt>(99);
     invalid_subscription("sub_test", request);
     request = subscription_request();
     request.items.clear();
-    invalid_subscription("sub_test", request);
     for (int index = 0; index < 21; ++index)
         request.items.push_back(
             { .item_id = "si_" + std::to_string(index), .price_id = "price_new", .quantity = 1 });
@@ -675,6 +683,194 @@ TEST_F(CatalogTest, InvalidPricingUpdatesNeverReachTransportAndCallbacksReceiveF
         });
     EXPECT_EQ(calls, 2);
     EXPECT_TRUE(http.get_recorded_requests().empty());
+}
+
+// Scheduling cancellation must preserve the caller's billing policy, metadata,
+// and request settings. Neither item changes nor explicit billing policies are
+// required, and both API styles must send equivalent requests.
+TEST_F(CatalogTest, SubscriptionCancellationUpdatesSupportStripeProrationPoliciesAndMetadata) {
+    http.set_response(
+        { .status_code = 200,
+          .body =
+              R"({"id":"sub_test","customer":"cus_test","status":"active","cancel_at":2000000000})" });
+    const std::vector<std::pair<std::optional<ProrationBehavior>, std::string>> policies{
+        { std::nullopt, "" },
+        { ProrationBehavior::None, "none" },
+        { ProrationBehavior::CreateProrations, "create_prorations" },
+        { ProrationBehavior::AlwaysInvoice, "always_invoice" },
+    };
+    for (const auto& [policy, name] : policies) {
+        // A date-only cancellation must not force a particular credit or payment policy.
+        UpdateSubscriptionRequest request;
+        request.cancel_at = 2000000000;
+        request.proration_behavior = policy;
+        request.metadata = { { "reason", "customer request" } };
+        const RequestOptions options{ .idempotency_key = "cancel-date",
+                                      .timeout = std::chrono::seconds(7),
+                                      .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
+        const auto result =
+            client.subscriptions().update_async("sub/a?b", request, options).result();
+        EXPECT_EQ(result.cancel_at_unix.value(), 2000000000);
+        const auto sent = http.get_recorded_requests().back();
+        EXPECT_EQ(sent.method, HttpMethod::Post);
+        EXPECT_EQ(sent.path, "/v1/subscriptions/sub%2Fa%3Fb");
+        EXPECT_EQ(sent.body,
+                  (name.empty() ? "" : "proration_behavior=" + name + "&") +
+                      "cancel_at=2000000000&metadata%5Breason%5D=customer%20request");
+        EXPECT_EQ(sent.headers.at("Idempotency-Key"), "cancel-date");
+        EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
+        EXPECT_EQ(sent.options.timeout, options.timeout);
+        // Choosing callbacks instead of coroutines must not change the billing request.
+        int calls = 0;
+        std::optional<CallbackResult<Subscription>> completed;
+        client.subscriptions().update(
+            "sub/a?b", request, options, [&](CallbackResult<Subscription> response) {
+                ++calls;
+                completed = std::move(response);
+            });
+        EXPECT_EQ(calls, 1);
+        ASSERT_TRUE(completed.has_value());
+        ASSERT_TRUE(std::holds_alternative<Subscription>(*completed));
+        EXPECT_EQ(std::get<Subscription>(*completed).cancel_at_unix.value(), 2000000000);
+        EXPECT_EQ(http.get_recorded_requests().back().body, sent.body);
+        EXPECT_EQ(http.get_recorded_requests().back().path, sent.path);
+        EXPECT_EQ(http.get_recorded_requests().back().headers, sent.headers);
+        EXPECT_EQ(http.get_recorded_requests().back().options.timeout, options.timeout);
+    }
+    // Other subscription changes must not accidentally schedule or withdraw cancellation.
+    UpdateSubscriptionRequest metadata;
+    metadata.metadata = { { "reason", "" } };
+    client.subscriptions().update_async("sub_test", metadata).result();
+    EXPECT_EQ(http.get_recorded_requests().back().body, "metadata%5Breason%5D=");
+    auto defaults = subscription_request();
+    defaults.proration_behavior.reset();
+    defaults.payment_behavior.reset();
+    client.subscriptions().update_async("sub_test", defaults).result();
+    const auto body = http.get_recorded_requests().back().body;
+    EXPECT_EQ(body.find("proration_behavior"), std::string::npos);
+    EXPECT_EQ(body.find("payment_behavior"), std::string::npos);
+}
+
+// Callers can ask Stripe to choose a billing boundary or withdraw a cancellation.
+// Both API styles must send the chosen option and distinguish a scheduled date
+// from a response that has no cancellation date.
+TEST_F(CatalogTest, SubscriptionCancellationBoundariesCanBeNamedOrCleared) {
+    for (const auto& [boundary, encoded] :
+         std::vector<std::pair<SubscriptionCancelAt, std::string>>{
+             { SubscriptionCancelAt::Clear, "" },
+             { SubscriptionCancelAt::MinPeriodEnd, "min_period_end" },
+             { SubscriptionCancelAt::MaxPeriodEnd, "max_period_end" },
+             { SubscriptionCancelAt::MaxBilledUntil, "max_billed_until" } }) {
+        const bool cleared = boundary == SubscriptionCancelAt::Clear;
+        // Stripe returns no date after a withdrawal, otherwise it resolves the chosen boundary.
+        http.set_response(
+            { .status_code = 200,
+              .body = std::string(R"({"id":"sub_test","status":"active","cancel_at":)") +
+                      (cleared ? "null" : "2000000000") + "}" });
+        UpdateSubscriptionRequest request;
+        request.cancel_at = boundary;
+        const auto subscription = client.subscriptions().update_async("sub_test", request).result();
+        EXPECT_EQ(subscription.cancel_at_unix.has_value(), !cleared);
+        EXPECT_EQ(http.get_recorded_requests().back().body, "cancel_at=" + encoded);
+        int calls = 0;
+        std::optional<CallbackResult<Subscription>> completed;
+        client.subscriptions().update(
+            "sub_test", request, {}, [&](CallbackResult<Subscription> result) {
+                ++calls;
+                completed = std::move(result);
+            });
+        EXPECT_EQ(calls, 1);
+        ASSERT_TRUE(completed.has_value());
+        ASSERT_TRUE(std::holds_alternative<Subscription>(*completed));
+        EXPECT_EQ(std::get<Subscription>(*completed).cancel_at_unix.has_value(), !cleared);
+        EXPECT_EQ(http.get_recorded_requests().back().body, "cancel_at=" + encoded);
+    }
+}
+
+// General subscription updates must schedule or withdraw period-end cancellation
+// without changing items, just like the existing convenience API.
+TEST_F(CatalogTest, SubscriptionUpdatesCanSetAndClearPeriodEndCancellationWithoutChangingItems) {
+    for (const bool cancel : { true, false }) {
+        // Both scheduling and withdrawing cancellation must work without item replacements.
+        http.set_response(
+            { .status_code = 200,
+              .body = std::string(R"({"id":"sub_test","status":"active","cancel_at_period_end":)") +
+                      (cancel ? "true" : "false") + "}" });
+        UpdateSubscriptionRequest request;
+        request.cancel_at_period_end = cancel;
+        const auto subscription = client.subscriptions().update_async("sub_test", request).result();
+        EXPECT_EQ(subscription.cancel_at_period_end, cancel);
+        EXPECT_EQ(http.get_recorded_requests().back().body,
+                  cancel ? "cancel_at_period_end=true" : "cancel_at_period_end=false");
+        client.subscriptions().set_cancel_at_period_end_async("sub_test", cancel).result();
+        const auto requests = http.get_recorded_requests();
+        EXPECT_EQ(requests.back().body, requests.at(requests.size() - 2).body);
+    }
+}
+
+// A rejected request, network failure, or invalid Stripe response must reach the
+// caller as a failure, never as an apparently successful cancellation update.
+TEST_F(CatalogTest, CancellationUpdatesPropagateProviderTransportAndMalformedResponseErrors) {
+    UpdateSubscriptionRequest request;
+    request.cancel_at = SubscriptionCancelAt::Clear;
+    for (int failure = 0; failure < 3; ++failure) {
+        const auto configure_failure = [&] {
+            if (failure == 0)
+                http.set_response(
+                    { .status_code = 400,
+                      .body =
+                          R"({"error":{"type":"invalid_request_error","message":"Cannot update this subscription"}})" });
+            else if (failure == 1)
+                http.set_exception(std::make_exception_ptr(std::runtime_error("Offline")));
+            else
+                http.set_response(
+                    { .status_code = 200,
+                      .body = R"({"id":"sub_test","status":"active","cancel_at":"tomorrow"})" });
+        };
+        // Neither API style may turn a failed update into a usable subscription result.
+        configure_failure();
+        if (failure == 0)
+            EXPECT_THROW(client.subscriptions().update_async("sub_test", request).result(),
+                         StripeApiException);
+        else if (failure == 1)
+            EXPECT_THROW(client.subscriptions().update_async("sub_test", request).result(),
+                         std::runtime_error);
+        else
+            EXPECT_THROW(client.subscriptions().update_async("sub_test", request).result(),
+                         ConfigurationException);
+        configure_failure();
+        int calls = 0;
+        std::optional<CallbackResult<Subscription>> rejected;
+        client.subscriptions().update(
+            "sub_test", request, {}, [&](CallbackResult<Subscription> result) {
+                ++calls;
+                rejected = std::move(result);
+            });
+        EXPECT_EQ(calls, 1);
+        ASSERT_TRUE(rejected.has_value());
+        ASSERT_TRUE(std::holds_alternative<std::exception_ptr>(*rejected));
+        const auto exception = std::get<std::exception_ptr>(*rejected);
+        if (failure == 0) EXPECT_THROW(std::rethrow_exception(exception), StripeApiException);
+        else if (failure == 1) EXPECT_THROW(std::rethrow_exception(exception), std::runtime_error);
+        else EXPECT_THROW(std::rethrow_exception(exception), ConfigurationException);
+    }
+}
+
+// A subscription need not have a cancellation date. When one is returned, reject
+// invalid values rather than giving applications an unreliable billing deadline.
+TEST(CatalogParser, SubscriptionCancellationDatesRemainOptionalAndRejectMalformedValues) {
+    JsonStripeResponseParser parser;
+    const auto absent =
+        parser.parse_subscription({ .body = R"({"id":"sub_test","status":"active"})" });
+    EXPECT_FALSE(absent.cancel_at_unix.has_value());
+    const auto cleared = parser.parse_subscription(
+        { .body = R"({"id":"sub_test","status":"active","cancel_at":null})" });
+    EXPECT_FALSE(cleared.cancel_at_unix.has_value());
+    for (const std::string value : { R"("tomorrow")", "-1", "true", "1.5", "{}" })
+        EXPECT_THROW(
+            parser.parse_subscription(
+                { .body = R"({"id":"sub_test","status":"active","cancel_at":)" + value + "}" }),
+            ConfigurationException);
 }
 
 TEST_F(CatalogTest, SubscriptionPendingUpdatesAreNotReportedAsAppliedPrices) {

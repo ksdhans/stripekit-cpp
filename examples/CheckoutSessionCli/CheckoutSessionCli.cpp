@@ -15,7 +15,7 @@
 
 namespace {
 
-constexpr std::string_view stripe_api_version = "2024-06-20";
+constexpr std::string_view stripe_api_version = stripekit::default_stripe_api_version;
 
 /** Returns a required environment variable or reports which value is missing. */
 std::string require_env(const char* name) {

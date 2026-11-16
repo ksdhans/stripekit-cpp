@@ -121,8 +121,12 @@ protected:
     std::int64_t frozen = 0, renewal = 0;
 };
 
+// Withdrawing a period-end cancellation should allow billing to continue.
+// Scheduling it again should end the subscription at renewal without changing
+// the invoice that already paid for the current period.
 TEST_F(SandboxCollectionAndInvoicesTest, PeriodEndCancellationCanBeClearedAndOccursAtRenewal) {
     auto& api = environment->stripe_client().subscriptions();
+    // Scheduling and retrying cancellation must leave the already-paid period active.
     const RequestOptions options{ .idempotency_key = environment->run_id() + "_cancel_period" };
     auto changed = api.set_cancel_at_period_end_async(subscription, true, options).result();
     EXPECT_TRUE(changed.cancel_at_period_end);
@@ -131,6 +135,7 @@ TEST_F(SandboxCollectionAndInvoicesTest, PeriodEndCancellationCanBeClearedAndOcc
     EXPECT_TRUE(api.set_cancel_at_period_end_async(subscription, true, options)
                     .result()
                     .cancel_at_period_end);
+    // Withdraw the cancellation, then schedule it again for the same renewal boundary.
     std::promise<CallbackResult<Subscription>> completion;
     auto result = completion.get_future();
     api.set_cancel_at_period_end(subscription, false, {}, [&](CallbackResult<Subscription> value) {
@@ -142,6 +147,120 @@ TEST_F(SandboxCollectionAndInvoicesTest, PeriodEndCancellationCanBeClearedAndOcc
     advance_sandbox_clock(*environment, clock, renewal + 1);
     EXPECT_EQ(saved_subscription().status, "canceled");
     EXPECT_TRUE(environment->stripe_client().invoices().retrieve_async(paid_invoice).result().paid);
+}
+
+// Clearing a cancellation leaves the subscription active past the original date.
+// Rescheduling cancels it at the new date, without another renewal invoice, and
+// delivers the cancellation webhook. Application access rules are not tested here.
+TEST_F(SandboxCollectionAndInvoicesTest, DatedCancellationCanBeClearedAndRescheduled) {
+    auto& client = environment->stripe_client();
+    auto& api = client.subscriptions();
+    const auto first_date = frozen + 7 * 86400;
+    const auto final_date = frozen + 14 * 86400;
+    ASSERT_TRUE(final_date < renewal);
+    // Schedule a mid-period cancellation without crediting back unused time.
+    UpdateSubscriptionRequest request;
+    request.cancel_at = first_date;
+    request.proration_behavior = ProrationBehavior::None;
+    request.metadata = { { "keep", "yes" }, { "remove", "yes" } };
+    const RequestOptions options{ .idempotency_key = subscription + "_dated_cancel" };
+    const auto changed = api.update_async(subscription, request, options).result();
+    EXPECT_EQ(changed.cancel_at_unix.value(), first_date);
+    EXPECT_EQ(changed.status, "active");
+    EXPECT_FALSE(changed.livemode);
+    EXPECT_EQ(changed.latest_invoice_id, paid_invoice);
+    EXPECT_EQ(saved_subscription().cancel_at_unix.value(), first_date);
+    EXPECT_EQ(api.update_async(subscription, request, options).result().cancel_at_unix.value(),
+              first_date);
+
+    // Withdrawing cancellation must preserve unrelated subscription metadata.
+    UpdateSubscriptionRequest clear;
+    clear.cancel_at = SubscriptionCancelAt::Clear;
+    clear.proration_behavior = ProrationBehavior::None;
+    clear.metadata = { { "remove", "" } };
+    std::promise<CallbackResult<Subscription>> completion;
+    auto result = completion.get_future();
+    api.update(subscription, clear, {}, [&](CallbackResult<Subscription> value) {
+        completion.set_value(std::move(value));
+    });
+    const auto continued = completed(result);
+    EXPECT_FALSE(continued.cancel_at_unix.has_value());
+    EXPECT_FALSE(continued.cancel_at_period_end);
+    auto saved = saved_subscription();
+    EXPECT_FALSE(saved.cancel_at_unix.has_value());
+    EXPECT_EQ(saved.metadata.at("keep"), "yes");
+    EXPECT_EQ(saved.metadata.count("remove"), 0U);
+    // Passing the withdrawn deadline must not end the subscription.
+    advance_sandbox_clock(*environment, clock, first_date + 1);
+    EXPECT_EQ(saved_subscription().status, "active");
+
+    // The subscription stays active until the new cancellation date.
+    request.cancel_at = final_date;
+    api.update_async(subscription, request).result();
+    advance_sandbox_clock(*environment, clock, final_date - 1);
+    EXPECT_EQ(saved_subscription().status, "active");
+    advance_sandbox_clock(*environment, clock, final_date + 1);
+    saved = saved_subscription();
+    EXPECT_EQ(saved.status, "canceled");
+    EXPECT_EQ(saved.latest_invoice_id, paid_invoice);
+    // Passing the original renewal date must not generate another invoice.
+    advance_sandbox_clock(*environment, clock, renewal + 3600);
+    EXPECT_EQ(saved_subscription().status, "canceled");
+    const auto invoices =
+        client.invoices().list_async({ .subscription_id = subscription, .limit = 10 }).result();
+    EXPECT_FALSE(invoices.has_more);
+    ASSERT_EQ(invoices.data.size(), 1U);
+    EXPECT_EQ(invoices.data.front().id, paid_invoice);
+    EXPECT_EQ(invoices.data.front().amount_paid, 1500);
+    EXPECT_TRUE(invoices.data.front().paid);
+    // The application learns about the completed cancellation through its webhook.
+    const auto event = environment->wait_for_event("customer.subscription.deleted", subscription);
+    ASSERT_TRUE(event.has_value());
+    EXPECT_EQ(json_path(event->json(), "data.object.status").asString(), "canceled");
+}
+
+// Shortening a paid period can credit the unused half. Check that callers can
+// suppress that credit, leave it for a later invoice, or invoice it immediately,
+// without creating duplicate adjustments.
+TEST_F(SandboxCollectionAndInvoicesTest, DatedCancellationHonorsProrationPolicies) {
+    auto& api = environment->stripe_client().subscriptions();
+    // Cancel halfway through a 1500-cent period: any unused-service credit should be 750 cents.
+    const auto cancel_date = frozen + (renewal - frozen) / 2;
+    for (const auto policy : { ProrationBehavior::None,
+                               ProrationBehavior::CreateProrations,
+                               ProrationBehavior::AlwaysInvoice }) {
+        const auto id =
+            policy == ProrationBehavior::None
+                ? subscription
+                : environment->stripe_api()
+                      .require_post("/v1/subscriptions",
+                                    { { "customer", customer }, { "items[0][price]", price } })
+                      .id();
+        const auto before = api.retrieve_async(id).result();
+        UpdateSubscriptionRequest request;
+        request.cancel_at = cancel_date;
+        request.proration_behavior = policy;
+        const auto changed = api.update_async(id, request).result();
+        EXPECT_EQ(changed.cancel_at_unix.value(), cancel_date);
+        EXPECT_EQ(changed.status, "active");
+        if (policy == ProrationBehavior::AlwaysInvoice) {
+            // Immediate invoicing must put the credit on a new invoice now.
+            EXPECT_NE(changed.latest_invoice_id, before.latest_invoice_id);
+            const auto invoice = environment->stripe_client()
+                                     .invoices()
+                                     .retrieve_async(changed.latest_invoice_id)
+                                     .result();
+            EXPECT_EQ(invoice.total, -750);
+        } else {
+            EXPECT_EQ(changed.latest_invoice_id, before.latest_invoice_id);
+        }
+        // Collect remaining adjustments: only the deferred policy should still have a credit.
+        const auto pending = environment->stripe_api().require_post(
+            "/v1/invoices",
+            { { "customer", customer }, { "subscription", id }, { "auto_advance", "false" } });
+        EXPECT_EQ(pending.body["total"].asInt64(),
+                  policy == ProrationBehavior::CreateProrations ? -750 : 0);
+    }
 }
 
 TEST_F(SandboxCollectionAndInvoicesTest, CollectionPauseBehaviorsControlRenewalInvoicesAndResume) {

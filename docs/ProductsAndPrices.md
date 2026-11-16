@@ -191,12 +191,12 @@ const auto changed = co_await stripe->subscriptions().update_async(
 
 Use a distinct, stable idempotency key for each subscription change. Retry with
 the same key and unchanged inputs after an interrupted request.
-Only listed items change. A request accepts one through twenty distinct item
+Only listed items change. An item update accepts up to twenty distinct item
 IDs and requires a positive quantity for each. This operation targets licensed,
 fixed-quantity subscriptions, not metered subscription changes.
 
-Both behaviors are required; leaving either unset raises `ConfigurationException`
-before sending a request.
+Both billing behaviors are optional. Omitted values use Stripe's defaults;
+choose them explicitly when your application requires a particular billing policy.
 
 | ProrationBehavior | Effect |
 | --- | --- |
@@ -206,6 +206,10 @@ before sending a request.
 
 No proration does not mean no immediate payment. Switching billing intervals,
 for example, can reset the billing date and trigger an immediate invoice.
+
+The same update API supports cancellation dates, metadata, and automatic tax
+without replacing items. See [subscription cancellation](BillingPortalAndInvoices.md#collection_controls)
+for scheduling and clearing cancellation dates. Omit `items` for those updates.
 
 | PaymentBehavior | Effect when an automatically charged update requires payment |
 | --- | --- |

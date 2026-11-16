@@ -420,19 +420,44 @@ std::string payment_value(PaymentBehavior behavior) {
     throw ConfigurationException("Invalid payment behavior");
 }
 
-/** Replace existing items with explicit quantities so Stripe cannot reset them to one. */
+/** Encode a cancellation timestamp, named billing boundary, or an explicit cleared value. */
+std::string cancellation_date_value(const std::variant<std::int64_t, SubscriptionCancelAt>& date) {
+    if (const auto seconds = std::get_if<std::int64_t>(&date)) {
+        if (*seconds <= 0)
+            throw ConfigurationException("Subscription cancellation timestamp must be positive");
+        return std::to_string(*seconds);
+    }
+    switch (std::get<SubscriptionCancelAt>(date)) {
+    case SubscriptionCancelAt::Clear:
+        return "";
+    case SubscriptionCancelAt::MinPeriodEnd:
+        return "min_period_end";
+    case SubscriptionCancelAt::MaxPeriodEnd:
+        return "max_period_end";
+    case SubscriptionCancelAt::MaxBilledUntil:
+        return "max_billed_until";
+    }
+    throw ConfigurationException("Invalid subscription cancellation boundary");
+}
+
+/** Encode supplied subscription fields without imposing an application billing policy. */
 std::string subscription_body(const UpdateSubscriptionRequest& request) {
-    if (!request.proration_behavior || !request.payment_behavior)
-        throw ConfigurationException(
-            "Subscription updates require proration and payment behaviors");
-    if (request.items.empty() || request.items.size() > 20)
-        throw ConfigurationException("Subscription updates require one through twenty items");
+    if (request.items.size() > 20)
+        throw ConfigurationException("Subscription updates accept at most twenty items");
     std::string body;
-    append_form_value(body, "proration_behavior", proration_value(*request.proration_behavior));
-    append_form_value(body, "payment_behavior", payment_value(*request.payment_behavior));
+    if (request.proration_behavior)
+        append_form_value(body, "proration_behavior", proration_value(*request.proration_behavior));
+    if (request.payment_behavior)
+        append_form_value(body, "payment_behavior", payment_value(*request.payment_behavior));
     if (request.automatic_tax_enabled)
         append_form_value(
             body, "automatic_tax[enabled]", *request.automatic_tax_enabled ? "true" : "false");
+    if (request.cancel_at)
+        append_form_value(body, "cancel_at", cancellation_date_value(*request.cancel_at));
+    if (request.cancel_at_period_end)
+        append_form_value(
+            body, "cancel_at_period_end", *request.cancel_at_period_end ? "true" : "false");
+    append_metadata(body, request.metadata);
     std::unordered_set<std::string> ids;
     for (std::size_t index = 0; index < request.items.size(); ++index) {
         const auto& item = request.items[index];
@@ -1313,7 +1338,6 @@ Charge StripeResponseParser::parse_charge(const HttpResponse& response) const {
     charge.id = value["id"].asString();
     charge.customer_id = reference_id(value["customer"]);
     charge.payment_intent_id = reference_id(value["payment_intent"]);
-    charge.invoice_id = reference_id(value["invoice"]);
     charge.status = value["status"].asString();
     charge.currency = value["currency"].asString();
     charge.amount = value["amount"].asInt64();
@@ -1653,13 +1677,9 @@ Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& re
                       .livemode = json_value::boolean(object, "livemode"),
                       .metadata = metadata_value(object) };
     subscription.trial_end_unix = optional_unix_timestamp(object["trial_end"]);
+    subscription.cancel_at_unix = optional_unix_timestamp(object["cancel_at"]);
     subscription.schedule_id = reference_id(object["schedule"]);
     subscription.discount_ids = reference_ids(object["discounts"]);
-    const auto legacy_discount = reference_id(object["discount"]);
-    if (!legacy_discount.empty() && std::find(subscription.discount_ids.begin(),
-                                              subscription.discount_ids.end(),
-                                              legacy_discount) == subscription.discount_ids.end())
-        subscription.discount_ids.push_back(legacy_discount);
     subscription.default_tax_rate_ids = reference_ids(object["default_tax_rates"]);
     const auto& automatic_tax = object["automatic_tax"];
     if (!automatic_tax.isNull()) {
@@ -1803,12 +1823,6 @@ Invoice JsonStripeResponseParser::parse_invoice(const HttpResponse& response) co
     };
     invoice.amount_discount = sum_amounts(object["total_discount_amounts"], "amount");
     invoice.amount_tax = sum_amounts(object["total_taxes"], "amount");
-    if (!invoice.amount_tax) {
-        const auto legacy_tax = object["total_tax"].isNull() ? object["tax"] : object["total_tax"];
-        if (!legacy_tax.isNull() && !legacy_tax.isInt64())
-            throw ConfigurationException("Stripe returned malformed invoice tax total");
-        if (legacy_tax.isInt64()) invoice.amount_tax = legacy_tax.asInt64();
-    }
     if (!object["automatic_tax"].isNull())
         invoice.automatic_tax = automatic_tax_value(object["automatic_tax"]);
     const auto& finalization_error = object["last_finalization_error"];
@@ -2927,39 +2941,16 @@ void StripeApiClient::RefundOperations::list(const ListRefundsRequest& request,
 
 Task<Subscription> StripeApiClient::SubscriptionOperations::set_cancel_at_period_end_async(
     std::string id, bool cancel, const RequestOptions& options) {
-    return send_and_parse_async<Subscription>(
-        owner.http_client,
-        owner.response_parser,
-        make_request(HttpMethod::Post,
-                     catalog_path("subscriptions", id),
-                     cancel ? "cancel_at_period_end=true" : "cancel_at_period_end=false",
-                     options),
-        [](const StripeResponseParser& parser, const HttpResponse& response) {
-            return parser.parse_subscription(response);
-        });
+    UpdateSubscriptionRequest request;
+    request.cancel_at_period_end = cancel;
+    return update_async(std::move(id), request, options);
 }
 
 void StripeApiClient::SubscriptionOperations::set_cancel_at_period_end(
     std::string id, bool cancel, const RequestOptions& options, UpdateCompletion completion) {
-    HttpRequest http;
-    try {
-        http = make_request(HttpMethod::Post,
-                            catalog_path("subscriptions", id),
-                            cancel ? "cancel_at_period_end=true" : "cancel_at_period_end=false",
-                            options);
-    } catch (...) {
-        completion(std::current_exception());
-        return;
-    }
-    send_and_parse<Subscription>(
-        owner.http_client,
-        owner.response_parser,
-        owner.callback_lifetime,
-        std::move(http),
-        [](const StripeResponseParser& parser, const HttpResponse& response) {
-            return parser.parse_subscription(response);
-        },
-        std::move(completion));
+    UpdateSubscriptionRequest request;
+    request.cancel_at_period_end = cancel;
+    update(std::move(id), request, options, std::move(completion));
 }
 
 Task<Subscription> StripeApiClient::SubscriptionOperations::pause_collection_async(

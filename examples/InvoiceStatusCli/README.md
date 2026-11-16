@@ -86,4 +86,4 @@ PDF: https://pay.stripe.com/invoice/...
   3D Secure. Stripe then sends the `invoice.paid` webhook.
 - **PDF** downloads a copy of the invoice.
 
-The example rejects live keys and pins `Stripe-Version: 2024-06-20`.
+The example rejects live keys and pins `Stripe-Version: 2026-10-28.endive`.

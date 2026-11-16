@@ -222,7 +222,7 @@ struct CheckoutSession {
     /** Payment state such as unpaid, paid, or no_payment_required. */
     std::string payment_status;
 
-    /** Automatic-tax state, absent on older API versions or unexpanded responses. */
+    /** Automatic-tax state, absent when not included in the response. */
     std::optional<AutomaticTax> automatic_tax;
 
     /** Purchased prices and quantities when Stripe returns expanded line items. */
@@ -246,14 +246,12 @@ struct CheckoutSession {
 
 /**
  * One attempt to collect a payment. Amounts are in the currency's smallest unit.
- * invoice_id is available on older Stripe API versions; on newer versions,
- * find invoice allocations through InvoicePayments using payment_intent_id.
+ * Find invoice allocations through InvoicePayments using payment_intent_id.
  */
 struct Charge {
     std::string id;
     std::string customer_id;       ///< Empty for a payment without a saved customer.
     std::string payment_intent_id; ///< Empty for charges not created by a PaymentIntent.
-    std::string invoice_id;        ///< Legacy invoice reference; empty when absent.
     std::string status;            ///< Stripe status, such as succeeded, pending, or failed.
     std::string currency;
     std::int64_t amount = 0;
@@ -395,6 +393,8 @@ struct Subscription {
 
     /** True when cancellation will occur at period end. */
     bool cancel_at_period_end = false;
+    /** Explicit cancellation timestamp, absent when no date is scheduled. */
+    std::optional<std::int64_t> cancel_at_unix;
 
     /** True when the object belongs to a live Stripe account. */
     bool livemode = false;
@@ -419,7 +419,7 @@ struct Subscription {
 
     /** Schedule controlling future changes, empty when absent. */
     std::string schedule_id;
-    /** Subscription discounts, including the legacy single-discount field. */
+    /** Discounts applied to the subscription. */
     std::vector<std::string> discount_ids;
     /** Default tax rates used by this subscription. */
     std::vector<std::string> default_tax_rate_ids;
@@ -534,7 +534,7 @@ struct Invoice {
     /** Final invoice total in the smallest currency unit, when supplied. */
     std::optional<std::int64_t> total;
 
-    /** Automatic-tax state, absent on older API versions. */
+    /** Automatic-tax state, absent when not included in the response. */
     std::optional<AutomaticTax> automatic_tax;
 
     /** Code explaining why finalization failed, when Stripe supplies one. */

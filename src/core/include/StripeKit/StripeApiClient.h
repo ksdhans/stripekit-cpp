@@ -360,8 +360,8 @@ public:
     /**
      * Reads an invoice out of a successful JSON response.
      *
-     * Accepts invoices from both older and current Stripe API versions, which
-     * report the subscription and paid state in different places.
+     * Reads subscription references from the invoice parent and derives the
+     * paid state from the invoice status.
      *
      * @param response The response body and status from Stripe.
      *
@@ -711,10 +711,10 @@ private:
         /** Deliver the resumed subscription or failure once. */
         void resume_collection(std::string, const RequestOptions&, UpdateCompletion) override;
         explicit SubscriptionOperations(StripeApiClient& owner);
-        /** Replace existing subscription item prices with explicit billing policies. */
+        /** Update subscription items, billing settings, cancellation, or metadata. */
         Task<Subscription>
         update_async(std::string, const UpdateSubscriptionRequest&, const RequestOptions&) override;
-        /** Update subscription prices and deliver the result once. */
+        /** Deliver the updated subscription or its failure once. */
         void update(std::string,
                     const UpdateSubscriptionRequest&,
                     const RequestOptions&,

@@ -5,6 +5,11 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Now require Stripe API `2026-10-28.endive` or later throughout, including examples
+  and sandbox tests.
+- Add options to set and clear subscription cancellation dates, with unit and
+  sandbox tests. Subscription updates also support metadata changes and optional
+  billing policies.
 - Added a sandbox test for detecting an invalid tax location in renewal invoice
   webhooks, holding the draft, and canceling without creating further invoices.
 

@@ -29,7 +29,7 @@ protected:
             "id": "evt_processor_1",
             "object": "event",
             "type": "customer.subscription.created",
-            "api_version": "2024-06-20",
+            "api_version": "2026-10-28.endive",
             "created": 1700000000,
             "livemode": false,
             "request": {

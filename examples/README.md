@@ -76,7 +76,7 @@ exact commands they need.
 - [InvoiceStatusCli](InvoiceStatusCli/README.md) reads an invoice and prints
 	what is owed, when Stripe will retry, and the link where the customer can pay.
 
-The examples pin `Stripe-Version: 2024-06-20` on outbound calls. When testing
+The examples pin `Stripe-Version: 2026-10-28.endive` on outbound calls. When testing
 webhooks locally, use `stripe listen --all-snapshot --latest` to forward all
 events with full object payloads using the latest API version rather than an
 older account default. Current Stripe CLI versions require an explicit event

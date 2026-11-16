@@ -56,7 +56,8 @@ protected:
               { "currency", "usd" },
               { "customer", customer_id },
               { "payment_method", payment_method },
-              { "payment_method_types[]", "card" },
+              { "automatic_payment_methods[enabled]", "true" },
+              { "automatic_payment_methods[allow_redirects]", "never" },
               { "confirm", "true" },
               { "metadata[stripekit_run_id]", environment->run_id() } });
         const auto id = intent.body["latest_charge"].asString();
@@ -64,8 +65,7 @@ protected:
         return id;
     }
 
-    /** Create and pay an invoice; the legacy setup response exposes its PaymentIntent and charge.
-     */
+    /** Creates and pays an invoice using the supported Stripe API version. */
     StripeApiResult pay_invoice() {
         auto& api = environment->stripe_api();
         const auto invoice =
@@ -91,12 +91,13 @@ protected:
 };
 
 TEST_F(SandboxPaymentsTest, DeclinedChargeIsReturnedAsFailedAndUnpaid) {
-    const auto intent =
-        environment->stripe_api().require_post("/v1/payment_intents",
-                                               { { "amount", "1500" },
-                                                 { "currency", "usd" },
-                                                 { "customer", customer_id },
-                                                 { "payment_method_types[]", "card" } });
+    const auto intent = environment->stripe_api().require_post(
+        "/v1/payment_intents",
+        { { "amount", "1500" },
+          { "currency", "usd" },
+          { "customer", customer_id },
+          { "automatic_payment_methods[enabled]", "true" },
+          { "automatic_payment_methods[allow_redirects]", "never" } });
     const auto declined =
         environment->stripe_api().post("/v1/payment_intents/" + intent.id() + "/confirm",
                                        { { "payment_method", "pm_card_chargeDeclined" } });
@@ -302,7 +303,6 @@ TEST_F(SandboxPaymentsTest, ChargeRetrievalAndCustomerFilteredPagination) {
     EXPECT_EQ(charge.id, first);
     EXPECT_EQ(charge.customer_id, customer_id);
     EXPECT_FALSE(charge.payment_intent_id.empty());
-    EXPECT_TRUE(charge.invoice_id.empty());
     EXPECT_EQ(charge.amount, 1500);
     EXPECT_EQ(charge.amount_refunded, 0);
     EXPECT_EQ(charge.currency, "usd");
@@ -349,27 +349,22 @@ TEST_F(SandboxPaymentsTest, ChargeRetrievalAndCustomerFilteredPagination) {
                  StripeApiException);
 }
 
-TEST_F(SandboxPaymentsTest, InvoiceAllocationsLinkPaymentsAcrossApiVersionsAndSupportCursors) {
+TEST_F(SandboxPaymentsTest, InvoiceAllocationsLinkPaymentsAndSupportCursors) {
     const auto first = pay_invoice();
     const auto second = pay_invoice();
     auto& client = environment->stripe_client();
     std::vector<std::string> allocation_ids;
-    const RequestOptions modern{ .headers = { { "Stripe-Version", "2025-03-31.basil" } } };
+    const RequestOptions modern{ .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
     for (const auto& invoice : { first, second }) {
-        const auto intent = invoice.body["payment_intent"].asString();
-        const auto charge_id = invoice.body["charge"].asString();
+        const auto intent = invoice_payment_intent(*environment, invoice.id());
+        const auto paid_intent = environment->stripe_api().get("/v1/payment_intents/" + intent);
+        ASSERT_TRUE(paid_intent.ok());
+        const auto charge_id = paid_intent.body["latest_charge"].asString();
         ASSERT_FALSE(intent.empty());
         ASSERT_FALSE(charge_id.empty());
         const auto charge = client.charges().retrieve_async(charge_id, modern).result();
         EXPECT_EQ(charge.customer_id, customer_id);
         EXPECT_EQ(charge.payment_intent_id, intent);
-        EXPECT_TRUE(charge.invoice_id.empty());
-        const auto legacy =
-            client.charges()
-                .retrieve_async(charge_id, { .headers = { { "Stripe-Version", "2024-06-20" } } })
-                .result();
-        EXPECT_EQ(legacy.invoice_id, invoice.id());
-
         const ListInvoicePaymentsRequest request{ .payment_intent_id = intent, .limit = 1 };
         const auto page = client.invoice_payments().list_async(request, modern).result();
         ASSERT_EQ(page.data.size(), 1U);
@@ -396,8 +391,9 @@ TEST_F(SandboxPaymentsTest, InvoiceAllocationsLinkPaymentsAcrossApiVersionsAndSu
     EXPECT_TRUE(first_page.has_more);
     std::promise<CallbackResult<InvoicePaymentList>> completion;
     auto result = completion.get_future();
+    // Page from this test's newest allocation, not an unrelated record another run can delete.
     client.invoice_payments().list(
-        { .limit = 1, .starting_after = first_page.data.front().id },
+        { .limit = 1, .starting_after = allocation_ids.back() },
         modern,
         [&](CallbackResult<InvoicePaymentList> value) { completion.set_value(std::move(value)); });
     const auto callback = result.get();
@@ -405,7 +401,7 @@ TEST_F(SandboxPaymentsTest, InvoiceAllocationsLinkPaymentsAcrossApiVersionsAndSu
         std::rethrow_exception(std::get<std::exception_ptr>(callback));
     const auto next_page = std::get<InvoicePaymentList>(callback);
     ASSERT_EQ(next_page.data.size(), 1U);
-    EXPECT_NE(next_page.data.front().id, first_page.data.front().id);
+    EXPECT_NE(next_page.data.front().id, allocation_ids.back());
     EXPECT_NE(allocation_ids[0], allocation_ids[1]);
 
     const auto standalone = client.charges().retrieve_async(create_charge()).result();
