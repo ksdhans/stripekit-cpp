@@ -410,6 +410,252 @@ void run_tax_schedule_renewal(SandboxEnvironment& environment,
     EXPECT_EQ(expired_discount_invoice.amount_discount.value_or(0), 0);
 }
 
+/** Check the service dates on the actual billed line, not just the subscription's dates. */
+void expect_service_period(SandboxEnvironment& environment,
+                           const std::string& invoice_id,
+                           std::int64_t start,
+                           std::int64_t end) {
+    const auto lines = environment.stripe_api().get("/v1/invoices/" + invoice_id + "/lines");
+    if (!lines.ok())
+        throw std::runtime_error("Could not read recovered invoice lines: " + lines.describe());
+    ASSERT_TRUE(lines.body["data"].isArray());
+    ASSERT_EQ(lines.body["data"].size(), 1U);
+    ASSERT_FALSE(lines.body["has_more"].asBool());
+    const auto& line = lines.body["data"][0];
+    ASSERT_EQ(line["amount"].asInt64(), 1000);
+    ASSERT_EQ(line["period"]["start"].asInt64(), start);
+    ASSERT_EQ(line["period"]["end"].asInt64(), end);
+}
+
+/** Recover a held renewal without retaining the pause credit or charging the service twice. */
+void run_held_invoice_pause_recovery(SandboxEnvironment& environment,
+                                     TaxTestResources& resources,
+                                     const TaxTestFixtures& fixtures,
+                                     const TaxTestPrices& prices,
+                                     bool late) {
+    auto& client = environment.stripe_client();
+    auto& api = environment.stripe_api();
+
+    // Start with a paid period and a known billed-through date on flexible billing.
+    const auto frozen = std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+    const auto clock = create_sandbox_clock(environment, frozen);
+    resources.clocks.push_back(clock);
+    const auto customer =
+        create_tax_customer(environment, resources, fixtures.new_zealand, "pause_recovery", clock);
+    const auto first_invoice =
+        create_tax_subscription(environment, resources, customer, prices.recurring);
+    const auto id = resources.subscriptions.back();
+    client.subscriptions().migrate_async(id).result();
+    const RetrieveSubscriptionRequest expanded{ .expand = { "items.data.billed_until" } };
+    auto saved = client.subscriptions().retrieve_async(id, expanded, {}).result();
+    ASSERT_EQ(saved.items.size(), 1U);
+    const auto item_id = saved.items.front().id;
+    const auto renewal = saved.items.front().current_period_end_unix.value();
+    ASSERT_EQ(saved.items.front().billed_until_unix.value(), renewal);
+
+    // Keep an unrelated credit on another paused subscription for the same customer.
+    create_tax_subscription(environment, resources, customer, prices.recurring);
+    const auto other_id = resources.subscriptions.back();
+    client.subscriptions().migrate_async(other_id).result();
+    client.subscriptions()
+        .pause_async(other_id,
+                     { .bill_for = { .unused_time_from = { "none" },
+                                     .outstanding_usage_through = { "none" } },
+                       .invoicing_behavior = "pending_invoice_item" })
+        .result();
+    const auto unrelated_id = api.require_post("/v1/invoiceitems",
+                                               { { "customer", customer },
+                                                 { "subscription", other_id },
+                                                 { "amount", "-77" },
+                                                 { "currency", "nzd" },
+                                                 { "metadata[purpose]", "unrelated" } })
+                                  .id();
+    const auto unrelated = client.invoice_items().retrieve_async(unrelated_id).result();
+
+    // Lose the tax location at renewal, then hold the new draft before it can be collected.
+    client.customers()
+        .update_async(
+            customer,
+            { .address =
+                  BillingAddress{
+                      .line1 = "", .city = "", .state = "", .postal_code = "", .country = "" },
+              .validate_tax_location = TaxLocationValidation::Deferred })
+        .result();
+    advance_sandbox_clock(environment, clock, renewal + 1);
+    saved = client.subscriptions().retrieve_async(id, expanded, {}).result();
+    const auto held_id = saved.latest_invoice_id;
+    ASSERT_NE(held_id, first_invoice);
+    const auto next_renewal = saved.items.front().current_period_end_unix.value();
+    ASSERT_EQ(saved.items.front().billed_until_unix.value(), next_renewal);
+    auto held = client.invoices().update_async(held_id, { .auto_advance = false }).result();
+    ASSERT_EQ(held.status, "draft");
+    ASSERT_FALSE(held.paid);
+    ASSERT_TRUE(held.automatic_tax.has_value());
+    ASSERT_EQ(held.automatic_tax->status, "requires_location_inputs");
+    std::set<std::string> held_lines;
+    for (const auto& line : held.line_items)
+        held_lines.insert(line.id);
+    ASSERT_FALSE(held_lines.empty());
+
+    // Record existing charges and pending items so only the pause's effects are attributed to it.
+    const auto charges_before = client.charges().list_async({ .customer_id = customer }).result();
+    ASSERT_FALSE(charges_before.has_more);
+    const auto pending_before =
+        client.invoice_items().list_async({ .customer_id = customer, .pending = true }).result();
+    ASSERT_FALSE(pending_before.has_more);
+    std::set<std::string> existing_items;
+    for (const auto& item : pending_before.data)
+        existing_items.insert(item.id);
+
+    // Credit the whole held period and verify that pausing rolls billed_until back to its start.
+    const PauseSubscriptionRequest pause{
+        .bill_for = { .unused_time_from = { "item_current_period_start" },
+                      .outstanding_usage_through = { "none" } },
+        .invoicing_behavior = "pending_invoice_item"
+    };
+    ASSERT_EQ(client.subscriptions().pause_async(id, pause).result().status, "paused");
+    saved = client.subscriptions().retrieve_async(id, expanded, {}).result();
+    ASSERT_EQ(saved.items.front().billed_until_unix.value(), renewal);
+
+    // Search every page for the new credit using ownership and service dates, not its sign.
+    ListInvoiceItemsRequest filter{ .customer_id = customer, .pending = true, .limit = 1 };
+    std::vector<InvoiceItem> credits;
+    std::set<std::string> seen;
+    bool has_more = false;
+    do {
+        const auto page = client.invoice_items().list_async(filter).result();
+        has_more = page.has_more;
+        for (const auto& item : page.data) {
+            ASSERT_TRUE(seen.insert(item.id).second);
+            if (existing_items.contains(item.id)) continue;
+            if (!item.parent || !item.parent->subscription_details) continue;
+            const auto& owner = *item.parent->subscription_details;
+            if (owner.subscription_id != id || owner.subscription_item_id != item_id) continue;
+            ASSERT_EQ(item.customer_id, customer);
+            ASSERT_TRUE(item.invoice_id.empty());
+            ASSERT_TRUE(item.proration);
+            ASSERT_EQ(item.currency, "nzd");
+            ASSERT_EQ(item.period.start_unix, renewal);
+            ASSERT_EQ(item.period.end_unix, next_renewal);
+
+            // Stripe may link the credit to invoiced lines or to a pending debit item.
+            if (item.proration_details && item.proration_details->credited_items) {
+                const auto& source = *item.proration_details->credited_items;
+                if (source.type == "invoice_line_items") {
+                    ASSERT_TRUE(source.invoice_line_item_details.has_value());
+                    ASSERT_EQ(source.invoice_line_item_details->invoice_id, held_id);
+                    for (const auto& line : source.invoice_line_item_details->invoice_line_item_ids)
+                        ASSERT_TRUE(held_lines.contains(line));
+                } else {
+                    ASSERT_EQ(source.type, "invoice_item");
+                    const auto debit =
+                        client.invoice_items().retrieve_async(source.invoice_item_id).result();
+                    ASSERT_EQ(debit.customer_id, customer);
+                    ASSERT_TRUE(debit.invoice_id.empty() || debit.invoice_id == held_id);
+                    ASSERT_TRUE(debit.parent.has_value());
+                    ASSERT_TRUE(debit.parent->subscription_details.has_value());
+                    ASSERT_EQ(debit.parent->subscription_details->subscription_id, id);
+                    ASSERT_EQ(debit.parent->subscription_details->subscription_item_id, item_id);
+                    ASSERT_EQ(debit.period.start_unix, renewal);
+                    ASSERT_EQ(debit.period.end_unix, next_renewal);
+                }
+            }
+            credits.push_back(item);
+        }
+        if (!page.data.empty()) filter.starting_after = page.data.back().id;
+    } while (has_more);
+    ASSERT_EQ(credits.size(), 1U);
+    EXPECT_EQ(credits.front().amount, -1000);
+
+    // Removing the credit must not undo the rollback or change the held invoice.
+    const auto deleted = client.invoice_items().delete_async(credits.front().id).result();
+    ASSERT_EQ(deleted.id, credits.front().id);
+    ASSERT_TRUE(deleted.deleted);
+    EXPECT_THROW(client.invoice_items().retrieve_async(deleted.id).result(), StripeApiException);
+    saved = client.subscriptions().retrieve_async(id, expanded, {}).result();
+    ASSERT_EQ(saved.status, "paused");
+    ASSERT_EQ(saved.items.front().billed_until_unix.value(), renewal);
+    ASSERT_EQ(client.invoices().retrieve_async(held_id).result().status, "draft");
+
+    // Recover either within the held period or after it has ended, with valid tax restored.
+    const auto recovered_at = late ? next_renewal + 86400 : renewal + 3600;
+    advance_sandbox_clock(environment, clock, recovered_at);
+    correct_tax_location(environment, customer, fixtures.new_zealand);
+    client.invoices()
+        .update_async(held_id, { .automatic_tax_enabled = true, .auto_advance = false })
+        .result();
+    held = client.invoices().finalize_async(held_id).result();
+    ASSERT_EQ(held.status, "open");
+    ASSERT_FALSE(held.paid);
+    client.subscriptions().update_async(id, { .automatic_tax_enabled = true }).result();
+
+    // Quick recovery pays the held period; late recovery voids it and starts a fresh period.
+    if (late) {
+        ASSERT_EQ(client.invoices().void_async(held_id).result().status, "void");
+    } else {
+        api.require_post("/v1/invoices/" + held_id + "/pay", {});
+        expect_tax_result(environment, held_id, true);
+    }
+
+    // Neither path should create prorations when service resumes.
+    const auto resumed =
+        client.subscriptions()
+            .resume_async(id,
+                          { .billing_cycle_anchor =
+                                ResumeSubscriptionBillingCycleAnchor{ late ? "now" : "unchanged" },
+                            .payment_behavior = "resume_on_payment_success",
+                            .proration_behavior = ProrationBehavior::None })
+            .result();
+    ASSERT_EQ(resumed.status, "active");
+    ASSERT_FALSE(resumed.pending_update.has_value());
+
+    // Check actual billed dates, tax, and charge counts to catch a duplicate recovery charge.
+    saved = client.subscriptions().retrieve_async(id, expanded, {}).result();
+    const auto paid_id = late ? saved.latest_invoice_id : held_id;
+    if (late) ASSERT_NE(paid_id, held_id);
+    expect_tax_result(environment, paid_id, true);
+    const auto recovered_invoice = client.invoices().retrieve_async(paid_id).result();
+    ASSERT_EQ(recovered_invoice.subtotal.value(), 1000);
+    ASSERT_EQ(recovered_invoice.line_items.size(), 1U);
+    ASSERT_EQ(saved.items.front().current_period_start_unix.value(), late ? recovered_at : renewal);
+    const auto following_renewal = saved.items.front().current_period_end_unix.value();
+    expect_service_period(environment, paid_id, late ? recovered_at : renewal, following_renewal);
+    const auto invoices = client.invoices().list_async({ .subscription_id = id }).result();
+    ASSERT_FALSE(invoices.has_more);
+    ASSERT_EQ(invoices.data.size(), late ? 3U : 2U);
+    const auto charges = client.charges().list_async({ .customer_id = customer }).result();
+    ASSERT_FALSE(charges.has_more);
+    ASSERT_EQ(charges.data.size(), charges_before.data.size() + 1);
+    const auto still_pending = client.invoice_items().retrieve_async(unrelated_id).result();
+    EXPECT_TRUE(still_pending.invoice_id.empty());
+    EXPECT_EQ(still_pending.amount, unrelated.amount);
+    EXPECT_EQ(still_pending.metadata, unrelated.metadata);
+
+    // The following renewal must charge exactly once and leave the unrelated credit pending.
+    advance_sandbox_clock(environment, clock, following_renewal + 7200);
+    saved = client.subscriptions().retrieve_async(id, expanded, {}).result();
+    ASSERT_EQ(saved.status, "active");
+    ASSERT_NE(saved.latest_invoice_id, paid_id);
+    expect_tax_result(environment, saved.latest_invoice_id, true);
+    const auto following = client.invoices().retrieve_async(saved.latest_invoice_id).result();
+    EXPECT_EQ(following.subtotal.value(), 1000);
+    EXPECT_EQ(following.line_items.size(), 1U);
+    EXPECT_EQ(saved.items.front().current_period_start_unix.value(), following_renewal);
+    expect_service_period(environment,
+                          saved.latest_invoice_id,
+                          following_renewal,
+                          saved.items.front().current_period_end_unix.value());
+    const auto later_invoices = client.invoices().list_async({ .subscription_id = id }).result();
+    EXPECT_FALSE(later_invoices.has_more);
+    EXPECT_EQ(later_invoices.data.size(), invoices.data.size() + 1);
+    const auto later_charges = client.charges().list_async({ .customer_id = customer }).result();
+    EXPECT_FALSE(later_charges.has_more);
+    EXPECT_EQ(later_charges.data.size(), charges.data.size() + 1);
+    EXPECT_TRUE(client.invoice_items().retrieve_async(unrelated_id).result().invoice_id.empty());
+}
+
 } // namespace
 
 class SandboxTaxTest : public ::testing::Test {
@@ -455,6 +701,20 @@ TEST_F(SandboxTaxTest, ScheduleUpdatesKeepTaxAndDiscountDurationThroughRenewal) 
     resources = std::make_unique<TaxTestResources>(*environment);
     const auto prices = create_tax_prices(*environment, *resources, fixtures);
     run_tax_schedule_renewal(*environment, *resources, fixtures, prices_for(prices, "nzd"));
+}
+
+TEST_F(SandboxTaxTest, HeldInvoiceQuickRecoveryDeletesOnlyPauseCreditAndKeepsRenewal) {
+    resources = std::make_unique<TaxTestResources>(*environment);
+    const auto prices = create_tax_prices(*environment, *resources, fixtures);
+    run_held_invoice_pause_recovery(
+        *environment, *resources, fixtures, prices_for(prices, "nzd"), false);
+}
+
+TEST_F(SandboxTaxTest, HeldInvoiceLateRecoveryDeletesOnlyPauseCreditAndResetsRenewal) {
+    resources = std::make_unique<TaxTestResources>(*environment);
+    const auto prices = create_tax_prices(*environment, *resources, fixtures);
+    run_held_invoice_pause_recovery(
+        *environment, *resources, fixtures, prices_for(prices, "nzd"), true);
 }
 
 TEST_F(SandboxTaxTest, InvalidLocationBlocksFinalizationUntilCustomerAndDraftAreCorrected) {

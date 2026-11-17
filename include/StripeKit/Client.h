@@ -1140,6 +1140,26 @@ struct MigrateSubscriptionRequest {
     SubscriptionBillingMode billing_mode{ "flexible" };
 };
 
+/** Extra fields to request when retrieving a subscription. */
+struct RetrieveSubscriptionRequest {
+    /** Field paths, such as items.data.billed_until. Leave empty for a normal retrieval. */
+    std::vector<std::string> expand;
+};
+
+/** Filters and pagination for invoice items, including charges and credits. */
+struct ListInvoiceItemsRequest {
+    /** Customer to list items for; empty lists all customers. */
+    std::string customer_id;
+    /** Invoice to list items for; empty includes items not yet on an invoice. */
+    std::string invoice_id;
+    /** True for pending items, false for items on invoices, or unset for both. */
+    std::optional<bool> pending;
+    /** Page size, from 1 to 100. */
+    std::int64_t limit = 10;
+    /** Last item ID from the previous page; empty starts at the newest item. */
+    std::string starting_after;
+};
+
 /** Filters for one invoice page. Empty subscription_id lists all invoices. */
 struct ListInvoicesRequest {
     std::string subscription_id;
@@ -1166,6 +1186,34 @@ struct UpdateInvoiceRequest {
  */
 class Subscriptions {
 public:
+    /**
+     * Retrieve a subscription with optional expanded fields.
+     * Use items.data.billed_until to request each item's billed-through date.
+     * A missing date is std::nullopt. Pass {} for options to use default request settings.
+     *
+     * @param subscription_id Existing subscription ID.
+     * @param request Fields to expand, such as items.data.billed_until.
+     * @param options Per-request headers and timeout.
+     * @return Current subscription state.
+     * @throws ConfigurationException If the ID or an expansion is empty, or the response is
+     * malformed.
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<Subscription> retrieve_async(std::string subscription_id,
+                                              const RetrieveSubscriptionRequest& request,
+                                              const RequestOptions& options) = 0;
+    /**
+     * Retrieve expanded fields and deliver the subscription or failure exactly once.
+     *
+     * @param subscription_id Existing subscription ID.
+     * @param request Extra fields to request, such as items.data.billed_until.
+     * @param options Per-request headers and timeout.
+     * @param completion Receives the subscription or failure; may run on another thread.
+     */
+    virtual void retrieve(std::string subscription_id,
+                          const RetrieveSubscriptionRequest& request,
+                          const RequestOptions& options,
+                          std::function<void(CallbackResult<Subscription>)> completion) = 0;
     /**
      * Pause service and invoice generation immediately, unlike pause_collection().
      * Requires flexible billing and charge_automatically. For an attached schedule,
@@ -1423,6 +1471,90 @@ public:
     virtual void cancel(std::string subscription_id,
                         const RequestOptions& options,
                         CancelCompletion completion) = 0;
+};
+
+/**
+ * List, retrieve, and delete invoice items.
+ *
+ * Reach an instance through StripeClient::invoice_items(). Check ownership,
+ * service dates, and references to the original charge before deleting an adjustment.
+ *
+ * @sa https://docs.stripe.com/api/invoiceitems
+ */
+class InvoiceItems {
+public:
+    /** Receives one invoice item or a failure. */
+    using Completion = std::function<void(CallbackResult<InvoiceItem>)>;
+    /** Receives one invoice-item page or a failure. */
+    using ListCompletion = std::function<void(CallbackResult<InvoiceItemList>)>;
+    /** Receives the deleted ID and confirmation, or a failure. */
+    using DeleteCompletion = std::function<void(CallbackResult<DeletedInvoiceItem>)>;
+    virtual ~InvoiceItems() = default;
+
+    /**
+     * Read one page, newest first. If has_more is true, use the last item's ID as starting_after.
+     * To find a subscription's items, filter by customer and check each item's optional
+     * parent->subscription_details; Stripe does not offer a subscription filter.
+     *
+     * @param request Customer, invoice, pending filter, and pagination.
+     * @param options Per-request headers and timeout.
+     * @return One page with IDs suitable for starting_after.
+     * @throws ConfigurationException If limit is outside 1 through 100 or the response is
+     * malformed.
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<InvoiceItemList> list_async(const ListInvoiceItemsRequest& request = {},
+                                             const RequestOptions& options = {}) = 0;
+    /**
+     * Read one page and deliver it or its failure exactly once.
+     *
+     * @param request Customer, invoice, pending filter, and pagination.
+     * @param options Per-request headers and timeout.
+     * @param completion Receives the page or failure; may run on another thread.
+     */
+    virtual void list(const ListInvoiceItemsRequest& request,
+                      const RequestOptions& options,
+                      ListCompletion completion) = 0;
+    /**
+     * Read one invoice item, including ownership and proration references when available.
+     *
+     * @param id Invoice-item ID (ii_...), not an invoice line ID (il_...).
+     * @param options Per-request headers and timeout.
+     * @return Item with its amount, service dates, and available original-charge references.
+     * @throws ConfigurationException If the ID is empty or the response is malformed.
+     * @throws StripeApiException If Stripe rejects the request, including not found.
+     */
+    virtual Task<InvoiceItem> retrieve_async(std::string id,
+                                             const RequestOptions& options = {}) = 0;
+    /**
+     * Read one item and deliver it or its failure exactly once.
+     *
+     * @param id Invoice-item ID (ii_...), not an invoice line ID (il_...).
+     * @param options Per-request headers and timeout.
+     * @param completion Receives the item or failure; may run on another thread.
+     */
+    virtual void retrieve(std::string id, const RequestOptions& options, Completion completion) = 0;
+    /**
+     * Delete a pending item or an item on a draft invoice.
+     *
+     * @param id Invoice-item ID (ii_...) that your application has identified for removal.
+     * @param options Per-request headers and timeout.
+     * @return Deleted ID and Stripe's explicit true confirmation.
+     * @throws ConfigurationException If the ID is empty or deletion is not confirmed.
+     * @throws StripeApiException If Stripe rejects deletion, including not found.
+     */
+    virtual Task<DeletedInvoiceItem> delete_async(std::string id,
+                                                  const RequestOptions& options = {}) = 0;
+    /**
+     * Delete one item and deliver confirmation or failure exactly once.
+     *
+     * @param id Invoice-item ID (ii_...) that your application has identified for removal.
+     * @param options Per-request headers and timeout.
+     * @param completion Receives deletion confirmation or failure; may run on another thread.
+     */
+    virtual void delete_invoice_item(std::string id,
+                                     const RequestOptions& options,
+                                     DeleteCompletion completion) = 0;
 };
 
 /**
@@ -2114,6 +2246,13 @@ public:
      *         client does.
      */
     virtual Invoices& invoices() = 0;
+
+    /**
+     * Return invoice-item operations.
+     *
+     * @return A reference owned by this client and valid for its lifetime.
+     */
+    virtual InvoiceItems& invoice_items() = 0;
 
     /**
      * Returns the billing portal operations.

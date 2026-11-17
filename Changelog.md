@@ -5,6 +5,11 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Add invoice-item listing, retrieval, and deletion.
+- Add subscription retrieval expansions and item `billed_until_unix`.
+  Custom clients must implement the new operations and retrieval overloads.
+- Add sandbox tests for held-invoice recovery after a subscription pause.
+
 ## 0.8.0 2026-11-16
 
 - Split sandbox tests into separately runnable groups.

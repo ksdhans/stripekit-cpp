@@ -15,6 +15,15 @@ const std::string subscription_json =
 const std::string invoice_json =
     R"({"object":"invoice","id":"in_test","customer":"cus_test","subscription":"sub_test","status":"void","auto_advance":false})";
 const std::string deleted_json = R"({"object":"invoice","id":"in_test","deleted":true})";
+const std::string invoice_item_json = R"({
+    "object":"invoiceitem","id":"ii_credit","customer":{"id":"cus_test"},"invoice":null,
+    "amount":-1500,"currency":"usd","period":{"start":1800000000,"end":1802678400},
+    "proration":true,"parent":{"type":"subscription_details","subscription_details":{
+        "subscription":"sub_test","subscription_item":"si_test"}},
+    "proration_details":{"credited_items":{"type":"invoice_line_items",
+        "invoice_line_item_details":{"invoice":"in_held","invoice_line_items":["il_service"]}}},
+    "metadata":{"operation":"pause_123"}
+})";
 } // namespace
 
 class CollectionAndInvoicesTest : public ::testing::Test {
@@ -22,6 +31,275 @@ protected:
     MockHttpClient http;
     StripeApiClient client{ http };
 };
+
+TEST_F(CollectionAndInvoicesTest, InvoiceItemsExposeSourcesAndEncodeFiltersInBothApiStyles) {
+    const RequestOptions options{ .timeout = std::chrono::seconds(6),
+                                  .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
+    auto& api = client.invoice_items();
+
+    // A credit must retain its owner, service period, and original debit references.
+    http.set_response({ .status_code = 200, .body = invoice_item_json });
+    const auto item = api.retrieve_async("ii/a?", options).result();
+    EXPECT_EQ(item.id, "ii_credit");
+    EXPECT_EQ(item.customer_id, "cus_test");
+    EXPECT_TRUE(item.invoice_id.empty());
+    EXPECT_EQ(item.amount, -1500);
+    EXPECT_EQ(item.currency, "usd");
+    EXPECT_EQ(item.period.start_unix, 1800000000);
+    EXPECT_EQ(item.period.end_unix, 1802678400);
+    EXPECT_TRUE(item.proration);
+    ASSERT_TRUE(item.parent.has_value());
+    EXPECT_EQ(item.parent->type, "subscription_details");
+    ASSERT_TRUE(item.parent->subscription_details.has_value());
+    EXPECT_EQ(item.parent->subscription_details->subscription_id, "sub_test");
+    EXPECT_EQ(item.parent->subscription_details->subscription_item_id, "si_test");
+    ASSERT_TRUE(item.proration_details.has_value());
+    ASSERT_TRUE(item.proration_details->credited_items.has_value());
+    const auto& source = *item.proration_details->credited_items;
+    EXPECT_EQ(source.type, "invoice_line_items");
+    ASSERT_TRUE(source.invoice_line_item_details.has_value());
+    EXPECT_EQ(source.invoice_line_item_details->invoice_id, "in_held");
+    EXPECT_EQ(source.invoice_line_item_details->invoice_line_item_ids,
+              std::vector<std::string>{ "il_service" });
+    EXPECT_EQ(item.metadata.at("operation"), "pause_123");
+    EXPECT_EQ(http.get_recorded_requests().back().path, "/v1/invoiceitems/ii%2Fa%3F");
+    EXPECT_EQ(http.get_recorded_requests().back().method, HttpMethod::Get);
+    int calls = 0;
+    api.retrieve("ii/a?", options, [&](CallbackResult<InvoiceItem> result) {
+        ++calls;
+        EXPECT_EQ(std::get<InvoiceItem>(result).id, item.id);
+    });
+
+    // Both API styles must send the same filters, including an explicit pending=false.
+    http.set_response(
+        { .status_code = 200,
+          .body = R"({"object":"list","has_more":true,"data":[)" + invoice_item_json + "]}" });
+    const ListInvoiceItemsRequest request{ .customer_id = "cus/a &b",
+                                           .invoice_id = "in?held",
+                                           .pending = false,
+                                           .limit = 1,
+                                           .starting_after = "ii?last" };
+    const auto page = api.list_async(request, options).result();
+    EXPECT_TRUE(page.has_more);
+    ASSERT_EQ(page.data.size(), 1U);
+    EXPECT_EQ(page.data.front().id, item.id);
+    EXPECT_EQ(http.get_recorded_requests().size(), 3U);
+    EXPECT_EQ(http.get_recorded_requests().back().path,
+              "/v1/invoiceitems?limit=1&starting_after=ii%3Flast&customer=cus%2Fa%20%26b"
+              "&invoice=in%3Fheld&pending=false");
+    api.list(request, options, [&](CallbackResult<InvoiceItemList> result) {
+        ++calls;
+        EXPECT_TRUE(std::get<InvoiceItemList>(result).has_more);
+    });
+    EXPECT_EQ(http.get_recorded_requests().back().path, http.get_recorded_requests()[2].path);
+
+    // Distinguish pending-only requests from leaving the pending filter unset.
+    api.list_async({ .pending = true }, options).result();
+    EXPECT_EQ(http.get_recorded_requests().back().path, "/v1/invoiceitems?limit=10&pending=true");
+    http.set_response(
+        { .status_code = 200, .body = R"({"object":"list","has_more":false,"data":[]})" });
+    EXPECT_TRUE(api.list_async({}, options).result().data.empty());
+    EXPECT_EQ(http.get_recorded_requests().back().path, "/v1/invoiceitems?limit=10");
+
+    // Deletion returns Stripe's confirmation, not a locally assumed success.
+    http.set_response({ .status_code = 200,
+                        .body = R"({"object":"invoiceitem","id":"ii_credit","deleted":true})" });
+    const auto deleted = api.delete_async("ii/a?", options).result();
+    EXPECT_EQ(deleted.id, item.id);
+    EXPECT_TRUE(deleted.deleted);
+    EXPECT_EQ(http.get_recorded_requests().back().method, HttpMethod::Delete);
+    EXPECT_EQ(http.get_recorded_requests().back().path, "/v1/invoiceitems/ii%2Fa%3F");
+    api.delete_invoice_item("ii/a?", options, [&](CallbackResult<DeletedInvoiceItem> result) {
+        ++calls;
+        EXPECT_TRUE(std::get<DeletedInvoiceItem>(result).deleted);
+        EXPECT_EQ(std::get<DeletedInvoiceItem>(result).id, item.id);
+    });
+    EXPECT_EQ(calls, 3);
+    for (const auto& sent : http.get_recorded_requests()) {
+        EXPECT_TRUE(sent.body.empty());
+        EXPECT_EQ(sent.options.timeout, options.timeout);
+        EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
+    }
+}
+
+TEST_F(CollectionAndInvoicesTest, InvoiceItemSourcesPreserveAbsenceAndPendingDebitReferences) {
+    JsonStripeResponseParser parser;
+    const std::string base = R"("object":"invoiceitem","id":"ii","customer":"cus",
+        "amount":-200,"currency":"usd","period":{"start":0,"end":0},"proration":false)";
+
+    // A negative amount must not cause missing ownership or credit sources to be invented.
+    auto item = parser.parse_invoice_item({ .body = "{" + base + "}" });
+    EXPECT_FALSE(item.parent.has_value());
+    EXPECT_FALSE(item.proration_details.has_value());
+    EXPECT_TRUE(item.metadata.empty());
+
+    // A credit can refer to a still-pending debit rather than an invoiced line.
+    item = parser.parse_invoice_item({ .body = "{" + base + R"(,
+        "invoice":{"id":"in_draft"},"parent":null,
+        "proration_details":{"credited_items":{"type":"invoice_item","invoice_item":"ii_debit"}}})" });
+    EXPECT_EQ(item.invoice_id, "in_draft");
+    EXPECT_EQ(item.proration_details->credited_items->invoice_item_id, "ii_debit");
+    EXPECT_FALSE(item.proration_details->credited_items->invoice_line_item_details.has_value());
+
+    // Preserve future source types, but reject malformed known fields instead of hiding them.
+    item = parser.parse_invoice_item({ .body = "{" + base + R"(,
+        "parent":{"type":"future_source"},"proration_details":{"credited_items":null}})" });
+    EXPECT_EQ(item.parent->type, "future_source");
+    EXPECT_FALSE(item.parent->subscription_details.has_value());
+    EXPECT_FALSE(item.proration_details->credited_items.has_value());
+    for (
+        const auto* fields :
+        { R"("parent":false)",
+          R"("parent":{"type":"subscription_details"})",
+          R"("parent":{"type":"subscription_details","subscription_details":{"subscription":false}})",
+          R"("proration_details":false)",
+          R"("proration_details":{"credited_items":{"type":"invoice_item"}})",
+          R"("proration_details":{"credited_items":{"type":"invoice_line_items","invoice_line_item_details":{"invoice":"in","invoice_line_items":[null]}}})",
+          R"("metadata":{"operation":42})",
+          R"("invoice":false)" }) {
+        EXPECT_THROW(parser.parse_invoice_item({ .body = "{" + base + "," + fields + "}" }),
+                     ConfigurationException);
+    }
+    for (const auto* body : { "{}",
+                              R"({"object":"invoiceitem","id":"ii","deleted":true})",
+                              R"({"object":"invoiceitem","id":"ii","customer":"cus","amount":-2,
+                                 "currency":"usd","proration":true,"period":{"start":5,"end":4}})" }) {
+        EXPECT_THROW(parser.parse_invoice_item({ .body = body }), ConfigurationException);
+    }
+    for (const auto* body :
+         { R"({"object":"list","has_more":true,"data":[]})", R"({"object":"list","data":[]})" }) {
+        EXPECT_THROW(parser.parse_invoice_item_list({ .body = body }), ConfigurationException);
+    }
+
+    // Missing, false, or wrongly typed deletion flags are not confirmations.
+    for (const auto* fields :
+         { R"("deleted":false)", R"("deleted":null)", R"("deleted":"true")" }) {
+        EXPECT_THROW(
+            parser.parse_deleted_invoice_item(
+                { .body = std::string(R"({"object":"invoiceitem","id":"ii",)") + fields + "}" }),
+            ConfigurationException);
+    }
+    EXPECT_THROW(parser.parse_deleted_invoice_item(
+                     { .body = R"({"object":"invoice","id":"ii","deleted":true})" }),
+                 ConfigurationException);
+}
+
+TEST_F(CollectionAndInvoicesTest, InvoiceItemFailuresReachBothApiStylesIncludingNotFound) {
+    auto& api = client.invoice_items();
+    int failures = 0;
+    const auto failure = [&](auto result) {
+        ++failures;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+    };
+
+    // Invalid local input must fail before any request reaches Stripe.
+    EXPECT_THROW(api.retrieve_async("").result(), ConfigurationException);
+    EXPECT_THROW(api.delete_async("").result(), ConfigurationException);
+    api.retrieve("", {}, failure);
+    api.delete_invoice_item("", {}, failure);
+    for (const auto limit : { 0, 101 }) {
+        EXPECT_THROW(api.list_async({ .limit = limit }).result(), ConfigurationException);
+        api.list({ .limit = limit }, {}, failure);
+    }
+    EXPECT_EQ(failures, 4);
+    EXPECT_TRUE(http.get_recorded_requests().empty());
+
+    // Exercise provider rejection, transport failure, and malformed success in both API styles.
+    for (int kind = 0; kind < 3; ++kind) {
+        const auto configure = [&] {
+            if (kind == 0)
+                http.set_response(
+                    { .status_code = 404, .body = R"({"error":{"type":"invalid_request_error",
+                                        "code":"resource_missing","message":"No such invoiceitem"}})" });
+            else if (kind == 1)
+                http.set_exception(std::make_exception_ptr(std::runtime_error("Offline")));
+            else http.set_response({ .status_code = 200, .body = "{}" });
+        };
+        configure();
+        EXPECT_THROW(api.retrieve_async("ii_missing").result(), std::exception);
+        configure();
+        EXPECT_THROW(api.delete_async("ii_missing").result(), std::exception);
+        configure();
+        EXPECT_THROW(api.list_async().result(), std::exception);
+        configure();
+        api.retrieve("ii_missing", {}, failure);
+        configure();
+        api.delete_invoice_item("ii_missing", {}, failure);
+        configure();
+        api.list({}, {}, failure);
+    }
+    EXPECT_EQ(failures, 13);
+
+    // A missing item remains a Stripe error with its original machine-readable code.
+    http.set_response({ .status_code = 404, .body = R"({"error":{"type":"invalid_request_error",
+                            "code":"resource_missing","message":"No such invoiceitem"}})" });
+    try {
+        api.delete_async("ii_missing").result();
+        FAIL();
+    } catch (const StripeApiException& error) {
+        EXPECT_EQ(error.payload().code, "resource_missing");
+    }
+}
+
+TEST_F(CollectionAndInvoicesTest, SubscriptionRetrievalExpandsBilledUntilWithoutInventingDates) {
+    auto& api = client.subscriptions();
+    const RequestOptions options{ .timeout = std::chrono::seconds(8),
+                                  .headers = { { "Stripe-Version", "2026-10-28.endive" } } };
+
+    // Billed-through dates can differ from period ends; missing and null dates stay absent.
+    http.set_response({ .status_code = 200, .body = R"({"id":"sub","status":"paused","items":{
+        "has_more":false,"data":[{"id":"si","price":"price","current_period_end":1900000000,
+            "billed_until":1800000000},{"id":"si_absent","price":"price","current_period_end":1900000000},
+            {"id":"si_null","price":"price","current_period_end":1900000000,"billed_until":null}]}})" });
+    const RetrieveSubscriptionRequest request{ .expand = { "items.data.billed_until",
+                                                           "latest_invoice" } };
+    const auto saved = api.retrieve_async("sub/a?", request, options).result();
+    ASSERT_EQ(saved.items.size(), 3U);
+    EXPECT_EQ(saved.items[0].billed_until_unix.value(), 1800000000);
+    EXPECT_FALSE(saved.items[1].billed_until_unix.has_value());
+    EXPECT_FALSE(saved.items[2].billed_until_unix.has_value());
+    EXPECT_EQ(http.get_recorded_requests().back().path,
+              "/v1/subscriptions/sub%2Fa%3F?expand%5B%5D=items.data.billed_until"
+              "&expand%5B%5D=latest_invoice");
+
+    // Expansion paths and per-request settings must survive either calling style.
+    int calls = 0;
+    api.retrieve("sub/a?", request, options, [&](CallbackResult<Subscription> result) {
+        ++calls;
+        EXPECT_EQ(std::get<Subscription>(result).items.front().billed_until_unix.value(),
+                  1800000000);
+    });
+    EXPECT_EQ(calls, 1);
+    EXPECT_EQ(http.get_recorded_requests().front().path, http.get_recorded_requests().back().path);
+    for (const auto& sent : http.get_recorded_requests()) {
+        EXPECT_EQ(sent.method, HttpMethod::Get);
+        EXPECT_TRUE(sent.body.empty());
+        EXPECT_EQ(sent.options.timeout, options.timeout);
+        EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
+    }
+
+    // Keep the original retrieval overload usable, while rejecting empty expansion paths.
+    api.retrieve_async("sub", {}).result();
+    EXPECT_EQ(http.get_recorded_requests().back().path, "/v1/subscriptions/sub");
+    EXPECT_THROW(api.retrieve_async("sub", { .expand = { "" } }, {}).result(),
+                 ConfigurationException);
+    api.retrieve("sub", { .expand = { "" } }, {}, [&](CallbackResult<Subscription> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+    });
+    EXPECT_EQ(calls, 2);
+
+    // Invalid timestamps must fail parsing rather than become a guessed date or absence.
+    JsonStripeResponseParser parser;
+    for (const auto* value : { "\"1800000000\"", "-1", "false", "{}" }) {
+        EXPECT_THROW(
+            parser.parse_subscription(
+                { .body = std::string(R"({"id":"sub","status":"paused","items":{"has_more":false,
+                             "data":[{"id":"si","price":"price","billed_until":)") +
+                          value + "}]}}" }),
+            ConfigurationException);
+    }
+}
 
 TEST_F(CollectionAndInvoicesTest, TruePauseResumeAndMigrationUseDedicatedEndpoints) {
     http.set_response({ .status_code = 200, .body = R"({
@@ -88,6 +366,15 @@ TEST_F(CollectionAndInvoicesTest, TruePauseResumeAndMigrationUseDedicatedEndpoin
     EXPECT_TRUE(http.get_recorded_requests().back().body.empty());
     api.resume_async("sub_test").result();
     EXPECT_TRUE(http.get_recorded_requests().back().body.empty());
+    api.pause_async("sub_test",
+                    { .bill_for = { .unused_time_from = { "item_current_period_start" },
+                                    .outstanding_usage_through = { "none" } },
+                      .invoicing_behavior = "pending_invoice_item" })
+        .result();
+    EXPECT_EQ(http.get_recorded_requests().back().body,
+              "bill_for%5Bunused_time_from%5D%5Btype%5D=item_current_period_start"
+              "&bill_for%5Boutstanding_usage_through%5D%5Btype%5D=none"
+              "&invoicing_behavior=pending_invoice_item");
 }
 
 TEST_F(CollectionAndInvoicesTest, TruePauseOperationsRejectInvalidInputAndPropagateFailures) {

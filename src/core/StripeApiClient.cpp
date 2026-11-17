@@ -190,6 +190,32 @@ std::string catalog_path(std::string_view group, const std::string& id) {
     return "/v1/" + std::string(group) + "/" + url_encode(id);
 }
 
+/** Build a filtered invoice-item query with bounded pagination. */
+std::string invoice_items_path(const ListInvoiceItemsRequest& request) {
+    if (request.limit < 1 || request.limit > 100)
+        throw ConfigurationException("Invoice-item page size must be from 1 to 100");
+    std::string query;
+    append_form_value(query, "limit", std::to_string(request.limit));
+    if (!request.starting_after.empty())
+        append_form_value(query, "starting_after", request.starting_after);
+    if (!request.customer_id.empty()) append_form_value(query, "customer", request.customer_id);
+    if (!request.invoice_id.empty()) append_form_value(query, "invoice", request.invoice_id);
+    if (request.pending.has_value())
+        append_form_value(query, "pending", *request.pending ? "true" : "false");
+    return "/v1/invoiceitems?" + query;
+}
+
+/** Build a subscription retrieval query with encoded expansion paths. */
+std::string subscription_path(const std::string& id, const RetrieveSubscriptionRequest& request) {
+    auto path = catalog_path("subscriptions", id);
+    std::string query;
+    for (const auto& field : request.expand) {
+        if (field.empty()) throw ConfigurationException("A subscription expansion cannot be empty");
+        append_form_value(query, "expand[]", field);
+    }
+    return query.empty() ? path : path + "?" + query;
+}
+
 /** Build a Checkout list query with bounded pagination and encoded filter values. */
 std::string checkout_sessions_path(const ListCheckoutSessionsRequest& request) {
     if (request.limit < 1 || request.limit > 100)
@@ -1547,6 +1573,7 @@ std::vector<SubscriptionItem> subscription_items(const Json::Value& data) {
         if (!value["quantity"].isNull()) item.quantity = value["quantity"].asInt64();
         item.current_period_start_unix = optional_unix_timestamp(value["current_period_start"]);
         item.current_period_end_unix = optional_unix_timestamp(value["current_period_end"]);
+        item.billed_until_unix = optional_unix_timestamp(value["billed_until"]);
         item.discount_ids = reference_ids(value["discounts"]);
         item.tax_rate_ids = reference_ids(value["tax_rates"]);
         items.push_back(std::move(item));
@@ -1787,6 +1814,108 @@ DeletedInvoice StripeResponseParser::parse_deleted_invoice(const HttpResponse& r
     if (!value.isObject() || value["object"] != "invoice" || !value["id"].isString() ||
         value["id"].asString().empty() || !value["deleted"].isBool() || !value["deleted"].asBool())
         throw ConfigurationException("Stripe did not confirm invoice deletion");
+    return { value["id"].asString(), true };
+}
+
+InvoiceItem StripeResponseParser::parse_invoice_item(const HttpResponse& response) const {
+    const auto value = json_value::parse(response.body);
+    if (!value.isObject() || value["object"] != "invoiceitem" || !value["id"].isString() ||
+        value["id"].asString().empty() || !value["amount"].isInt64() ||
+        !value["currency"].isString() || value["currency"].asString().empty() ||
+        !value["proration"].isBool() || !value["period"].isObject())
+        throw ConfigurationException("Stripe returned a malformed invoice item");
+    InvoiceItem item;
+    item.id = value["id"].asString();
+    item.customer_id = reference_id(value["customer"]);
+    if (item.customer_id.empty())
+        throw ConfigurationException("Stripe returned an invoice item without a customer");
+    item.invoice_id = reference_id(value["invoice"]);
+    item.amount = value["amount"].asInt64();
+    item.currency = value["currency"].asString();
+    item.proration = value["proration"].asBool();
+    const auto start = optional_unix_timestamp(value["period"]["start"]);
+    const auto end = optional_unix_timestamp(value["period"]["end"]);
+    if (!start || !end || *end < *start)
+        throw ConfigurationException("Stripe returned a malformed invoice-item period");
+    item.period = { *start, *end };
+    const auto& parent = value["parent"];
+    if (!parent.isNull()) {
+        if (!parent.isObject() || !parent["type"].isString() || parent["type"].asString().empty())
+            throw ConfigurationException("Stripe returned a malformed invoice-item parent");
+        InvoiceItemParent parsed{ .type = parent["type"].asString() };
+        const auto& details = parent["subscription_details"];
+        if (!details.isNull()) {
+            if (!details.isObject())
+                throw ConfigurationException("Stripe returned malformed invoice-item ownership");
+            auto subscription = reference_id(details["subscription"]);
+            if (subscription.empty())
+                throw ConfigurationException(
+                    "Stripe returned invoice-item ownership without a subscription");
+            parsed.subscription_details =
+                InvoiceItemSubscriptionDetails{ std::move(subscription),
+                                                reference_id(details["subscription_item"]) };
+        } else if (parsed.type == "subscription_details") {
+            throw ConfigurationException("Stripe returned invoice-item ownership without details");
+        }
+        item.parent = std::move(parsed);
+    }
+    const auto& proration = value["proration_details"];
+    if (!proration.isNull()) {
+        if (!proration.isObject())
+            throw ConfigurationException(
+                "Stripe returned malformed invoice-item proration details");
+        InvoiceItemProrationDetails parsed;
+        const auto& credited = proration["credited_items"];
+        if (!credited.isNull()) {
+            if (!credited.isObject() || !credited["type"].isString() ||
+                credited["type"].asString().empty())
+                throw ConfigurationException("Stripe returned malformed credited items");
+            InvoiceItemCreditedItems source{ .type = credited["type"].asString(),
+                                             .invoice_item_id =
+                                                 reference_id(credited["invoice_item"]) };
+            const auto& lines = credited["invoice_line_item_details"];
+            if (!lines.isNull()) {
+                if (!lines.isObject() || !lines["invoice_line_items"].isArray())
+                    throw ConfigurationException(
+                        "Stripe returned malformed credited invoice lines");
+                InvoiceItemCreditedInvoiceLineItems details{
+                    reference_id(lines["invoice"]), reference_ids(lines["invoice_line_items"])
+                };
+                if (details.invoice_id.empty() || details.invoice_line_item_ids.empty())
+                    throw ConfigurationException(
+                        "Stripe returned credited invoice lines without references");
+                source.invoice_line_item_details = std::move(details);
+            }
+            if ((source.type == "invoice_item" && source.invoice_item_id.empty()) ||
+                (source.type == "invoice_line_items" && !source.invoice_line_item_details))
+                throw ConfigurationException("Stripe returned credited items without their source");
+            parsed.credited_items = std::move(source);
+        }
+        item.proration_details = std::move(parsed);
+    }
+    if (!value["metadata"].isNull()) {
+        if (!value["metadata"].isObject())
+            throw ConfigurationException("Stripe returned malformed invoice-item metadata");
+        for (const auto& key : value["metadata"].getMemberNames()) {
+            if (!value["metadata"][key].isString())
+                throw ConfigurationException("Stripe returned malformed invoice-item metadata");
+            item.metadata.emplace(key, value["metadata"][key].asString());
+        }
+    }
+    return item;
+}
+
+InvoiceItemList StripeResponseParser::parse_invoice_item_list(const HttpResponse& response) const {
+    return parse_payment_page<InvoiceItemList>(
+        response, [this](const HttpResponse& item) { return parse_invoice_item(item); });
+}
+
+DeletedInvoiceItem
+StripeResponseParser::parse_deleted_invoice_item(const HttpResponse& response) const {
+    const auto value = json_value::parse(response.body);
+    if (!value.isObject() || value["object"] != "invoiceitem" || !value["id"].isString() ||
+        value["id"].asString().empty() || !value["deleted"].isBool() || !value["deleted"].asBool())
+        throw ConfigurationException("Stripe did not confirm invoice-item deletion");
     return { value["id"].asString(), true };
 }
 
@@ -2672,11 +2801,17 @@ void StripeApiClient::SubscriptionOperations::update(std::string id,
 Task<Subscription>
 StripeApiClient::SubscriptionOperations::retrieve_async(std::string subscription_id,
                                                         const RequestOptions& options) {
+    return retrieve_async(std::move(subscription_id), RetrieveSubscriptionRequest{}, options);
+}
+
+Task<Subscription>
+StripeApiClient::SubscriptionOperations::retrieve_async(std::string subscription_id,
+                                                        const RetrieveSubscriptionRequest& request,
+                                                        const RequestOptions& options) {
     return send_and_parse_async<Subscription>(
         owner.http_client,
         owner.response_parser,
-        make_request(
-            HttpMethod::Get, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
+        make_request(HttpMethod::Get, subscription_path(subscription_id, request), {}, options),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_subscription(response);
         });
@@ -2685,12 +2820,27 @@ StripeApiClient::SubscriptionOperations::retrieve_async(std::string subscription
 void StripeApiClient::SubscriptionOperations::retrieve(std::string subscription_id,
                                                        const RequestOptions& options,
                                                        RetrieveCompletion completion) {
+    retrieve(
+        std::move(subscription_id), RetrieveSubscriptionRequest{}, options, std::move(completion));
+}
+
+void StripeApiClient::SubscriptionOperations::retrieve(std::string subscription_id,
+                                                       const RetrieveSubscriptionRequest& request,
+                                                       const RequestOptions& options,
+                                                       RetrieveCompletion completion) {
+    HttpRequest http;
+    try {
+        http =
+            make_request(HttpMethod::Get, subscription_path(subscription_id, request), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
     send_and_parse<Subscription>(
         owner.http_client,
         owner.response_parser,
         owner.callback_lifetime,
-        make_request(
-            HttpMethod::Get, "/v1/subscriptions/" + url_encode(subscription_id), {}, options),
+        std::move(http),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_subscription(response);
         },
@@ -2934,8 +3084,9 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client)
       checkout_session_operations(*this), checkout_operations(*this),
       subscription_operations(*this), billing_portal_session_operations(*this),
       billing_portal_operations(*this), product_operations(*this), price_operations(*this),
-      invoice_operations(*this), billing_portal_configuration_operations(*this),
-      charge_operations(*this), invoice_payment_operations(*this), refund_operations(*this),
+      invoice_operations(*this), invoice_item_operations(*this),
+      billing_portal_configuration_operations(*this), charge_operations(*this),
+      invoice_payment_operations(*this), refund_operations(*this),
       subscription_schedule_operations(*this) {}
 
 StripeApiClient::StripeApiClient(HTTPClient& http_client,
@@ -2945,8 +3096,9 @@ StripeApiClient::StripeApiClient(HTTPClient& http_client,
       checkout_session_operations(*this), checkout_operations(*this),
       subscription_operations(*this), billing_portal_session_operations(*this),
       billing_portal_operations(*this), product_operations(*this), price_operations(*this),
-      invoice_operations(*this), billing_portal_configuration_operations(*this),
-      charge_operations(*this), invoice_payment_operations(*this), refund_operations(*this),
+      invoice_operations(*this), invoice_item_operations(*this),
+      billing_portal_configuration_operations(*this), charge_operations(*this),
+      invoice_payment_operations(*this), refund_operations(*this),
       subscription_schedule_operations(*this) {}
 
 StripeApiClient::~StripeApiClient() {
@@ -2986,6 +3138,10 @@ BillingPortal& StripeApiClient::billing_portal() {
 
 Invoices& StripeApiClient::invoices() {
     return invoice_operations;
+}
+
+InvoiceItems& StripeApiClient::invoice_items() {
+    return invoice_item_operations;
 }
 
 Products& StripeApiClient::products() {
@@ -3479,6 +3635,108 @@ void StripeApiClient::SubscriptionOperations::resume_collection(std::string id,
         std::move(http),
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_subscription(response);
+        },
+        std::move(completion));
+}
+
+StripeApiClient::InvoiceItemOperations::InvoiceItemOperations(StripeApiClient& owner)
+    : owner(owner) {}
+
+Task<InvoiceItemList>
+StripeApiClient::InvoiceItemOperations::list_async(const ListInvoiceItemsRequest& request,
+                                                   const RequestOptions& options) {
+    return send_and_parse_async<InvoiceItemList>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, invoice_items_path(request), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_invoice_item_list(response);
+        });
+}
+
+void StripeApiClient::InvoiceItemOperations::list(const ListInvoiceItemsRequest& request,
+                                                  const RequestOptions& options,
+                                                  ListCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, invoice_items_path(request), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<InvoiceItemList>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_invoice_item_list(response);
+        },
+        std::move(completion));
+}
+
+Task<InvoiceItem>
+StripeApiClient::InvoiceItemOperations::retrieve_async(std::string id,
+                                                       const RequestOptions& options) {
+    return send_and_parse_async<InvoiceItem>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Get, catalog_path("invoiceitems", id), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_invoice_item(response);
+        });
+}
+
+void StripeApiClient::InvoiceItemOperations::retrieve(std::string id,
+                                                      const RequestOptions& options,
+                                                      Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Get, catalog_path("invoiceitems", id), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<InvoiceItem>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_invoice_item(response);
+        },
+        std::move(completion));
+}
+
+Task<DeletedInvoiceItem>
+StripeApiClient::InvoiceItemOperations::delete_async(std::string id,
+                                                     const RequestOptions& options) {
+    return send_and_parse_async<DeletedInvoiceItem>(
+        owner.http_client,
+        owner.response_parser,
+        make_request(HttpMethod::Delete, catalog_path("invoiceitems", id), {}, options),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_deleted_invoice_item(response);
+        });
+}
+
+void StripeApiClient::InvoiceItemOperations::delete_invoice_item(std::string id,
+                                                                 const RequestOptions& options,
+                                                                 DeleteCompletion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Delete, catalog_path("invoiceitems", id), {}, options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<DeletedInvoiceItem>(
+        owner.http_client,
+        owner.response_parser,
+        owner.callback_lifetime,
+        std::move(http),
+        [](const StripeResponseParser& parser, const HttpResponse& response) {
+            return parser.parse_deleted_invoice_item(response);
         },
         std::move(completion));
 }

@@ -201,6 +201,160 @@ Invoice responses may include only the first page of line items. To read all
 prices and quantities, call `invoices().list_line_items_async(invoice_id)` and
 continue with the last item's `id` while `has_more` is true.
 
+@section invoice_items Read and delete invoice items
+
+Use `stripe->invoice_items()` to find individual charges or credits and remove
+ones that should no longer be billed. A **pending invoice item** has not yet been
+added to an invoice. Invoice-item IDs start with `ii_`; invoice line IDs start
+with `il_` and cannot be passed to these operations.
+
+To read a customer's pending items, request each page until `has_more` is false:
+
+@code{.cpp}
+stripekit::ListInvoiceItemsRequest request;
+request.customer_id = customer_id;
+request.pending = true;
+request.limit = 100;
+for (;;) {
+    const auto page = co_await stripe->invoice_items().list_async(request);
+    for (const auto& item : page.data) {
+        // Check each item's customer, subscription, and service period here.
+    }
+    if (!page.has_more) break;
+    request.starting_after = page.data.back().id;
+}
+@endcode
+
+Page sizes are from 1 to 100. Leave `pending` unset to include both pending items
+and items already on an invoice; set it to `false` for only the latter. Set
+`request.invoice_id` to list items on a particular invoice. Leaving `customer_id`
+empty lists items for all customers.
+
+Stripe does not offer a subscription filter for this list endpoint. To find a
+subscription's items, filter by customer, read all pages, and check each item's
+subscription details:
+
+@code{.cpp}
+const auto item = co_await stripe->invoice_items().retrieve_async(invoice_item_id);
+if (item.parent && item.parent->subscription_details) {
+    const auto& owner = *item.parent->subscription_details;
+    // Compare owner.subscription_id and owner.subscription_item_id with your saved IDs.
+}
+@endcode
+
+Use these fields to decide whether an item is the adjustment you are looking for:
+
+| Field | What to check |
+|-------|---------------|
+| `customer_id` | The customer the item belongs to. |
+| `invoice_id` | The assigned invoice, or an empty string for a pending item. |
+| `parent->subscription_details` | The subscription and subscription-item IDs, when supplied. Check both optional objects before using them. |
+| `amount`, `currency` | The amount in the currency's smallest unit. A negative amount alone does not identify a particular credit. |
+| `period.start_unix`, `period.end_unix` | The service dates, in seconds since January 1, 1970 (UTC). |
+| `proration` | Whether Stripe created the item as a billing adjustment, such as a credit for unused service. |
+| `metadata` | Any application-defined key/value pairs attached to the item. |
+
+For a credit, `proration_details->credited_items` can link back to the original
+charge. Check both optional objects before reading the reference:
+
+- If `type` is `"invoice_item"`, `invoice_item_id` identifies the original pending
+  charge.
+- If `type` is `"invoice_line_items"`, check `invoice_line_item_details`, then
+  read its `invoice_id` and `invoice_line_item_ids` for the original billed lines.
+
+These references and subscription details are not always supplied. Do not guess
+a missing reference or delete an item whose purpose is unclear. See Stripe's
+[invoice-item reference](https://docs.stripe.com/api/invoiceitems/object) for the
+full object.
+
+After identifying the item to remove:
+
+@code{.cpp}
+const auto deleted =
+    co_await stripe->invoice_items().delete_async(confirmed_invoice_item_id);
+// deleted.id is the removed item's ID; deleted.deleted confirms deletion.
+@endcode
+
+Only pending items and items on draft invoices can be deleted. Stripe rejections,
+including not found, throw `StripeApiException`; invalid IDs or page sizes throw
+`ConfigurationException`. Network failures are also reported.
+
+The callback forms are `invoice_items().list(request, options, completion)`,
+`retrieve(id, options, completion)`, and
+`delete_invoice_item(id, options, completion)`. Each callback receives either the
+result or a failure exactly once.
+
+@section subscription_billed_until Read a subscription item's billed-through date
+
+`SubscriptionItem::billed_until_unix` is the date through which Stripe reports an
+item has been billed. Billed does not necessarily mean paid, and this date can
+differ from the item's current period end.
+
+Stripe does not return this field by default. Request it using `expand`:
+
+@code{.cpp}
+stripekit::RetrieveSubscriptionRequest request;
+request.expand = { "items.data.billed_until" };
+const auto subscription =
+    co_await stripe->subscriptions().retrieve_async(subscription_id, request, {});
+@endcode
+
+Read `billed_until_unix` on each entry in `subscription.items`. It contains Unix
+seconds when supplied, or `std::nullopt` when Stripe omits it or returns null.
+Check the optional value before using it; do not substitute the current period
+end for an unknown billed-through date. If `items_has_more` is true, the returned
+items are not the complete subscription.
+
+Pass `{}` for request options when you do not need custom headers or a timeout.
+For a normal retrieval without extra fields, use
+`subscriptions().retrieve_async(subscription_id)`. The callback form with
+expansions is `subscriptions().retrieve(subscription_id, request, options, completion)`.
+
+@subsection held_invoice_recovery Recover a held renewal invoice
+
+A **held invoice** here is a draft with `auto_advance = false`, so Stripe will not
+automatically finalize or collect it. If you pause service while correcting its
+tax settings, the pause can create a pending credit for the same service period.
+Use the invoice-item operations to remove that specific credit before resuming.
+This requires flexible billing and `charge_automatically`; see
+@ref subscription_pause_requirements for pause requirements.
+
+Before pausing, save the subscription and item IDs, the held invoice's service
+dates and line IDs, and the customer's existing pending invoice-item IDs. Pause
+with these settings to credit the whole current period without billing usage:
+
+@code{.cpp}
+stripekit::PauseSubscriptionRequest pause;
+pause.bill_for.unused_time_from.type = "item_current_period_start";
+pause.bill_for.outstanding_usage_through.type = "none";
+pause.invoicing_behavior = "pending_invoice_item";
+co_await stripe->subscriptions().pause_async(subscription_id, pause);
+@endcode
+
+Retrieve the subscription with `items.data.billed_until` expanded to check that
+the billed-through date has moved back. Read the pending invoice-item pages
+again and find the new credit using its subscription and item IDs, service
+dates, proration flag, and original-charge references when supplied. Do not
+select it by negative amount alone. Leave unrelated items untouched, and stop
+if more than one item could match.
+
+Delete the identified credit, then retrieve the expanded subscription again to
+confirm the billed-through date remains rolled back. After correcting the
+customer's tax location, enable automatic tax on the held draft and the
+subscription. See @ref invoice_tax_recovery for correcting a draft.
+
+Choose how to resume based on whether the held service period has ended:
+
+| Recovery time | Held invoice | `ResumeSubscriptionRequest` settings |
+|---------------|--------------|--------------------------------------|
+| Before that period ends | Collect the corrected invoice and confirm payment first. | `billing_cycle_anchor = ResumeSubscriptionBillingCycleAnchor{ "unchanged" }`, `proration_behavior = ProrationBehavior::None`. |
+| After that period ends | Finalize without collection, then void the corrected invoice. | `billing_cycle_anchor = ResumeSubscriptionBillingCycleAnchor{ "now" }`, `proration_behavior = ProrationBehavior::None`. |
+
+Check the resulting invoices, tax, service dates, and subsequent renewal before
+restoring paid access. Resumption alone is not proof of payment. To use automatic
+collection for the corrected draft, set its `auto_advance` to `true` and wait for
+payment confirmation before resuming. No invoice needs to be created manually.
+
 @section subscription_schedules Change a price at a future renewal
 
 Use a **subscription schedule** when a price should change at renewal rather

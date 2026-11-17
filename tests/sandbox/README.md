@@ -32,6 +32,11 @@ The suite covers:
   and resumed webhooks. Tests check that schedule edits keep future phases,
   removing a planned resume does not resume service, and a failed resume payment
   leaves the subscription paused until a later successful attempt.
+- Recovery of a held renewal invoice before and after its service period ends.
+  Tests check billed-through dates, deletion of only the pause's credit, taxed
+  charges, and the next renewal. An unrelated pending credit must remain untouched.
+  These scenarios hold the draft before finalization; they do not test recovery
+  of an invoice that Stripe has already finalized with tax disabled.
 
 The pause scenarios delete their test clocks and the related billing objects,
 and archive their prices and products after each test, including failed tests.

@@ -244,6 +244,31 @@ public:
     virtual DeletedInvoice parse_deleted_invoice(const HttpResponse& response) const;
 
     /**
+     * Read an invoice item from a successful Stripe response.
+     *
+     * @param response Successful invoice-item response.
+     * @return Item with its amount, service dates, and available original-charge references.
+     * @throws ConfigurationException If required fields or supplied references are malformed.
+     */
+    virtual InvoiceItem parse_invoice_item(const HttpResponse& response) const;
+    /**
+     * Read one invoice-item page.
+     *
+     * @param response Successful invoice-item list response.
+     * @return One page with IDs suitable for starting_after.
+     * @throws ConfigurationException If entries or pagination are malformed.
+     */
+    virtual InvoiceItemList parse_invoice_item_list(const HttpResponse& response) const;
+    /**
+     * Read an invoice-item deletion confirmation.
+     *
+     * @param response Successful deletion response.
+     * @return Deleted item ID and Stripe's explicit confirmation.
+     * @throws ConfigurationException If the ID or confirmation is missing or malformed.
+     */
+    virtual DeletedInvoiceItem parse_deleted_invoice_item(const HttpResponse& response) const;
+
+    /**
      * Reads a billing portal configuration out of a successful response.
      *
      * The default decodes Stripe's JSON with JsonStripeResponseParser, so
@@ -480,6 +505,13 @@ public:
     Invoices& invoices() override;
 
     /**
+     * Return invoice-item operations.
+     *
+     * @return A reference valid for this client's lifetime.
+     */
+    InvoiceItems& invoice_items() override;
+
+    /**
      * Returns the product operations.
      *
      * @return A reference valid for the lifetime of this client.
@@ -689,6 +721,15 @@ private:
 
     class SubscriptionOperations final : public Subscriptions {
     public:
+        /** Retrieve a subscription with explicitly requested expansions. */
+        Task<Subscription> retrieve_async(std::string,
+                                          const RetrieveSubscriptionRequest&,
+                                          const RequestOptions&) override;
+        /** Deliver the expanded subscription or failure once. */
+        void retrieve(std::string,
+                      const RetrieveSubscriptionRequest&,
+                      const RequestOptions&,
+                      RetrieveCompletion) override;
         /** Pause service and invoice generation. */
         Task<Subscription>
         pause_async(std::string, const PauseSubscriptionRequest&, const RequestOptions&) override;
@@ -767,6 +808,32 @@ private:
         void create(const CreateBillingPortalSessionRequest& request,
                     const RequestOptions& options,
                     CreateCompletion completion) override;
+
+    private:
+        StripeApiClient& owner;
+    };
+
+    /** Lists, retrieves, and deletes Stripe invoice items. */
+    class InvoiceItemOperations final : public InvoiceItems {
+    public:
+        /**
+         * Create invoice-item operations.
+         * @param owner Client to use for requests; must outlive these operations.
+         */
+        explicit InvoiceItemOperations(StripeApiClient& owner);
+        /** Read one filtered page without automatic pagination. */
+        Task<InvoiceItemList> list_async(const ListInvoiceItemsRequest&,
+                                         const RequestOptions&) override;
+        /** Deliver one page or failure once. */
+        void list(const ListInvoiceItemsRequest&, const RequestOptions&, ListCompletion) override;
+        /** Read one invoice item. */
+        Task<InvoiceItem> retrieve_async(std::string, const RequestOptions&) override;
+        /** Deliver one item or failure once. */
+        void retrieve(std::string, const RequestOptions&, Completion) override;
+        /** Delete a pending or draft invoice item. */
+        Task<DeletedInvoiceItem> delete_async(std::string, const RequestOptions&) override;
+        /** Deliver explicit deletion confirmation or failure once. */
+        void delete_invoice_item(std::string, const RequestOptions&, DeleteCompletion) override;
 
     private:
         StripeApiClient& owner;
@@ -913,6 +980,7 @@ private:
     ProductOperations product_operations;
     PriceOperations price_operations;
     InvoiceOperations invoice_operations;
+    InvoiceItemOperations invoice_item_operations;
     BillingPortalConfigurationOperations billing_portal_configuration_operations;
     ChargeOperations charge_operations;
     InvoicePaymentOperations invoice_payment_operations;

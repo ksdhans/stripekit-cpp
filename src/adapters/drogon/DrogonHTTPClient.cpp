@@ -124,6 +124,11 @@ public:
         return client.invoices();
     }
 
+    /** Return the underlying client's invoice-item operations. */
+    InvoiceItems& invoice_items() override {
+        return client.invoice_items();
+    }
+
     BillingPortal& billing_portal() override {
         return client.billing_portal();
     }

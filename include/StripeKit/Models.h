@@ -327,6 +327,95 @@ struct PurchasedLineItemList {
     bool has_more = false;
 };
 
+/** Service period associated with an invoice item, in Unix seconds (both ends inclusive). */
+struct InvoiceItemPeriod {
+    /** First service date, inclusive. */
+    std::int64_t start_unix = 0;
+    /** Last service date, inclusive. */
+    std::int64_t end_unix = 0;
+};
+
+/** Subscription ownership reported in an invoice item's parent. */
+struct InvoiceItemSubscriptionDetails {
+    /** Subscription that generated this invoice item. */
+    std::string subscription_id;
+    /** Empty when Stripe does not identify a subscription item. */
+    std::string subscription_item_id;
+};
+
+/** Source that generated an invoice item. Unknown source types are preserved. */
+struct InvoiceItemParent {
+    /** subscription_details for subscription-generated items; Stripe may add other types. */
+    std::string type;
+    /** Subscription and item IDs, absent for other parent types. */
+    std::optional<InvoiceItemSubscriptionDetails> subscription_details;
+};
+
+/** Original billed lines to which a credit applies. */
+struct InvoiceItemCreditedInvoiceLineItems {
+    /** Invoice containing the original charge. */
+    std::string invoice_id;
+    /** Original lines (il_...) to which the credit applies. */
+    std::vector<std::string> invoice_line_item_ids;
+};
+
+/** Original charge to which a credit applies: a pending item or already-invoiced lines. */
+struct InvoiceItemCreditedItems {
+    /** invoice_item or invoice_line_items; unknown values are preserved. */
+    std::string type;
+    /** Original pending charge's invoice-item ID; empty for a credit against invoice lines. */
+    std::string invoice_item_id;
+    /** Original invoice and lines when type is invoice_line_items; otherwise absent. */
+    std::optional<InvoiceItemCreditedInvoiceLineItems> invoice_line_item_details;
+};
+
+/** Original-charge references for a billing adjustment, when supplied by Stripe. */
+struct InvoiceItemProrationDetails {
+    /** Original charge for a credit, absent when Stripe supplies no reference. */
+    std::optional<InvoiceItemCreditedItems> credited_items;
+};
+
+/** An invoice item, distinct from an invoice line. A negative amount alone does not identify a
+ * credit. */
+struct InvoiceItem {
+    /** Invoice-item ID (ii_...), used for retrieval and deletion. */
+    std::string id;
+    /** Customer whose invoice will include this item. */
+    std::string customer_id;
+    /** Assigned invoice ID; empty for a pending item. */
+    std::string invoice_id;
+    /** Amount in the currency's smallest unit; credits can be negative. */
+    std::int64_t amount = 0;
+    /** Lower-case currency code, such as usd. */
+    std::string currency;
+    /** Service dates covered by this charge or credit. */
+    InvoiceItemPeriod period;
+    /** Whether Stripe created this item as a billing adjustment. */
+    bool proration = false;
+    /** Subscription ownership, absent when Stripe does not report a parent. */
+    std::optional<InvoiceItemParent> parent;
+    /** Original-charge references, absent when Stripe does not supply them. */
+    std::optional<InvoiceItemProrationDetails> proration_details;
+    /** Application-defined key/value pairs attached to the item. */
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/** One invoice-item page. Continue with the last item's ID when has_more is true. */
+struct InvoiceItemList {
+    /** Items in Stripe's response order, newest first. */
+    std::vector<InvoiceItem> data;
+    /** Whether to request another page using the last item's ID as starting_after. */
+    bool has_more = false;
+};
+
+/** Stripe's explicit invoice-item deletion confirmation. */
+struct DeletedInvoiceItem {
+    /** ID of the removed invoice item. */
+    std::string id;
+    /** True when Stripe confirms deletion; missing or false confirmation is an error. */
+    bool deleted = false;
+};
+
 /** A current subscription item, or a proposed item in a pending update. */
 struct SubscriptionItem {
     /** Subscription item ID (si_...). */
@@ -343,6 +432,10 @@ struct SubscriptionItem {
     std::vector<std::string> discount_ids;
     /** Tax rates applied to this item, as Stripe tax rate IDs. */
     std::vector<std::string> tax_rate_ids;
+    /** Date through which the item has been billed, in Unix seconds; not proof of payment.
+     * Request expand[]=items.data.billed_until. Missing or null dates are std::nullopt.
+     */
+    std::optional<std::int64_t> billed_until_unix;
 };
 
 /** Changes awaiting payment, not yet applied to the subscription. */
