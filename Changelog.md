@@ -5,6 +5,10 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.9.2 2026-11-17
+
+- Fixed the code formatting issues in the previous release.
+
 ## 0.9.1 2026-11-17
 
 - Add customer-update and subscription-pause billing portal deep links. All

@@ -1053,9 +1053,8 @@ std::string portal_after_completion_value(BillingPortalAfterCompletion value) {
 void append_portal_flow(std::string& body, const BillingPortalFlow& flow) {
     const auto type = portal_flow_type_value(flow.type);
     const bool confirm = flow.type == BillingPortalFlowType::SubscriptionUpdateConfirm;
-    const bool needs_subscription =
-        flow.type != BillingPortalFlowType::PaymentMethodUpdate &&
-        flow.type != BillingPortalFlowType::CustomerUpdate;
+    const bool needs_subscription = flow.type != BillingPortalFlowType::PaymentMethodUpdate &&
+                                    flow.type != BillingPortalFlowType::CustomerUpdate;
     if (needs_subscription == flow.subscription_id.empty())
         throw ConfigurationException(needs_subscription
                                          ? "This billing portal flow requires a subscription ID"

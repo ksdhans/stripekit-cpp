@@ -324,10 +324,9 @@ TEST_F(BillingPortalAndInvoicesTest, PortalSessionEncodesOtherFlowTypes) {
                                              BillingPortalAfterCompletion::PortalHomepage } })
         .result();
     sessions
-        .create_async(
-            { .customer_id = "cus_123",
-              .flow = BillingPortalFlow{ .type = BillingPortalFlowType::SubscriptionPause,
-                                         .subscription_id = "sub_123" } })
+        .create_async({ .customer_id = "cus_123",
+                        .flow = BillingPortalFlow{ .type = BillingPortalFlowType::SubscriptionPause,
+                                                   .subscription_id = "sub_123" } })
         .result();
     const auto requests = http.get_recorded_requests();
     ASSERT_EQ(requests.size(), 5U);
@@ -379,8 +378,8 @@ TEST_F(BillingPortalAndInvoicesTest, InvalidPortalFlowsFailWithoutNetworkCalls) 
     rejects(with_flow({ .type = BillingPortalFlowType::SubscriptionCancel }));
     rejects(with_flow(
         { .type = BillingPortalFlowType::PaymentMethodUpdate, .subscription_id = "sub_123" }));
-    rejects(with_flow(
-        { .type = BillingPortalFlowType::CustomerUpdate, .subscription_id = "sub_123" }));
+    rejects(
+        with_flow({ .type = BillingPortalFlowType::CustomerUpdate, .subscription_id = "sub_123" }));
     rejects(with_flow({ .type = BillingPortalFlowType::SubscriptionPause }));
     auto flow = confirm_flow();
     flow.items.clear();
