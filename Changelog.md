@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.9.1 2026-11-17
+
 - Add customer-update and subscription-pause billing portal deep links. All
   portal deep links are now supported.
 
