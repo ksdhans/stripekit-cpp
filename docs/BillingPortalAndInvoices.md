@@ -54,14 +54,30 @@ created as described in @ref portal_configuration.
 @section portal_flows Open the portal at a specific task
 
 A **flow** opens the portal directly at one task instead of its home page. This
-is useful for "Fix payment" or "Change plan" buttons.
+is useful for "Fix payment" or "Change plan" buttons. Stripe currently offers
+these six deep-link flow types:
 
 | Flow type | What the customer sees | Needs a subscription ID |
 |-----------|------------------------|-------------------------|
 | `PaymentMethodUpdate` | Add or replace a payment method. | No |
+| `CustomerUpdate` | Update billing information, such as a billing address or tax ID. | No |
 | `SubscriptionCancel` | Confirm cancelling a subscription. | Yes |
+| `SubscriptionPause` | Pause a subscription. The portal configuration must enable pausing. | Yes |
 | `SubscriptionUpdate` | Pick a new plan from the configured list. | Yes |
 | `SubscriptionUpdateConfirm` | Confirm a plan change your application already chose. | Yes |
+
+To send a customer straight to billing details:
+
+@code
+stripekit::CreateBillingPortalSessionRequest request;
+request.customer_id = customer_id;
+request.return_url = "https://example.com/billing";
+request.flow = stripekit::BillingPortalFlow{
+    .type = stripekit::BillingPortalFlowType::CustomerUpdate
+};
+const auto session = co_await stripe->billing_portal().sessions().create_async(request);
+// Redirect the customer to session.url
+@endcode
 
 For example, to let a customer confirm a switch to a yearly price:
 

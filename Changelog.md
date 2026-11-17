@@ -5,6 +5,9 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Add customer-update and subscription-pause billing portal deep links. All
+  portal deep links are now supported.
+
 ## 0.9.0 2026-11-17
 
 - Add invoice-item listing, retrieval, and deletion.

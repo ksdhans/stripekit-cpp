@@ -181,7 +181,9 @@ struct CreateCheckoutSessionRequest {
 /** Which task a billing portal session should take the customer straight to. */
 enum class BillingPortalFlowType {
     PaymentMethodUpdate,      /**< Add or replace the customer's payment method. */
+    CustomerUpdate,           /**< Update the customer's billing information. */
     SubscriptionCancel,       /**< Confirm cancelling one subscription. */
+    SubscriptionPause,        /**< Pause one subscription. */
     SubscriptionUpdate,       /**< Pick a new plan for one subscription. */
     SubscriptionUpdateConfirm /**< Review and confirm a plan change chosen by your app. */
 };
@@ -225,7 +227,7 @@ struct BillingPortalFlow {
     /** The task to show. */
     BillingPortalFlowType type = BillingPortalFlowType::PaymentMethodUpdate;
 
-    /** Subscription to cancel or change. Required for every type except PaymentMethodUpdate. */
+    /** Subscription ID; required except for payment and customer updates. */
     std::string subscription_id;
 
     /** The item change to confirm. Required, with exactly one entry, for SubscriptionUpdateConfirm.

@@ -303,6 +303,11 @@ TEST_F(BillingPortalAndInvoicesTest, PortalSessionEncodesOtherFlowTypes) {
     sessions
         .create_async(
             { .customer_id = "cus_123",
+              .flow = BillingPortalFlow{ .type = BillingPortalFlowType::CustomerUpdate } })
+        .result();
+    sessions
+        .create_async(
+            { .customer_id = "cus_123",
               .flow =
                   BillingPortalFlow{ .type = BillingPortalFlowType::SubscriptionCancel,
                                      .subscription_id = "sub_123",
@@ -318,8 +323,14 @@ TEST_F(BillingPortalAndInvoicesTest, PortalSessionEncodesOtherFlowTypes) {
                                          .after_completion =
                                              BillingPortalAfterCompletion::PortalHomepage } })
         .result();
+    sessions
+        .create_async(
+            { .customer_id = "cus_123",
+              .flow = BillingPortalFlow{ .type = BillingPortalFlowType::SubscriptionPause,
+                                         .subscription_id = "sub_123" } })
+        .result();
     const auto requests = http.get_recorded_requests();
-    ASSERT_EQ(requests.size(), 3U);
+    ASSERT_EQ(requests.size(), 5U);
 
     const auto payment = form_fields(requests[0].body);
     EXPECT_TRUE(has_field(payment, "flow_data[type]", "payment_method_update"));
@@ -327,7 +338,12 @@ TEST_F(BillingPortalAndInvoicesTest, PortalSessionEncodesOtherFlowTypes) {
     EXPECT_FALSE(has_prefix(payment, "flow_data[after_completion]"));
     EXPECT_FALSE(has_prefix(payment, "return_url"));
 
-    const auto cancel = form_fields(requests[1].body);
+    const auto customer = form_fields(requests[1].body);
+    EXPECT_TRUE(has_field(customer, "flow_data[type]", "customer_update"));
+    EXPECT_FALSE(has_prefix(customer, "flow_data[customer_update]"));
+    EXPECT_FALSE(has_prefix(customer, "flow_data[after_completion]"));
+
+    const auto cancel = form_fields(requests[2].body);
     EXPECT_TRUE(has_field(cancel, "flow_data[type]", "subscription_cancel"));
     EXPECT_TRUE(has_field(cancel, "flow_data[subscription_cancel][subscription]", "sub_123"));
     EXPECT_TRUE(has_field(cancel, "flow_data[after_completion][type]", "hosted_confirmation"));
@@ -335,10 +351,14 @@ TEST_F(BillingPortalAndInvoicesTest, PortalSessionEncodesOtherFlowTypes) {
                           "flow_data[after_completion][hosted_confirmation][custom_message]",
                           "Sorry to see you go & thanks!"));
 
-    const auto update = form_fields(requests[2].body);
+    const auto update = form_fields(requests[3].body);
     EXPECT_TRUE(has_field(update, "flow_data[type]", "subscription_update"));
     EXPECT_TRUE(has_field(update, "flow_data[subscription_update][subscription]", "sub_123"));
     EXPECT_TRUE(has_field(update, "flow_data[after_completion][type]", "portal_homepage"));
+
+    const auto pause = form_fields(requests[4].body);
+    EXPECT_TRUE(has_field(pause, "flow_data[type]", "subscription_pause"));
+    EXPECT_TRUE(has_field(pause, "flow_data[subscription_pause][subscription]", "sub_123"));
 }
 
 TEST_F(BillingPortalAndInvoicesTest, InvalidPortalFlowsFailWithoutNetworkCalls) {
@@ -359,6 +379,9 @@ TEST_F(BillingPortalAndInvoicesTest, InvalidPortalFlowsFailWithoutNetworkCalls) 
     rejects(with_flow({ .type = BillingPortalFlowType::SubscriptionCancel }));
     rejects(with_flow(
         { .type = BillingPortalFlowType::PaymentMethodUpdate, .subscription_id = "sub_123" }));
+    rejects(with_flow(
+        { .type = BillingPortalFlowType::CustomerUpdate, .subscription_id = "sub_123" }));
+    rejects(with_flow({ .type = BillingPortalFlowType::SubscriptionPause }));
     auto flow = confirm_flow();
     flow.items.clear();
     rejects(with_flow(flow));

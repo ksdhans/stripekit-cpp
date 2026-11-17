@@ -1022,8 +1022,12 @@ std::string portal_flow_type_value(BillingPortalFlowType type) {
     switch (type) {
     case BillingPortalFlowType::PaymentMethodUpdate:
         return "payment_method_update";
+    case BillingPortalFlowType::CustomerUpdate:
+        return "customer_update";
     case BillingPortalFlowType::SubscriptionCancel:
         return "subscription_cancel";
+    case BillingPortalFlowType::SubscriptionPause:
+        return "subscription_pause";
     case BillingPortalFlowType::SubscriptionUpdate:
         return "subscription_update";
     case BillingPortalFlowType::SubscriptionUpdateConfirm:
@@ -1049,7 +1053,9 @@ std::string portal_after_completion_value(BillingPortalAfterCompletion value) {
 void append_portal_flow(std::string& body, const BillingPortalFlow& flow) {
     const auto type = portal_flow_type_value(flow.type);
     const bool confirm = flow.type == BillingPortalFlowType::SubscriptionUpdateConfirm;
-    const bool needs_subscription = flow.type != BillingPortalFlowType::PaymentMethodUpdate;
+    const bool needs_subscription =
+        flow.type != BillingPortalFlowType::PaymentMethodUpdate &&
+        flow.type != BillingPortalFlowType::CustomerUpdate;
     if (needs_subscription == flow.subscription_id.empty())
         throw ConfigurationException(needs_subscription
                                          ? "This billing portal flow requires a subscription ID"

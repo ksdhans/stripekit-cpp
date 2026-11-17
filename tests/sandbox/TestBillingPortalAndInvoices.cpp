@@ -379,6 +379,7 @@ TEST_F(SandboxBillingPortalAndInvoicesTest, PortalSessionsOpenEachFlowForASubscr
     open(BillingPortalFlow{ .type = BillingPortalFlowType::PaymentMethodUpdate,
                             .after_completion = BillingPortalAfterCompletion::HostedConfirmation,
                             .confirmation_message = "Your card has been updated." });
+    open(BillingPortalFlow{ .type = BillingPortalFlowType::CustomerUpdate });
     open(BillingPortalFlow{ .type = BillingPortalFlowType::SubscriptionCancel,
                             .subscription_id = subscription.id,
                             .after_completion = BillingPortalAfterCompletion::PortalHomepage });
