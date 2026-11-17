@@ -432,7 +432,8 @@ void run_held_invoice_pause_recovery(SandboxEnvironment& environment,
                                      TaxTestResources& resources,
                                      const TaxTestFixtures& fixtures,
                                      const TaxTestPrices& prices,
-                                     bool late) {
+                                     bool late,
+                                     bool after_tax_disabled = false) {
     auto& client = environment.stripe_client();
     auto& api = environment.stripe_api();
 
@@ -452,7 +453,7 @@ void run_held_invoice_pause_recovery(SandboxEnvironment& environment,
     auto saved = client.subscriptions().retrieve_async(id, expanded, {}).result();
     ASSERT_EQ(saved.items.size(), 1U);
     const auto item_id = saved.items.front().id;
-    const auto renewal = saved.items.front().current_period_end_unix.value();
+    auto renewal = saved.items.front().current_period_end_unix.value();
     ASSERT_EQ(saved.items.front().billed_until_unix.value(), renewal);
 
     // Keep an unrelated credit on another paused subscription for the same customer.
@@ -483,6 +484,26 @@ void run_held_invoice_pause_recovery(SandboxEnvironment& environment,
                       .line1 = "", .city = "", .state = "", .postal_code = "", .country = "" },
               .validate_tax_location = TaxLocationValidation::Deferred })
         .result();
+
+    // Let Stripe disable tax on an earlier renewal before testing the next held invoice.
+    std::string untaxed_invoice_id;
+    if (after_tax_disabled) {
+        advance_sandbox_clock(environment, clock, renewal + 7200);
+        saved = client.subscriptions().retrieve_async(id, expanded, {}).result();
+        untaxed_invoice_id = saved.latest_invoice_id;
+        ASSERT_NE(untaxed_invoice_id, first_invoice);
+        const auto untaxed = client.invoices().retrieve_async(untaxed_invoice_id).result();
+        ASSERT_TRUE(untaxed.paid);
+        ASSERT_EQ(untaxed.amount_tax.value_or(0), 0);
+        ASSERT_TRUE(untaxed.automatic_tax.has_value());
+        ASSERT_FALSE(untaxed.automatic_tax->enabled);
+        ASSERT_EQ(untaxed.automatic_tax->disabled_reason, "finalization_requires_location_inputs");
+        ASSERT_FALSE(saved.automatic_tax_enabled);
+        ASSERT_EQ(saved.automatic_tax_disabled_reason, "requires_location_inputs");
+        renewal = saved.items.front().current_period_end_unix.value();
+        ASSERT_EQ(saved.items.front().billed_until_unix.value(), renewal);
+    }
+
     advance_sandbox_clock(environment, clock, renewal + 1);
     saved = client.subscriptions().retrieve_async(id, expanded, {}).result();
     const auto held_id = saved.latest_invoice_id;
@@ -493,7 +514,13 @@ void run_held_invoice_pause_recovery(SandboxEnvironment& environment,
     ASSERT_EQ(held.status, "draft");
     ASSERT_FALSE(held.paid);
     ASSERT_TRUE(held.automatic_tax.has_value());
-    ASSERT_EQ(held.automatic_tax->status, "requires_location_inputs");
+    if (after_tax_disabled) {
+        ASSERT_FALSE(held.automatic_tax->enabled);
+        ASSERT_FALSE(saved.automatic_tax_enabled);
+    } else {
+        ASSERT_TRUE(held.automatic_tax->enabled);
+        ASSERT_EQ(held.automatic_tax->status, "requires_location_inputs");
+    }
     std::set<std::string> held_lines;
     for (const auto& line : held.line_items)
         held_lines.insert(line.id);
@@ -502,6 +529,9 @@ void run_held_invoice_pause_recovery(SandboxEnvironment& environment,
     // Record existing charges and pending items so only the pause's effects are attributed to it.
     const auto charges_before = client.charges().list_async({ .customer_id = customer }).result();
     ASSERT_FALSE(charges_before.has_more);
+    const auto invoices_before = client.invoices().list_async({ .subscription_id = id }).result();
+    ASSERT_FALSE(invoices_before.has_more);
+    ASSERT_EQ(invoices_before.data.size(), after_tax_disabled ? 3U : 2U);
     const auto pending_before =
         client.invoice_items().list_async({ .customer_id = customer, .pending = true }).result();
     ASSERT_FALSE(pending_before.has_more);
@@ -586,16 +616,21 @@ void run_held_invoice_pause_recovery(SandboxEnvironment& environment,
     client.invoices()
         .update_async(held_id, { .automatic_tax_enabled = true, .auto_advance = false })
         .result();
-    held = client.invoices().finalize_async(held_id).result();
-    ASSERT_EQ(held.status, "open");
-    ASSERT_FALSE(held.paid);
     client.subscriptions().update_async(id, { .automatic_tax_enabled = true }).result();
 
     // Quick recovery pays the held period; late recovery voids it and starts a fresh period.
     if (late) {
+        held = client.invoices().finalize_async(held_id).result();
+        ASSERT_EQ(held.status, "open");
+        ASSERT_FALSE(held.paid);
         ASSERT_EQ(client.invoices().void_async(held_id).result().status, "void");
     } else {
-        api.require_post("/v1/invoices/" + held_id + "/pay", {});
+        // Use only SDK operations: let Stripe finalize and collect, then confirm the paid webhook.
+        const auto collecting =
+            client.invoices().update_async(held_id, { .auto_advance = true }).result();
+        ASSERT_TRUE(collecting.auto_advance.value());
+        advance_sandbox_clock(environment, clock, recovered_at + 7200);
+        ASSERT_TRUE(environment.wait_for_event("invoice.paid", held_id).has_value());
         expect_tax_result(environment, held_id, true);
     }
 
@@ -624,7 +659,7 @@ void run_held_invoice_pause_recovery(SandboxEnvironment& environment,
     expect_service_period(environment, paid_id, late ? recovered_at : renewal, following_renewal);
     const auto invoices = client.invoices().list_async({ .subscription_id = id }).result();
     ASSERT_FALSE(invoices.has_more);
-    ASSERT_EQ(invoices.data.size(), late ? 3U : 2U);
+    ASSERT_EQ(invoices.data.size(), invoices_before.data.size() + (late ? 1U : 0U));
     const auto charges = client.charges().list_async({ .customer_id = customer }).result();
     ASSERT_FALSE(charges.has_more);
     ASSERT_EQ(charges.data.size(), charges_before.data.size() + 1);
@@ -654,6 +689,17 @@ void run_held_invoice_pause_recovery(SandboxEnvironment& environment,
     EXPECT_FALSE(later_charges.has_more);
     EXPECT_EQ(later_charges.data.size(), charges.data.size() + 1);
     EXPECT_TRUE(client.invoice_items().retrieve_async(unrelated_id).result().invoice_id.empty());
+
+    // Restoring future tax must not silently change the earlier paid, untaxed invoice.
+    if (after_tax_disabled) {
+        const auto unchanged = client.invoices().retrieve_async(untaxed_invoice_id).result();
+        ASSERT_TRUE(unchanged.paid);
+        ASSERT_TRUE(unchanged.automatic_tax.has_value());
+        EXPECT_FALSE(unchanged.automatic_tax->enabled);
+        EXPECT_EQ(unchanged.automatic_tax->disabled_reason,
+                  "finalization_requires_location_inputs");
+        EXPECT_EQ(unchanged.amount_tax.value_or(0), 0);
+    }
 }
 
 } // namespace
@@ -715,6 +761,20 @@ TEST_F(SandboxTaxTest, HeldInvoiceLateRecoveryDeletesOnlyPauseCreditAndResetsRen
     const auto prices = create_tax_prices(*environment, *resources, fixtures);
     run_held_invoice_pause_recovery(
         *environment, *resources, fixtures, prices_for(prices, "nzd"), true);
+}
+
+TEST_F(SandboxTaxTest, HeldInvoiceQuickRecoveryAfterStripeDisablesTaxCollectsAutomatically) {
+    resources = std::make_unique<TaxTestResources>(*environment);
+    const auto prices = create_tax_prices(*environment, *resources, fixtures);
+    run_held_invoice_pause_recovery(
+        *environment, *resources, fixtures, prices_for(prices, "nzd"), false, true);
+}
+
+TEST_F(SandboxTaxTest, HeldInvoiceLateRecoveryAfterStripeDisablesTaxRestoresTaxedRenewals) {
+    resources = std::make_unique<TaxTestResources>(*environment);
+    const auto prices = create_tax_prices(*environment, *resources, fixtures);
+    run_held_invoice_pause_recovery(
+        *environment, *resources, fixtures, prices_for(prices, "nzd"), true, true);
 }
 
 TEST_F(SandboxTaxTest, InvalidLocationBlocksFinalizationUntilCustomerAndDraftAreCorrected) {

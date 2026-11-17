@@ -121,6 +121,240 @@ protected:
     std::int64_t frozen = 0, renewal = 0;
 };
 
+TEST_F(SandboxCollectionAndInvoicesTest,
+       InvoiceItemsFilterPaginateAndReportDeletionThroughBothApis) {
+    auto& client = environment->stripe_client();
+    auto& api = environment->stripe_api();
+    auto& items = client.invoice_items();
+
+    // Mix pending and assigned items, plus another customer, to test Stripe's actual filters.
+    const auto other_customer = api.require_post("/v1/customers", { { "test_clock", clock } }).id();
+    const auto invoice =
+        api.require_post(
+               "/v1/invoices",
+               { { "customer", customer }, { "currency", "usd" }, { "auto_advance", "false" } })
+            .id();
+    const auto other_invoice =
+        api.require_post(
+               "/v1/invoices",
+               { { "customer", customer }, { "currency", "usd" }, { "auto_advance", "false" } })
+            .id();
+    const auto create_item =
+        [&](const std::string& owner, const std::string& assigned_invoice, std::int64_t amount) {
+            FormParams fields{ { "customer", owner },
+                               { "amount", std::to_string(amount) },
+                               { "currency", "usd" },
+                               { "period[start]", std::to_string(frozen) },
+                               { "period[end]", std::to_string(renewal) },
+                               { "metadata[purpose]", "invoice_item_filters" } };
+            if (!assigned_invoice.empty()) fields.emplace_back("invoice", assigned_invoice);
+            return api.require_post("/v1/invoiceitems", fields).id();
+        };
+    const auto pending_charge = create_item(customer, {}, 200);
+    const auto pending_credit = create_item(customer, {}, -77);
+    const auto assigned = create_item(customer, invoice, 300);
+    const auto other_assigned = create_item(customer, other_invoice, 400);
+    const auto foreign = create_item(other_customer, {}, -77);
+
+    // Retrieve real amount, period, and metadata values through each calling style.
+    const auto charge = items.retrieve_async(pending_charge).result();
+    EXPECT_EQ(charge.customer_id, customer);
+    EXPECT_TRUE(charge.invoice_id.empty());
+    EXPECT_EQ(charge.amount, 200);
+    EXPECT_EQ(charge.currency, "usd");
+    EXPECT_EQ(charge.period.start_unix, frozen);
+    EXPECT_EQ(charge.period.end_unix, renewal);
+    EXPECT_EQ(charge.metadata.at("purpose"), "invoice_item_filters");
+    std::promise<CallbackResult<InvoiceItem>> retrieval;
+    auto retrieved = retrieval.get_future();
+    items.retrieve(pending_credit, {}, [&](CallbackResult<InvoiceItem> value) {
+        retrieval.set_value(std::move(value));
+    });
+    const auto credit = completed(retrieved);
+    EXPECT_EQ(credit.id, pending_credit);
+    EXPECT_EQ(credit.amount, -77);
+    EXPECT_FALSE(credit.proration);
+
+    // One-item pages force a cursor round trip; neither assigned nor foreign items may leak in.
+    ListInvoiceItemsRequest filter{ .customer_id = customer, .pending = true, .limit = 1 };
+    auto page = items.list_async(filter).result();
+    std::set<std::string> seen;
+    for (int pages = 0; pages < 3; ++pages) {
+        ASSERT_EQ(page.data.size(), 1U);
+        const auto& item = page.data.front();
+        ASSERT_EQ(item.customer_id, customer);
+        ASSERT_TRUE(item.invoice_id.empty());
+        ASSERT_TRUE(seen.insert(item.id).second);
+        if (!page.has_more) break;
+        filter.starting_after = item.id;
+        std::promise<CallbackResult<InvoiceItemList>> listing;
+        auto listed = listing.get_future();
+        items.list(filter, {}, [&](CallbackResult<InvoiceItemList> value) {
+            listing.set_value(std::move(value));
+        });
+        page = completed(listed);
+    }
+    ASSERT_FALSE(page.has_more);
+    EXPECT_EQ(seen, (std::set<std::string>{ pending_charge, pending_credit }));
+    filter.starting_after = page.data.back().id;
+    const auto exhausted = items.list_async(filter).result();
+    EXPECT_TRUE(exhausted.data.empty());
+    EXPECT_FALSE(exhausted.has_more);
+
+    // Stripe requires customer and invoice filters to be used separately.
+    try {
+        items.list_async({ .customer_id = customer, .invoice_id = invoice }).result();
+        FAIL();
+    } catch (const StripeApiException& error) {
+        EXPECT_EQ(error.payload().http_status, 400);
+    }
+
+    // An invoice filter must exclude another draft, and pending=false must exclude pending items.
+    const auto on_invoice = items.list_async({ .invoice_id = invoice, .pending = false }).result();
+    ASSERT_FALSE(on_invoice.has_more);
+    ASSERT_EQ(on_invoice.data.size(), 1U);
+    EXPECT_EQ(on_invoice.data.front().id, assigned);
+    EXPECT_EQ(on_invoice.data.front().invoice_id, invoice);
+    const auto all = items.list_async({ .customer_id = customer, .limit = 100 }).result();
+    ASSERT_FALSE(all.has_more);
+    seen.clear();
+    for (const auto& item : all.data) {
+        EXPECT_EQ(item.customer_id, customer);
+        seen.insert(item.id);
+    }
+    EXPECT_TRUE(seen.contains(pending_charge));
+    EXPECT_TRUE(seen.contains(pending_credit));
+    EXPECT_TRUE(seen.contains(assigned));
+    EXPECT_TRUE(seen.contains(other_assigned));
+    EXPECT_FALSE(seen.contains(foreign));
+
+    // Both deletion APIs must return Stripe's explicit confirmation, including on draft items.
+    std::promise<CallbackResult<DeletedInvoiceItem>> deletion;
+    auto deleted = deletion.get_future();
+    items.delete_invoice_item(pending_credit, {}, [&](CallbackResult<DeletedInvoiceItem> value) {
+        deletion.set_value(std::move(value));
+    });
+    const auto confirmation = completed(deleted);
+    EXPECT_EQ(confirmation.id, pending_credit);
+    EXPECT_TRUE(confirmation.deleted);
+    const auto draft_deletion = items.delete_async(assigned).result();
+    EXPECT_EQ(draft_deletion.id, assigned);
+    EXPECT_TRUE(draft_deletion.deleted);
+    EXPECT_EQ(items.retrieve_async(pending_charge).result().amount, charge.amount);
+
+    // Deleting an already-deleted item is a real 404, never an idempotent-looking success.
+    try {
+        items.delete_async(pending_credit).result();
+        FAIL();
+    } catch (const StripeApiException& error) {
+        EXPECT_EQ(error.payload().http_status, 404);
+        EXPECT_EQ(error.payload().code, "resource_missing");
+    }
+    std::promise<CallbackResult<InvoiceItem>> missing;
+    auto missing_result = missing.get_future();
+    items.retrieve(pending_credit, {}, [&](CallbackResult<InvoiceItem> value) {
+        missing.set_value(std::move(value));
+    });
+    EXPECT_THROW(completed(missing_result), StripeApiException);
+}
+
+TEST_F(SandboxCollectionAndInvoicesTest,
+       PauseCreditDeletionPreservesExistingCreditOnSameSubscription) {
+    auto& client = environment->stripe_client();
+    auto& items = client.invoice_items();
+    client.subscriptions().migrate_async(subscription).result();
+    const RetrieveSubscriptionRequest expanded{ .expand = { "items.data.billed_until" } };
+    const auto before = client.subscriptions().retrieve_async(subscription, expanded, {}).result();
+    ASSERT_EQ(before.items.size(), 1U);
+    const auto item_id = before.items.front().id;
+    const auto start = before.items.front().current_period_start_unix.value();
+    const auto end = before.items.front().billed_until_unix.value();
+
+    // This older credit has the same subscription and service dates as the coming pause credit.
+    const auto existing_id = environment->stripe_api()
+                                 .require_post("/v1/invoiceitems",
+                                               { { "customer", customer },
+                                                 { "subscription", subscription },
+                                                 { "amount", "-77" },
+                                                 { "currency", "usd" },
+                                                 { "period[start]", std::to_string(start) },
+                                                 { "period[end]", std::to_string(end) },
+                                                 { "metadata[purpose]", "keep_existing_credit" } })
+                                 .id();
+    const auto existing = items.retrieve_async(existing_id).result();
+    ASSERT_TRUE(existing.invoice_id.empty());
+    ASSERT_FALSE(existing.proration);
+    const auto pending_before =
+        items.list_async({ .customer_id = customer, .pending = true }).result();
+    ASSERT_FALSE(pending_before.has_more);
+    ASSERT_EQ(pending_before.data.size(), 1U);
+    ASSERT_EQ(pending_before.data.front().id, existing_id);
+
+    client.subscriptions()
+        .pause_async(subscription,
+                     { .bill_for = { .unused_time_from = { "item_current_period_start" },
+                                     .outstanding_usage_through = { "none" } },
+                       .invoicing_behavior = "pending_invoice_item" })
+        .result();
+    const auto paused = client.subscriptions().retrieve_async(subscription, expanded, {}).result();
+    ASSERT_EQ(paused.status, "paused");
+    // Crediting the entire first period leaves no billed-through date, rather than a guessed start.
+    ASSERT_FALSE(paused.items.front().billed_until_unix.has_value());
+
+    // Identify the newly generated adjustment by its ID, ownership, period, and proration state.
+    const auto pending = items.list_async({ .customer_id = customer, .pending = true }).result();
+    ASSERT_FALSE(pending.has_more);
+    ASSERT_EQ(pending.data.size(), 2U);
+    std::string pause_credit;
+    for (const auto& item : pending.data) {
+        if (item.id == existing_id) continue;
+        ASSERT_TRUE(item.parent.has_value());
+        ASSERT_TRUE(item.parent->subscription_details.has_value());
+        EXPECT_EQ(item.parent->subscription_details->subscription_id, subscription);
+        EXPECT_EQ(item.parent->subscription_details->subscription_item_id, item_id);
+        EXPECT_EQ(item.period.start_unix, start);
+        EXPECT_EQ(item.period.end_unix, end);
+        EXPECT_TRUE(item.proration);
+        EXPECT_EQ(item.amount, -1500);
+        pause_credit = item.id;
+    }
+    ASSERT_FALSE(pause_credit.empty());
+    const auto deleted = items.delete_async(pause_credit).result();
+    ASSERT_EQ(deleted.id, pause_credit);
+    ASSERT_TRUE(deleted.deleted);
+    EXPECT_FALSE(client.subscriptions()
+                     .retrieve_async(subscription, expanded, {})
+                     .result()
+                     .items.front()
+                     .billed_until_unix.has_value());
+
+    // Removing only the pause credit must preserve the older credit through an unchanged resume.
+    const auto resumed =
+        client.subscriptions()
+            .resume_async(
+                subscription,
+                { .billing_cycle_anchor = ResumeSubscriptionBillingCycleAnchor{ "unchanged" },
+                  .proration_behavior = ProrationBehavior::None })
+            .result();
+    ASSERT_EQ(resumed.status, "active");
+    const auto remaining = items.list_async({ .customer_id = customer, .pending = true }).result();
+    ASSERT_FALSE(remaining.has_more);
+    ASSERT_EQ(remaining.data.size(), 1U);
+    const auto& preserved = remaining.data.front();
+    EXPECT_EQ(preserved.id, existing_id);
+    EXPECT_TRUE(preserved.invoice_id.empty());
+    EXPECT_EQ(preserved.amount, existing.amount);
+    EXPECT_EQ(preserved.period.start_unix, existing.period.start_unix);
+    EXPECT_EQ(preserved.period.end_unix, existing.period.end_unix);
+    EXPECT_EQ(preserved.metadata, existing.metadata);
+    const auto invoices =
+        client.invoices().list_async({ .subscription_id = subscription }).result();
+    EXPECT_FALSE(invoices.has_more);
+    ASSERT_EQ(invoices.data.size(), 1U);
+    EXPECT_EQ(invoices.data.front().id, paid_invoice);
+    EXPECT_EQ(invoices.data.front().amount_paid, 1500);
+}
+
 // Withdrawing a period-end cancellation should allow billing to continue.
 // Scheduling it again should end the subscription at renewal without changing
 // the invoice that already paid for the current period.

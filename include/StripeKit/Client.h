@@ -1150,7 +1150,8 @@ struct RetrieveSubscriptionRequest {
 struct ListInvoiceItemsRequest {
     /** Customer to list items for; empty lists all customers. */
     std::string customer_id;
-    /** Invoice to list items for; empty includes items not yet on an invoice. */
+    /** Invoice to list items for; cannot be combined with customer_id. Empty applies no invoice
+     * filter. */
     std::string invoice_id;
     /** True for pending items, false for items on invoices, or unset for both. */
     std::optional<bool> pending;

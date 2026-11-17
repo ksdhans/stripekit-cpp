@@ -25,6 +25,11 @@ The suite covers:
   and named cancellation dates for mixed billing periods and advance billing.
 - Invoice listing, finalization without automatic collection, voiding, standalone
   draft deletion, and protection against changes to paid invoices.
+- Invoice-item customer, invoice, and pending filters; pagination; retrieval; and
+  deletion using both callbacks and coroutines. Tests check not-found errors and
+  preservation of an existing credit on the same subscription when a pause credit
+  is deleted, including an absent billed-through date after the first period is
+  fully credited.
 - Scheduled price changes at renewal, preserved quantities and additional items,
   safe retries, and continuing or ending the subscription after the last phase.
   Subscription reads also check discounts, tax rates, and automatic tax settings.
@@ -35,8 +40,10 @@ The suite covers:
 - Recovery of a held renewal invoice before and after its service period ends.
   Tests check billed-through dates, deletion of only the pause's credit, taxed
   charges, and the next renewal. An unrelated pending credit must remain untouched.
-  These scenarios hold the draft before finalization; they do not test recovery
-  of an invoice that Stripe has already finalized with tax disabled.
+  Quick recovery uses automatic collection and waits for payment confirmation.
+  Additional cases let Stripe disable tax on an earlier renewal, then recover a
+  later held invoice and restore taxed renewals. They do not change the earlier
+  paid, untaxed invoice.
 
 The pause scenarios delete their test clocks and the related billing objects,
 and archive their prices and products after each test, including failed tests.

@@ -227,8 +227,9 @@ for (;;) {
 
 Page sizes are from 1 to 100. Leave `pending` unset to include both pending items
 and items already on an invoice; set it to `false` for only the latter. Set
-`request.invoice_id` to list items on a particular invoice. Leaving `customer_id`
-empty lists items for all customers.
+`request.invoice_id` to list items on a particular invoice, leaving `customer_id`
+empty: Stripe rejects requests that specify both. With neither filter set,
+listing includes items for all customers.
 
 Stripe does not offer a subscription filter for this list endpoint. To find a
 subscription's items, filter by customer, read all pages, and check each item's
@@ -302,8 +303,9 @@ const auto subscription =
 Read `billed_until_unix` on each entry in `subscription.items`. It contains Unix
 seconds when supplied, or `std::nullopt` when Stripe omits it or returns null.
 Check the optional value before using it; do not substitute the current period
-end for an unknown billed-through date. If `items_has_more` is true, the returned
-items are not the complete subscription.
+end for an absent billed-through date. Crediting an item's entire first period
+can leave no billed-through date. If `items_has_more` is true, the returned items
+are not the complete subscription.
 
 Pass `{}` for request options when you do not need custom headers or a timeout.
 For a normal retrieval without extra fields, use

@@ -16,7 +16,7 @@ const std::string invoice_json =
     R"({"object":"invoice","id":"in_test","customer":"cus_test","subscription":"sub_test","status":"void","auto_advance":false})";
 const std::string deleted_json = R"({"object":"invoice","id":"in_test","deleted":true})";
 const std::string invoice_item_json = R"({
-    "object":"invoiceitem","id":"ii_credit","customer":{"id":"cus_test"},"invoice":null,
+    "object":"invoiceitem","id":"ii_credit","customer":{"id":"cus/a &b"},"invoice":null,
     "amount":-1500,"currency":"usd","period":{"start":1800000000,"end":1802678400},
     "proration":true,"parent":{"type":"subscription_details","subscription_details":{
         "subscription":"sub_test","subscription_item":"si_test"}},
@@ -41,7 +41,7 @@ TEST_F(CollectionAndInvoicesTest, InvoiceItemsExposeSourcesAndEncodeFiltersInBot
     http.set_response({ .status_code = 200, .body = invoice_item_json });
     const auto item = api.retrieve_async("ii/a?", options).result();
     EXPECT_EQ(item.id, "ii_credit");
-    EXPECT_EQ(item.customer_id, "cus_test");
+    EXPECT_EQ(item.customer_id, "cus/a &b");
     EXPECT_TRUE(item.invoice_id.empty());
     EXPECT_EQ(item.amount, -1500);
     EXPECT_EQ(item.currency, "usd");
@@ -71,31 +71,39 @@ TEST_F(CollectionAndInvoicesTest, InvoiceItemsExposeSourcesAndEncodeFiltersInBot
     });
 
     // Both API styles must send the same filters, including an explicit pending=false.
-    http.set_response(
-        { .status_code = 200,
-          .body = R"({"object":"list","has_more":true,"data":[)" + invoice_item_json + "]}" });
-    const ListInvoiceItemsRequest request{ .customer_id = "cus/a &b",
-                                           .invoice_id = "in?held",
-                                           .pending = false,
-                                           .limit = 1,
-                                           .starting_after = "ii?last" };
+    http.set_response({ .status_code = 200, .body = R"({"object":"list","has_more":true,"data":[{
+              "object":"invoiceitem","id":"ii_assigned","customer":"cus/a &b","invoice":"in?held",
+              "amount":300,"currency":"usd","period":{"start":1800000000,"end":1802678400},
+              "proration":false}]})" });
+    const ListInvoiceItemsRequest request{
+        .invoice_id = "in?held", .pending = false, .limit = 1, .starting_after = "ii?last"
+    };
     const auto page = api.list_async(request, options).result();
     EXPECT_TRUE(page.has_more);
     ASSERT_EQ(page.data.size(), 1U);
-    EXPECT_EQ(page.data.front().id, item.id);
+    EXPECT_EQ(page.data.front().id, "ii_assigned");
+    EXPECT_EQ(page.data.front().invoice_id, request.invoice_id);
     EXPECT_EQ(http.get_recorded_requests().size(), 3U);
     EXPECT_EQ(http.get_recorded_requests().back().path,
-              "/v1/invoiceitems?limit=1&starting_after=ii%3Flast&customer=cus%2Fa%20%26b"
-              "&invoice=in%3Fheld&pending=false");
+              "/v1/invoiceitems?limit=1&starting_after=ii%3Flast&invoice=in%3Fheld&pending=false");
     api.list(request, options, [&](CallbackResult<InvoiceItemList> result) {
         ++calls;
         EXPECT_TRUE(std::get<InvoiceItemList>(result).has_more);
+        EXPECT_EQ(std::get<InvoiceItemList>(result).data.front().invoice_id, request.invoice_id);
     });
     EXPECT_EQ(http.get_recorded_requests().back().path, http.get_recorded_requests()[2].path);
 
     // Distinguish pending-only requests from leaving the pending filter unset.
-    api.list_async({ .pending = true }, options).result();
-    EXPECT_EQ(http.get_recorded_requests().back().path, "/v1/invoiceitems?limit=10&pending=true");
+    http.set_response(
+        { .status_code = 200,
+          .body = R"({"object":"list","has_more":false,"data":[)" + invoice_item_json + "]}" });
+    const auto pending =
+        api.list_async({ .customer_id = "cus/a &b", .pending = true }, options).result();
+    ASSERT_EQ(pending.data.size(), 1U);
+    EXPECT_TRUE(pending.data.front().invoice_id.empty());
+    EXPECT_EQ(pending.data.front().customer_id, "cus/a &b");
+    EXPECT_EQ(http.get_recorded_requests().back().path,
+              "/v1/invoiceitems?limit=10&customer=cus%2Fa%20%26b&pending=true");
     http.set_response(
         { .status_code = 200, .body = R"({"object":"list","has_more":false,"data":[]})" });
     EXPECT_TRUE(api.list_async({}, options).result().data.empty());
@@ -119,6 +127,38 @@ TEST_F(CollectionAndInvoicesTest, InvoiceItemsExposeSourcesAndEncodeFiltersInBot
         EXPECT_TRUE(sent.body.empty());
         EXPECT_EQ(sent.options.timeout, options.timeout);
         EXPECT_EQ(sent.headers.at("Stripe-Version"), "2026-10-28.endive");
+    }
+}
+
+TEST_F(CollectionAndInvoicesTest, InvoiceItemListPreservesStripeFilterErrorsInBothApiStyles) {
+    // Stripe rejects combining these filters; neither API style may turn that into an empty page.
+    http.set_response({ .status_code = 400, .body = R"({"error":{"type":"invalid_request_error",
+                            "message":"The customer and invoice filters cannot be combined."}})" });
+    const ListInvoiceItemsRequest request{ .customer_id = "cus_test", .invoice_id = "in_test" };
+    auto& api = client.invoice_items();
+    try {
+        api.list_async(request).result();
+        FAIL();
+    } catch (const StripeApiException& error) {
+        EXPECT_EQ(error.payload().http_status, 400);
+        EXPECT_EQ(error.payload().type, StripeErrorType::InvalidRequest);
+    }
+    int calls = 0;
+    api.list(request, {}, [&](CallbackResult<InvoiceItemList> result) {
+        ++calls;
+        ASSERT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+        try {
+            std::rethrow_exception(std::get<std::exception_ptr>(result));
+            FAIL();
+        } catch (const StripeApiException& error) {
+            EXPECT_EQ(error.payload().http_status, 400);
+            EXPECT_EQ(error.payload().type, StripeErrorType::InvalidRequest);
+        }
+    });
+    EXPECT_EQ(calls, 1);
+    ASSERT_EQ(http.get_recorded_requests().size(), 2U);
+    for (const auto& sent : http.get_recorded_requests()) {
+        EXPECT_EQ(sent.path, "/v1/invoiceitems?limit=10&customer=cus_test&invoice=in_test");
     }
 }
 
@@ -237,6 +277,7 @@ TEST_F(CollectionAndInvoicesTest, InvoiceItemFailuresReachBothApiStylesIncluding
         api.delete_async("ii_missing").result();
         FAIL();
     } catch (const StripeApiException& error) {
+        EXPECT_EQ(error.payload().http_status, 404);
         EXPECT_EQ(error.payload().code, "resource_missing");
     }
 }
