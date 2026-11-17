@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.9.0 2026-11-17
+
 - Add invoice-item listing, retrieval, and deletion.
 - Add subscription retrieval expansions and item `billed_until_unix`.
   Custom clients must implement the new operations and retrieval overloads.
