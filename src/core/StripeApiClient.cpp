@@ -759,6 +759,15 @@ std::string invoices_path(const ListInvoicesRequest& request) {
     return "/v1/invoices?" + query;
 }
 
+/** Validate and encode a subscription invoice preview request. */
+std::string invoice_preview_body(const CreateInvoicePreviewRequest& request) {
+    if (request.subscription_id.empty())
+        throw ConfigurationException("Invoice preview requires a subscription ID");
+    std::string body;
+    append_form_value(body, "subscription", request.subscription_id);
+    return body;
+}
+
 /** Encode collection behavior and a positive optional resume timestamp. */
 std::string pause_collection_body(const PauseSubscriptionCollectionRequest& request) {
     std::string behavior;
@@ -3755,6 +3764,39 @@ Task<InvoiceList> StripeApiClient::InvoiceOperations::list_async(const ListInvoi
         [](const StripeResponseParser& parser, const HttpResponse& response) {
             return parser.parse_invoice_list(response);
         });
+}
+
+Task<Invoice>
+StripeApiClient::InvoiceOperations::create_preview_async(const CreateInvoicePreviewRequest& request,
+                                                         const RequestOptions& options) {
+    return send_and_parse_async<Invoice>(owner.http_client,
+                                         owner.response_parser,
+                                         make_request(HttpMethod::Post,
+                                                      "/v1/invoices/create_preview",
+                                                      invoice_preview_body(request),
+                                                      options),
+                                         parse_invoice_response);
+}
+
+void StripeApiClient::InvoiceOperations::create_preview(const CreateInvoicePreviewRequest& request,
+                                                        const RequestOptions& options,
+                                                        Completion completion) {
+    HttpRequest http;
+    try {
+        http = make_request(HttpMethod::Post,
+                            "/v1/invoices/create_preview",
+                            invoice_preview_body(request),
+                            options);
+    } catch (...) {
+        completion(std::current_exception());
+        return;
+    }
+    send_and_parse<Invoice>(owner.http_client,
+                            owner.response_parser,
+                            owner.callback_lifetime,
+                            std::move(http),
+                            parse_invoice_response,
+                            std::move(completion));
 }
 
 void StripeApiClient::InvoiceOperations::list(const ListInvoicesRequest& request,

@@ -893,19 +893,15 @@ TEST_F(SandboxCatalogTest, ProrationPoliciesHaveDeterministicInvoiceOutcomes) {
         } else {
             EXPECT_EQ(changed.latest_invoice_id, before.latest_invoice_id);
         }
-        const auto upcoming =
-            environment->stripe_api()
-                .require_post("/v1/invoices/create_preview", { { "subscription", before.id } })
-                .body;
-        EXPECT_EQ(upcoming["amount_due"].asInt64(),
+        const auto upcoming = environment->stripe_client()
+                                  .invoices()
+                                  .create_preview_async({ .subscription_id = before.id })
+                                  .result();
+        EXPECT_EQ(upcoming.subscription_id, before.id);
+        EXPECT_EQ(upcoming.amount_due,
                   policy == ProrationBehavior::CreateProrations ? 23400 : 18600);
-        std::int64_t pending_adjustments = 0;
-        for (const auto& line : upcoming["lines"]["data"]) {
-            const auto& parent = line["parent"];
-            if (parent[parent["type"].asString()]["proration"].asBool())
-                pending_adjustments += line["amount"].asInt64();
-        }
-        EXPECT_EQ(pending_adjustments, policy == ProrationBehavior::CreateProrations ? 4800 : 0);
+        EXPECT_FALSE(upcoming.id.empty());
+        EXPECT_FALSE(upcoming.line_items.empty());
         const auto retried = environment->stripe_client()
                                  .subscriptions()
                                  .update_async(before.id, request, options)

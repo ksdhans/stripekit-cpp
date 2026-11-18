@@ -1170,6 +1170,12 @@ struct ListInvoicesRequest {
     std::string starting_after; ///< Last invoice ID from the previous page.
 };
 
+/** Select an existing subscription whose upcoming invoice should be previewed. */
+struct CreateInvoicePreviewRequest {
+    /** Existing Stripe subscription ID. */
+    std::string subscription_id;
+};
+
 /** Draft invoice fields that can be corrected before finalization. */
 struct UpdateInvoiceRequest {
     /** Enable or disable automatic tax before finalization. */
@@ -1561,7 +1567,7 @@ public:
 };
 
 /**
- * Read, finalize, void, and delete invoices.
+ * Preview, read, finalize, void, and delete invoices.
  *
  * Reach an instance through StripeClient::invoices(). Use it to show what a
  * customer owes, or to fetch the link where they can pay an invoice that
@@ -1579,6 +1585,32 @@ public:
     using Completion = std::function<void(CallbackResult<Invoice>)>;
     /** Receives one page of purchased invoice lines or a failure. */
     using LineItemsCompletion = std::function<void(CallbackResult<PurchasedLineItemList>)>;
+    /**
+     * Preview the upcoming invoice for an existing subscription.
+     *
+     * The preview is not a real invoice: it is not saved, listed, payable, or editable.
+     *
+     * @param request Subscription whose upcoming invoice to preview.
+     * @param options Per-request settings.
+     *
+     * @return The preview as an invoice object. Its ID is temporary and cannot be used to
+     *         retrieve a real invoice.
+     *
+     * @throws ConfigurationException If the subscription ID is empty.
+     * @throws StripeApiException If Stripe rejects the request.
+     */
+    virtual Task<Invoice> create_preview_async(const CreateInvoicePreviewRequest& request,
+                                               const RequestOptions& options = {}) = 0;
+    /**
+     * Preview an upcoming invoice and report its result or failure exactly once.
+     *
+     * @param request Subscription whose upcoming invoice to preview.
+     * @param options Per-request settings.
+     * @param completion Receives the preview invoice or failure.
+     */
+    virtual void create_preview(const CreateInvoicePreviewRequest& request,
+                                const RequestOptions& options,
+                                Completion completion) = 0;
     /**
      * Read one page, optionally for a specific subscription.
      *

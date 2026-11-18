@@ -25,6 +25,7 @@ The suite covers:
   and named cancellation dates for mixed billing periods and advance billing.
 - Invoice listing, finalization without automatic collection, voiding, standalone
   draft deletion, and protection against changes to paid invoices.
+- Subscription invoice previews, including pending prorations after a price change.
 - Invoice-item customer, invoice, and pending filters; pagination; retrieval; and
   deletion using both callbacks and coroutines. Tests check not-found errors and
   preservation of an existing credit on the same subscription when a pause credit

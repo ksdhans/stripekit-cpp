@@ -640,6 +640,45 @@ TEST_F(CollectionAndInvoicesTest, InvoiceRequestsEncodeFiltersAndReturnTypedConf
     EXPECT_TRUE(client.invoices().list_async().result().data.empty());
 }
 
+TEST_F(CollectionAndInvoicesTest, InvoicePreviewUsesStripeEndpointAndReturnsTypedPreview) {
+    const auto response =
+        R"({"object":"invoice","id":"upcoming_in_test","customer":"cus_test","subscription":"sub_test",
+            "status":"draft","currency":"usd","amount_due":23400,"amount_paid":0,
+            "amount_remaining":23400,"subtotal":23400,"total":23400,
+            "lines":{"object":"list","has_more":false,"data":[
+                {"id":"il_test","pricing":{"price_details":{"price":"price_test"}},
+                 "quantity":3,"amount":23400}]}})";
+    const RequestOptions options{ .idempotency_key = "preview-request",
+                                  .timeout = std::chrono::seconds(6) };
+    http.set_response({ .status_code = 200, .body = response });
+
+    const auto invoice =
+        client.invoices().create_preview_async({ .subscription_id = "sub/a &b" }, options).result();
+    EXPECT_EQ(invoice.id, "upcoming_in_test");
+    EXPECT_EQ(invoice.subscription_id, "sub_test");
+    EXPECT_EQ(invoice.amount_due, 23400);
+    ASSERT_EQ(invoice.line_items.size(), 1U);
+    EXPECT_EQ(invoice.line_items.front().price_id, "price_test");
+    EXPECT_EQ(invoice.line_items.front().amount, 23400);
+
+    const auto sent = http.get_recorded_requests().back();
+    EXPECT_EQ(sent.path, "/v1/invoices/create_preview");
+    EXPECT_EQ(sent.method, HttpMethod::Post);
+    EXPECT_EQ(sent.body, "subscription=sub%2Fa%20%26b");
+    EXPECT_EQ(sent.options.idempotency_key, options.idempotency_key);
+    EXPECT_EQ(sent.options.timeout, options.timeout);
+
+    int calls = 0;
+    client.invoices().create_preview(
+        { .subscription_id = "sub_callback" }, options, [&](CallbackResult<Invoice> result) {
+            ++calls;
+            ASSERT_TRUE(std::holds_alternative<Invoice>(result));
+            EXPECT_EQ(std::get<Invoice>(result).id, "upcoming_in_test");
+        });
+    EXPECT_EQ(calls, 1);
+    EXPECT_EQ(http.get_recorded_requests().back().body, "subscription=sub_callback");
+}
+
 TEST_F(CollectionAndInvoicesTest, DraftInvoiceTaxSettingsCanBeUpdatedBeforeFinalization) {
     http.set_response(
         { .status_code = 200,
@@ -735,6 +774,7 @@ TEST_F(CollectionAndInvoicesTest, ValidationErrorsNeverSendAndCallbacksReceiveFa
     EXPECT_THROW(client.invoices().void_async("").result(), ConfigurationException);
     EXPECT_THROW(client.invoices().finalize_async("").result(), ConfigurationException);
     EXPECT_THROW(client.invoices().delete_async("").result(), ConfigurationException);
+    EXPECT_THROW(client.invoices().create_preview_async({}).result(), ConfigurationException);
     EXPECT_THROW(client.invoices().update_async("", { .automatic_tax_enabled = true }).result(),
                  ConfigurationException);
     EXPECT_THROW(client.invoices().update_async("in_test", {}).result(), ConfigurationException);
@@ -775,7 +815,11 @@ TEST_F(CollectionAndInvoicesTest, ValidationErrorsNeverSendAndCallbacksReceiveFa
         ++calls;
         EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
     });
-    EXPECT_EQ(calls, 8);
+    client.invoices().create_preview({}, {}, [&](CallbackResult<Invoice> result) {
+        ++calls;
+        EXPECT_TRUE(std::holds_alternative<std::exception_ptr>(result));
+    });
+    EXPECT_EQ(calls, 9);
     EXPECT_TRUE(http.get_recorded_requests().empty());
 }
 

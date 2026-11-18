@@ -705,6 +705,8 @@ struct SubscriptionSchedule {
  * A paid invoice has no outstanding balance; it does not prove that a card was
  * charged. A trial can start with a zero-value paid invoice. Decide access
  * using current subscription state, trial dates, and your application's policy.
+ * This type also represents invoice previews. A preview is not saved and cannot
+ * be retrieved, paid, or edited.
  * An open invoice that still has
  * an amount remaining needs the customer's attention; send them to
  * `hosted_invoice_url` to pay it or to complete extra authentication such as
@@ -713,7 +715,7 @@ struct SubscriptionSchedule {
  * @sa https://docs.stripe.com/api/invoices/object
  */
 struct Invoice {
-    /** Stripe-assigned invoice identifier. */
+    /** Stripe-assigned invoice ID; a preview ID cannot be used to retrieve an invoice. */
     std::string id;
 
     /** Stripe customer identifier associated with the invoice. */

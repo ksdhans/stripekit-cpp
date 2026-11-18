@@ -189,6 +189,26 @@ Useful fields:
 customer's action, such as an extra bank authentication. Send the customer
 there, then wait for the `invoice.paid` webhook.
 
+@section invoice_preview Preview an upcoming subscription invoice
+
+Use an invoice preview to show what Stripe expects to bill for an existing
+subscription. The preview can include renewal charges, pending invoice items,
+discounts, tax, and pending prorations. It is an estimate, not a saved invoice:
+it cannot be retrieved later, paid, or edited, and its values can change before
+the invoice is created.
+
+@code{.cpp}
+const auto preview =
+    co_await stripe->invoices().create_preview_async({ .subscription_id = subscription.id });
+// Amounts are in the currency's smallest unit.
+// Display preview.amount_due and preview.currency to the customer.
+@endcode
+
+The result is an `Invoice` object. Its ID is a temporary preview ID, not an ID
+for an invoice you can retrieve. For a preview of prorations from a subscription
+change, Stripe supports additional preview parameters; this operation currently
+accepts an existing subscription ID to preview its upcoming invoice.
+
 @section invoice_tax_recovery Correct a draft invoice before finalization
 
 StripeKit reports automatic-tax status and invoice-finalization error codes so

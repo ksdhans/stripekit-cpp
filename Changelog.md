@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Add subscription invoice previews.
+
 ## 0.9.2 2026-11-17
 
 - Fixed the code formatting issues in the previous release.

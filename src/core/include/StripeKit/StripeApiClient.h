@@ -842,6 +842,13 @@ private:
     /** Retrieves Stripe invoices. */
     class InvoiceOperations final : public Invoices {
     public:
+        /** Preview an upcoming subscription invoice. */
+        Task<Invoice> create_preview_async(const CreateInvoicePreviewRequest&,
+                                           const RequestOptions&) override;
+        /** Deliver the invoice preview or failure once. */
+        void create_preview(const CreateInvoicePreviewRequest&,
+                            const RequestOptions&,
+                            Completion) override;
         /** Read one page of subscription invoices. */
         Task<InvoiceList> list_async(const ListInvoicesRequest&, const RequestOptions&) override;
         /** Deliver a page or failure once. */
