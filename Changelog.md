@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.10.0 2026-11-18
+
 - Add subscription invoice previews.
 
 ## 0.9.2 2026-11-17
