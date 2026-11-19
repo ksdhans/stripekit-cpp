@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Add Stripe event-history diagnostics for sandbox webhook timeouts.
+
 ## 0.10.0 2026-11-18
 
 - Add subscription invoice previews.
