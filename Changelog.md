@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.10.1 2026-11-20
+
 - Added the ability to filter charges by PaymentIntent
 - Add Stripe event-history diagnostics for sandbox webhook timeouts.
 
