@@ -794,10 +794,12 @@ std::string pause_collection_body(const PauseSubscriptionCollectionRequest& requ
     return body;
 }
 
-/** Build a charge list URL with an optional customer filter. */
+/** Build a charge list URL with optional customer and PaymentIntent filters. */
 std::string charges_path(const ListChargesRequest& request) {
     auto query = payment_page_query(request.limit, request.starting_after);
     if (!request.customer_id.empty()) append_form_value(query, "customer", request.customer_id);
+    if (!request.payment_intent_id.empty())
+        append_form_value(query, "payment_intent", request.payment_intent_id);
     return "/v1/charges?" + query;
 }
 
