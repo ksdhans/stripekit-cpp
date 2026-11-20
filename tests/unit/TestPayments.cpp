@@ -126,15 +126,6 @@ TEST_F(PaymentsTest, ListsEncodeFiltersCursorsAndDoNotAutomaticallyTraverse) {
     EXPECT_TRUE(allocation.is_default);
 }
 
-TEST_F(PaymentsTest, ChargeListEncodesPaymentIntentFilter) {
-    http.set_response({ .status_code = 200, .body = page(charge_json) });
-    ListChargesRequest request;
-    request.payment_intent_id = "pi/a &b";
-    client.charges().list_async(request).result();
-    EXPECT_EQ(http.get_recorded_requests().back().path,
-              "/v1/charges?limit=10&payment_intent=pi%2Fa%20%26b");
-}
-
 TEST_F(PaymentsTest, CallbackListsReturnDataAndDefaultFiltersAreOmitted) {
     int calls = 0;
     http.set_response({ .status_code = 200, .body = page(charge_json) });

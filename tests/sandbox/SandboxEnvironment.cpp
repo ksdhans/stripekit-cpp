@@ -9,6 +9,7 @@
 
 #include "StripeKit/WebhookDedupStore.h"
 #include "StripeKit/Webhooks.h"
+#include "StripeKit/Testing/EventHistory.h"
 
 #include <drogon/drogon.h>
 
@@ -563,6 +564,7 @@ struct SandboxEnvironment::State {
     std::string reason;
     std::string run_id;
     bool running = false;
+    std::int64_t started_unix = 0;
 
     std::uint16_t port = 0;
     std::string base_url;
@@ -641,6 +643,9 @@ bool SandboxEnvironment::start() {
     }
 
     state->run_id = make_run_id();
+    state->started_unix = std::chrono::duration_cast<std::chrono::seconds>(
+                              std::chrono::system_clock::now().time_since_epoch())
+                              .count();
     state->port = find_free_port();
     state->base_url = "http://127.0.0.1:" + std::to_string(state->port);
 
@@ -787,6 +792,16 @@ std::optional<ReceivedEvent> SandboxEnvironment::wait_for_event(std::string_view
                                          ? "Stripe CLI has not produced any output since startup"
                                          : "Recent Stripe CLI output:\n" + cli_output);
                 }
+                lock.unlock();
+                sandbox_progress(event_history_diagnostics(
+                    [this](std::string_view path) {
+                        const auto response = state->api->get(path);
+                        if (!response.ok()) throw std::runtime_error(response.describe());
+                        return response.body;
+                    },
+                    type,
+                    must_contain,
+                    state->started_unix));
             }
             return final_match;
         }

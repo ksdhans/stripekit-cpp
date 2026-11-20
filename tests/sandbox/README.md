@@ -132,6 +132,13 @@ one contract.
 | `STRIPEKIT_SANDBOX_EVENT_TIMEOUT_SECONDS` | No | How long to wait for an expected event. Defaults to `90`. |
 | `STRIPEKIT_SANDBOX_MAX_API_CALLS` | No | Stripe API call budget per run, guarding against runaway loops. Defaults to `1000`. |
 
+When a webhook wait times out, the log includes a search of Stripe's event
+history since the run started. It reports matching event IDs and creation
+timestamps, no match, or an incomplete or failed search. The search reads at
+most three pages of 100 events and does not turn a missing webhook into a pass.
+Use these diagnostics to distinguish an event recorded by Stripe from one
+received by the local listener.
+
 The suite refuses to start when `STRIPE_API_KEY` is a publishable key or a
 live-mode key, and that refusal always fails the run. The required value is the
 secret key beginning with `sk_test_`.

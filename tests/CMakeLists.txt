@@ -12,6 +12,7 @@ add_executable(stripekit_unit_tests
     unit/TestCollectionAndInvoices.cpp
     unit/TestSubscriptionSchedules.cpp
     unit/TestTaxSandbox.cpp
+    unit/TestEventHistory.cpp
     unit/TestLogging.cpp
     unit/TestModelsAndParser.cpp
     unit/TestPayments.cpp
