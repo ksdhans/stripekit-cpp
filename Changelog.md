@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Added the ability to filter charges by PaymentIntent
+
 ## 0.10.0 2026-11-18
 
 - Add subscription invoice previews.
