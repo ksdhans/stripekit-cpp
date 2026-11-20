@@ -13,8 +13,9 @@ opt-in and are not part of the default `ctest` run.
 The suite covers:
 
 - Checkout session expiry and paginated listing.
-- Successful, declined, and disputed charge reads, and links between payments
-  and invoices using the supported Stripe API version.
+- Successful, declined, and disputed charge reads, charge listing by customer
+  or PaymentIntent, and links between payments and invoices using the supported
+  Stripe API version.
 - Partial and remaining-balance refunds, safe retries, and refunds that complete
   or fail after the initial response.
 - Cancellation at renewal, collection pauses, and manual or scheduled resumption.

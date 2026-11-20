@@ -2074,11 +2074,12 @@ public:
                       ListCompletion completion) = 0;
 };
 
-/** Filters for one page of charges. Empty customer_id lists all customers. */
+/** Filters for one page of charges. Leave a filter empty to list charges without it. */
 struct ListChargesRequest {
-    std::string customer_id;
-    std::int64_t limit = 10;    ///< Page size, from 1 to 100.
-    std::string starting_after; ///< Last charge ID from the previous page.
+    std::string customer_id;       ///< Optional customer filter.
+    std::int64_t limit = 10;       ///< Page size, from 1 to 100.
+    std::string starting_after;    ///< Last charge ID from the previous page.
+    std::string payment_intent_id; ///< Optional PaymentIntent filter.
 };
 
 /** Filters for one page of invoice payments. Empty payment_intent_id lists all payments. */

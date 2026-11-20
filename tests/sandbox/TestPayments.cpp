@@ -349,6 +349,34 @@ TEST_F(SandboxPaymentsTest, ChargeRetrievalAndCustomerFilteredPagination) {
                  StripeApiException);
 }
 
+TEST_F(SandboxPaymentsTest, ChargeListingFiltersByPaymentIntent) {
+    const auto first_id = create_charge();
+    const auto second_id = create_charge();
+    auto& charges = environment->stripe_client().charges();
+    const auto first = charges.retrieve_async(first_id).result();
+    const auto second = charges.retrieve_async(second_id).result();
+    ASSERT_FALSE(first.payment_intent_id.empty());
+    ASSERT_FALSE(second.payment_intent_id.empty());
+    ASSERT_NE(first.payment_intent_id, second.payment_intent_id);
+
+    for (const auto& expected : { first, second }) {
+        ListChargesRequest request{ .payment_intent_id = expected.payment_intent_id };
+        const auto filtered = charges.list_async(request).result();
+        ASSERT_EQ(filtered.data.size(), 1U);
+        EXPECT_FALSE(filtered.has_more);
+        EXPECT_EQ(filtered.data.front().id, expected.id);
+        EXPECT_EQ(filtered.data.front().payment_intent_id, expected.payment_intent_id);
+
+        request.customer_id = customer_id;
+        const auto combined = charges.list_async(request).result();
+        ASSERT_EQ(combined.data.size(), 1U);
+        EXPECT_FALSE(combined.has_more);
+        EXPECT_EQ(combined.data.front().id, expected.id);
+        EXPECT_EQ(combined.data.front().customer_id, customer_id);
+        EXPECT_EQ(combined.data.front().payment_intent_id, expected.payment_intent_id);
+    }
+}
+
 TEST_F(SandboxPaymentsTest, InvoiceAllocationsLinkPaymentsAndSupportCursors) {
     const auto first = pay_invoice();
     const auto second = pay_invoice();
