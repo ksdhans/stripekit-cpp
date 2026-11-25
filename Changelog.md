@@ -8,6 +8,7 @@ version section when a release is tagged.
 - Redact secrets in messages written through the Drogon log bridge.
 - Report invalid or deeply nested JSON as a StripeKit error instead of a JsonCpp exception.
 - Verify dependency downloads against pinned hashes and commits.
+- Fix a use-after-free when a coroutine is destroyed while awaiting a task.
 
 ## 0.10.1 2026-11-20
 

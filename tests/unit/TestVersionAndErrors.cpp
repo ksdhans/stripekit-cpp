@@ -9,6 +9,8 @@
 #include "StripeKit/StripeKit.h"
 #include "TestFramework.h"
 
+#include <coroutine>
+#include <exception>
 #include <string>
 
 using namespace stripekit;
@@ -123,4 +125,95 @@ TEST(AsyncAndCallbackTest, ReadyStateIsFalseBeforeResultAndTrueAfter) {
     EXPECT_FALSE(task.is_ready());
     EXPECT_EQ(task.result(), 42);
     EXPECT_TRUE(task.is_ready());
+}
+
+namespace {
+
+/** An awaitable that suspends until the test resumes the coroutine by hand. */
+struct ManualSuspension {
+    std::coroutine_handle<> handle;
+
+    bool await_ready() const noexcept {
+        return false;
+    }
+
+    void await_suspend(std::coroutine_handle<> awaiting) noexcept {
+        handle = awaiting;
+    }
+
+    void await_resume() const noexcept {}
+};
+
+/** A minimal coroutine whose lifetime the test controls directly. */
+struct ManualCoroutine {
+    struct promise_type {
+        ManualCoroutine get_return_object() {
+            return ManualCoroutine{ std::coroutine_handle<promise_type>::from_promise(*this) };
+        }
+
+        std::suspend_always initial_suspend() noexcept {
+            return {};
+        }
+
+        std::suspend_always final_suspend() noexcept {
+            return {};
+        }
+
+        void return_void() noexcept {}
+
+        void unhandled_exception() {
+            std::terminate();
+        }
+    };
+
+    std::coroutine_handle<promise_type> handle;
+};
+
+/** Awaits a task the test owns and records whether the wait completed. */
+ManualCoroutine wait_on_task(Task<int>& task, bool& resumed) {
+    (void)co_await task;
+    resumed = true;
+}
+
+/** Suspends until the test releases it, then produces a value. */
+Task<int> suspend_then_return(ManualSuspension& suspension, int value) {
+    co_await suspension;
+    co_return value;
+}
+
+/** Awaits a task through an lvalue rather than a temporary. */
+Task<int> await_lvalue_task(Task<int>& task) {
+    co_return co_await task;
+}
+
+} // namespace
+
+TEST(AsyncAndCallbackTest, DestroyingAnAwaitingCoroutineCancelsResumption) {
+    ManualSuspension child_suspension;
+    Task<int> task = suspend_then_return(child_suspension, 42);
+
+    bool resumed = false;
+    auto waiter = wait_on_task(task, resumed);
+    waiter.handle.resume();
+
+    // The task is now suspended, and the waiter is suspended on the task.
+    EXPECT_FALSE(resumed);
+    ASSERT_TRUE(child_suspension.handle);
+
+    // The awaiting coroutine goes away while the task is still in flight.
+    waiter.handle.destroy();
+    waiter.handle = {};
+
+    // Letting the task finish must not resume the destroyed coroutine.
+    child_suspension.handle.resume();
+    EXPECT_FALSE(resumed);
+
+    EXPECT_TRUE(task.is_ready());
+    EXPECT_EQ(task.result(), 42);
+}
+
+TEST(AsyncAndCallbackTest, TaskCanBeAwaitedThroughAnLvalue) {
+    auto inner = make_simple_task(21);
+    auto outer = await_lvalue_task(inner);
+    EXPECT_EQ(outer.result(), 42);
 }

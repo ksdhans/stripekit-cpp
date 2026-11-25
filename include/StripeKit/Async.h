@@ -12,12 +12,33 @@
 #include <condition_variable>
 #include <coroutine>
 #include <exception>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <utility>
 
 namespace stripekit {
+
+namespace detail {
+
+/**
+ * Shared state linking an awaiting coroutine to the task it waits on.
+ *
+ * The task's promise and the awaiter both hold this object. Destroying the
+ * awaiter, for example because the awaiting coroutine is being destroyed,
+ * cancels the link so the task does not resume a coroutine that no longer
+ * exists.
+ */
+struct ContinuationLink {
+    std::mutex mutex;               /**< Guards the fields below. */
+    std::coroutine_handle<> handle; /**< Coroutine waiting on the task. */
+    const void* waiter = nullptr;   /**< Awaiter that registered the link. */
+    bool claimed = false;           /**< True once the handle is handed over for resuming. */
+    bool cancelled = false;         /**< True once the waiting coroutine no longer exists. */
+};
+
+} // namespace detail
 
 /**
  * @ingroup async
@@ -67,10 +88,9 @@ public:
         }
 
         /**
-         * Wakes anything waiting on this task once it finishes.
+         * Hands the awaiting coroutine over for resumption once the task finishes.
          *
-         * @return An awaitable that notifies waiters and resumes the awaiting
-         *         coroutine.
+         * @return An awaitable that transfers control to the awaiting coroutine.
          */
         auto final_suspend() noexcept {
             struct FinalAwaiter {
@@ -78,8 +98,17 @@ public:
                     return false;
                 }
 
-                void await_suspend(std::coroutine_handle<promise_type> handle) const noexcept {
-                    std::coroutine_handle<> continuation;
+                /**
+                 * Wakes result() waiters and returns the awaiting coroutine for
+                 * symmetric transfer.
+                 *
+                 * Symmetric transfer matters here: resuming the awaiting
+                 * coroutine inline would let it destroy this coroutine's frame
+                 * before this function returns.
+                 */
+                std::coroutine_handle<>
+                await_suspend(std::coroutine_handle<promise_type> handle) const noexcept {
+                    std::shared_ptr<detail::ContinuationLink> link;
                     {
                         // Notify while still holding the lock: a waiter woken by
                         // notify_all() cannot reacquire the mutex, and therefore
@@ -90,12 +119,20 @@ public:
                         // this notify_all() call, corrupting the heap.
                         std::lock_guard<std::mutex> lock(handle.promise().mutex);
                         handle.promise().completed = true;
-                        continuation = handle.promise().continuation;
+                        link = std::move(handle.promise().continuation);
                         handle.promise().ready.notify_all();
                     }
-                    if (continuation) {
-                        continuation.resume();
+                    // Only locals are touched from here on: either waiter type
+                    // may destroy this coroutine's frame as soon as it resumes.
+                    if (!link) {
+                        return std::noop_coroutine();
                     }
+                    std::lock_guard<std::mutex> lock(link->mutex);
+                    if (link->cancelled || !link->handle) {
+                        return std::noop_coroutine();
+                    }
+                    link->claimed = true;
+                    return link->handle;
                 }
 
                 void await_resume() const noexcept {}
@@ -120,13 +157,14 @@ public:
             error = std::current_exception();
         }
 
-        std::optional<TResult> result;        /**< The produced value, once available. */
-        std::exception_ptr error;             /**< The exception that escaped, if one did. */
-        std::mutex mutex;                     /**< Guards the fields below. */
-        std::condition_variable ready;        /**< Signalled when the coroutine finishes. */
-        std::coroutine_handle<> continuation; /**< Coroutine waiting on this task. */
-        bool started = false;                 /**< True once the coroutine has been resumed. */
-        bool completed = false;               /**< True once the coroutine has finished. */
+        std::optional<TResult> result; /**< The produced value, once available. */
+        std::exception_ptr error;      /**< The exception that escaped, if one did. */
+        std::mutex mutex;              /**< Guards the fields below. */
+        std::condition_variable ready; /**< Signalled when the coroutine finishes. */
+        std::shared_ptr<detail::ContinuationLink>
+            continuation;       /**< Coroutine waiting on this task. */
+        bool started = false;   /**< True once the coroutine has been resumed. */
+        bool completed = false; /**< True once the coroutine has finished. */
     };
 
     /**
@@ -138,6 +176,10 @@ public:
 
     /**
      * Destroys the task and its coroutine state.
+     *
+     * Destroy a task only once it has finished, or if it has never been
+     * started. A task still in progress is not waited for, and destroying it
+     * frees state that in-flight work may still reference.
      */
     ~Task() {
         if (handle) {
@@ -233,33 +275,53 @@ public:
     auto operator co_await() {
         struct Awaiter {
             std::coroutine_handle<promise_type> task_handle;
+            std::shared_ptr<detail::ContinuationLink> link;
 
-            bool await_ready() const noexcept {
-                return !task_handle || task_handle.promise().completed;
-            }
-
-            void await_suspend(std::coroutine_handle<> awaiting) const {
-                if (!task_handle) {
-                    awaiting.resume();
+            /**
+             * Cancels the link if this awaiter dies first, so the task does not
+             * resume a coroutine that no longer exists.
+             */
+            ~Awaiter() {
+                if (!link) {
                     return;
                 }
+                std::lock_guard<std::mutex> lock(link->mutex);
+                if (link->waiter == this && !link->claimed) {
+                    link->cancelled = true;
+                    link->handle = {};
+                }
+            }
 
-                bool resume_task = false;
+            bool await_ready() const noexcept {
+                return !task_handle;
+            }
+
+            std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaiting) {
+                if (!task_handle) {
+                    return awaiting;
+                }
+
+                bool start_task = false;
                 {
                     std::lock_guard<std::mutex> lock(task_handle.promise().mutex);
-                    if (task_handle.promise().completed) {
-                        awaiting.resume();
-                        return;
-                    } else {
-                        task_handle.promise().continuation = awaiting;
-                        resume_task = !task_handle.promise().started;
-                        task_handle.promise().started = true;
+                    auto& promise = task_handle.promise();
+                    if (promise.completed) {
+                        return awaiting;
                     }
+
+                    auto new_link = std::make_shared<detail::ContinuationLink>();
+                    new_link->handle = awaiting;
+                    new_link->waiter = this;
+                    promise.continuation = new_link;
+                    link = std::move(new_link);
+                    start_task = !promise.started;
+                    promise.started = true;
                 }
 
-                if (resume_task) {
-                    task_handle.resume();
+                if (start_task) {
+                    return task_handle;
                 }
+                return std::noop_coroutine();
             }
 
             TResult await_resume() {
@@ -275,7 +337,7 @@ public:
             }
         };
 
-        return Awaiter{ handle };
+        return Awaiter{ handle, nullptr };
     }
 
 private:
