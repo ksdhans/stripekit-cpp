@@ -1,117 +1,120 @@
----
+# You can override the included template(s) by including variable overrides
+# SAST customization: https://docs.gitlab.com/user/application_security/sast/#available-cicd-variables
+# Secret Detection customization: https://docs.gitlab.com/user/application_security/secret_detection/pipeline/configure/
+# Dependency Scanning customization: https://docs.gitlab.com/user/application_security/dependency_scanning/dependency_scanning_sbom/#customizing-analyzer-behavior
+# Container Scanning customization: https://docs.gitlab.com/user/application_security/container_scanning/#customizing-analyzer-behavior
+# Note that environment variables can be set in several places
+# See https://docs.gitlab.com/ci/variables/#cicd-variable-precedence
 image: ubuntu:26.04
-
 stages:
-  - verify
-  - build
-  - test
-  - docs
-
+- verify
+- build
+- test
+- docs
 variables:
   CMAKE_BUILD_TYPE: Release
-
-# Fetched dependencies (Drogon, libsodium, JsonCpp) are expensive to build and
-# only change when their pinned versions in CMakeLists.txt change.
-.deps_cache: &deps_cache
+".deps_cache":
   key:
     prefix: ubuntu-26.04
     files:
-      - CMakeLists.txt
+    - CMakeLists.txt
   paths:
-    - build/_deps/
-
+  - build/_deps/
 before_script:
-  - apt-get update
-  - apt-get install -y --no-install-recommends ca-certificates cmake g++ git
-  - apt-get install -y --no-install-recommends make pkg-config
-  # Drogon requires libuuid, OpenSSL and zlib; SQLite is used by the optional dedup store.
-  - apt-get install -y --no-install-recommends uuid-dev libssl-dev zlib1g-dev libsqlite3-dev
-  # Drogon's bundled FindJsoncpp.cmake module only searches the system, not FetchContent output.
-  - apt-get install -y --no-install-recommends libjsoncpp-dev
-
+- apt-get update
+- apt-get install -y --no-install-recommends ca-certificates cmake g++ git
+- apt-get install -y --no-install-recommends make pkg-config
+- apt-get install -y --no-install-recommends uuid-dev libssl-dev zlib1g-dev libsqlite3-dev
+- apt-get install -y --no-install-recommends libjsoncpp-dev
 verify:format:
   stage: verify
   cache: []
   before_script:
-    - apt-get update
-    - apt-get install -y --no-install-recommends clang-format-21
+  - apt-get update
+  - apt-get install -y --no-install-recommends clang-format-21
   script:
-    - bash format.sh --check
-
+  - bash format.sh --check
 build:cmake:
   stage: build
   cache:
-    <<: *deps_cache
+    key:
+      prefix: ubuntu-26.04
+      files:
+      - CMakeLists.txt
+    paths:
+    - build/_deps/
     policy: pull-push
   script:
-    - mkdir -p build
-    - cmake -S . -B build -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-    - cmake --build build --config ${CMAKE_BUILD_TYPE}
+  - mkdir -p build
+  - cmake -S . -B build -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+  - cmake --build build --config ${CMAKE_BUILD_TYPE}
   artifacts:
     when: always
     expire_in: 1 day
     paths:
-      - build/
+    - build/
     exclude:
-      - build/_deps/**/*
-
+    - build/_deps/**/*
 test:ctest:
   stage: test
   cache:
-    <<: *deps_cache
+    key:
+      prefix: ubuntu-26.04
+      files:
+      - CMakeLists.txt
+    paths:
+    - build/_deps/
     policy: pull
   script:
-    - ctest --test-dir build --output-on-failure
-
-# Sandbox E2E talks to a real Stripe sandbox, so it needs the protected
-# STRIPE_API_KEY variable and must never run in a fork or untrusted context.
+  - ctest --test-dir build --output-on-failure
 test:sandbox:
   stage: test
   cache:
-    <<: *deps_cache
+    key:
+      prefix: ubuntu-26.04
+      files:
+      - CMakeLists.txt
+    paths:
+    - build/_deps/
     policy: pull
-  # Only one pipeline may drive the sandbox at a time.
   resource_group: stripe-sandbox
   variables:
-    STRIPEKIT_SANDBOX_ENABLED: "1"
-    STRIPEKIT_SANDBOX_REQUIRED: "1"
-    STRIPE_CLI_VERSION: "1.21.8"
+    STRIPEKIT_SANDBOX_ENABLED: '1'
+    STRIPEKIT_SANDBOX_REQUIRED: '1'
+    STRIPE_CLI_VERSION: 1.21.8
   script:
-    - apt-get install -y --no-install-recommends curl
-    - curl -sSL "https://github.com/stripe/stripe-cli/releases/download/v${STRIPE_CLI_VERSION}/stripe_${STRIPE_CLI_VERSION}_linux_x86_64.tar.gz" -o /tmp/stripe.tar.gz
-    - tar -xzf /tmp/stripe.tar.gz -C /usr/local/bin stripe
-    - cmake -S . -B build -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DSTRIPEKIT_BUILD_SANDBOX_TESTS=ON
-    - cmake --build build --config ${CMAKE_BUILD_TYPE}
-    - ctest --test-dir build -L sandbox --no-tests=error --output-on-failure
+  - apt-get install -y --no-install-recommends curl
+  - curl -sSL "https://github.com/stripe/stripe-cli/releases/download/v${STRIPE_CLI_VERSION}/stripe_${STRIPE_CLI_VERSION}_linux_x86_64.tar.gz"
+    -o /tmp/stripe.tar.gz
+  - tar -xzf /tmp/stripe.tar.gz -C /usr/local/bin stripe
+  - cmake -S . -B build -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DSTRIPEKIT_BUILD_SANDBOX_TESTS=ON
+  - cmake --build build --config ${CMAKE_BUILD_TYPE}
+  - ctest --test-dir build -L sandbox --no-tests=error --output-on-failure
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    # Forks never receive the protected key, so pre-merge runs are limited to
-    # branches in this project and must be started by a maintainer.
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_PROJECT_ID
-      when: manual
-      allow_failure: true
-
-# Publishes the Doxygen API reference to GitLab Pages. Doxygen parses the
-# headers directly, so the adapters, tests and examples are all switched off to
-# keep this job free of the heavyweight dependency builds.
+  - if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID
+      == $CI_PROJECT_ID
+    when: manual
+    allow_failure: true
 pages:
   stage: docs
   cache: []
   before_script:
-    - apt-get update
-    - apt-get install -y --no-install-recommends ca-certificates cmake g++ make
-    - apt-get install -y --no-install-recommends doxygen graphviz
+  - apt-get update
+  - apt-get install -y --no-install-recommends ca-certificates cmake g++ make
+  - apt-get install -y --no-install-recommends doxygen graphviz
   script:
-    - cmake -S . -B build-docs
-      -DSTRIPEKIT_BUILD_DOCS=ON
-      -DSTRIPEKIT_BUILD_TESTS=OFF
-      -DSTRIPEKIT_BUILD_EXAMPLES=OFF
-      -DSTRIPEKIT_BUILD_DROGON_ADAPTER=OFF
-    - cmake --build build-docs --target stripekit-docs
-    - rm -rf public
-    - mv build-docs/docs/html public
+  - cmake -S . -B build-docs -DSTRIPEKIT_BUILD_DOCS=ON -DSTRIPEKIT_BUILD_TESTS=OFF
+    -DSTRIPEKIT_BUILD_EXAMPLES=OFF -DSTRIPEKIT_BUILD_DROGON_ADAPTER=OFF
+  - cmake --build build-docs --target stripekit-docs
+  - rm -rf public
+  - mv build-docs/docs/html public
   artifacts:
     paths:
-      - public
+    - public
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  - if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"
+sast:
+  stage: test
+include:
+- template: Security/SAST.gitlab-ci.yml
