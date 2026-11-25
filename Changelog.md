@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.10.2 2026-11-25
+
 - Redact secrets in messages written through the Drogon log bridge.
 - Report invalid or deeply nested JSON as a StripeKit error instead of a JsonCpp exception.
 - Verify dependency downloads against pinned hashes and commits.
