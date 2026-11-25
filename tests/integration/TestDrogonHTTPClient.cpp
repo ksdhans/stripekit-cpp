@@ -232,7 +232,7 @@ TEST_F(DrogonHTTPClientIntegrationTest, BillingPortalSessionCreateAsyncSuccess) 
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, ServerFault400BadRequestThrowsStripeApiException) {
-    stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
+    stripekit::drogon::HTTPClient http_adapter(/*api_key=*/api_key, /*api_base_url=*/base_url);
     const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/400-bad-request" };
 
     auto task = http_adapter.send_async(req);
@@ -264,7 +264,7 @@ TEST_F(DrogonHTTPClientIntegrationTest, ServerFault401UnauthorizedThrowsStripeAp
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, ServerFault402CardDeclinedThrowsStripeApiException) {
-    stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
+    stripekit::drogon::HTTPClient http_adapter(/*api_key=*/api_key, /*api_base_url=*/base_url);
     const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/402-card-declined" };
 
     auto task = http_adapter.send_async(req);
@@ -280,7 +280,7 @@ TEST_F(DrogonHTTPClientIntegrationTest, ServerFault402CardDeclinedThrowsStripeAp
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, ServerFault429RateLimitThrowsRetryableStripeApiException) {
-    stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
+    stripekit::drogon::HTTPClient http_adapter(/*api_key=*/api_key, /*api_base_url=*/base_url);
     const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/429-rate-limit" };
 
     auto task = http_adapter.send_async(req);
@@ -296,7 +296,7 @@ TEST_F(DrogonHTTPClientIntegrationTest, ServerFault429RateLimitThrowsRetryableSt
 
 TEST_F(DrogonHTTPClientIntegrationTest,
        ServerFault500InternalErrorThrowsRetryableStripeApiException) {
-    stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
+    stripekit::drogon::HTTPClient http_adapter(/*api_key=*/api_key, /*api_base_url=*/base_url);
     const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/500-server-error" };
 
     auto task = http_adapter.send_async(req);
@@ -312,7 +312,7 @@ TEST_F(DrogonHTTPClientIntegrationTest,
 
 TEST_F(DrogonHTTPClientIntegrationTest,
        ServerFault503UnavailableThrowsRetryableStripeApiException) {
-    stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
+    stripekit::drogon::HTTPClient http_adapter(/*api_key=*/api_key, /*api_base_url=*/base_url);
     const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/503-unavailable" };
 
     auto task = http_adapter.send_async(req);
@@ -327,7 +327,7 @@ TEST_F(DrogonHTTPClientIntegrationTest,
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, ServerFaultMalformedNonJsonThrowsConfigurationException) {
-    stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
+    stripekit::drogon::HTTPClient http_adapter(/*api_key=*/api_key, /*api_base_url=*/base_url);
     const HttpRequest req{ .method = HttpMethod::Get, .path = "/fault/malformed-non-json" };
 
     auto task = http_adapter.send_async(req);
@@ -339,7 +339,7 @@ TEST_F(DrogonHTTPClientIntegrationTest, ServerFaultMalformedNonJsonThrowsConfigu
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, RequestTimeoutOverrideThrowsStripeKitException) {
-    stripekit::drogon::HTTPClient http_adapter(api_key, base_url);
+    stripekit::drogon::HTTPClient http_adapter(/*api_key=*/api_key, /*api_base_url=*/base_url);
     const HttpRequest req{ .method = HttpMethod::Get,
                            .path = "/fault/timeout-delay",
                            .options = RequestOptions{
@@ -357,7 +357,8 @@ TEST_F(DrogonHTTPClientIntegrationTest, RequestTimeoutOverrideThrowsStripeKitExc
 
 TEST_F(DrogonHTTPClientIntegrationTest, UnreachableHostThrowsStripeKitException) {
     // Port 1 is reserved and closed
-    stripekit::drogon::HTTPClient unreachable_client(api_key, "http://127.0.0.1:1");
+    stripekit::drogon::HTTPClient unreachable_client(/*api_key=*/api_key,
+                                                     /*api_base_url=*/"http://127.0.0.1:1");
     const HttpRequest req{ .method = HttpMethod::Get, .path = "/v1/customers/cus_123" };
 
     EXPECT_THROW(
@@ -370,11 +371,15 @@ TEST_F(DrogonHTTPClientIntegrationTest, UnreachableHostThrowsStripeKitException)
 
 TEST_F(DrogonHTTPClientIntegrationTest, EmptyApiKeyThrowsConfigurationException) {
     EXPECT_THROW(
-        { stripekit::drogon::HTTPClient bad_client("", base_url); }, ConfigurationException);
+        { stripekit::drogon::HTTPClient bad_client(/*api_key=*/"", /*api_base_url=*/base_url); },
+        ConfigurationException);
 }
 
 TEST_F(DrogonHTTPClientIntegrationTest, RemoteCleartextBaseUrlIsRejected) {
     EXPECT_THROW(
-        { stripekit::drogon::HTTPClient insecure_client(api_key, "http://example.com"); },
+        {
+            stripekit::drogon::HTTPClient insecure_client(/*api_key=*/api_key,
+                                                          /*api_base_url=*/"http://example.com");
+        },
         ConfigurationException);
 }

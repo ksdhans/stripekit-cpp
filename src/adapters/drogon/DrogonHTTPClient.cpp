@@ -93,8 +93,9 @@ public:
     }
 
     explicit OwnedStripeClient(ClientOptions options)
-        : http_client(
-              std::move(options.api_key), std::move(options.api_base_url), options.event_loop),
+        : http_client(/*api_key=*/std::move(options.api_key),
+                      /*api_base_url=*/std::move(options.api_base_url),
+                      options.event_loop),
           client(http_client) {}
 
     /** Return the underlying client's catalog product operations. */

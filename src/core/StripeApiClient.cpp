@@ -139,7 +139,7 @@ void append_form_value(std::string& body, std::string_view name, std::string_vie
 void append_metadata(std::string& body,
                      const std::unordered_map<std::string, std::string>& metadata) {
     for (const auto& [key, value] : metadata) {
-        append_form_value(body, "metadata[" + key + "]", value);
+        append_form_value(body, /*name=*/"metadata[" + key + "]", /*value=*/value);
     }
 }
 
@@ -195,13 +195,15 @@ std::string invoice_items_path(const ListInvoiceItemsRequest& request) {
     if (request.limit < 1 || request.limit > 100)
         throw ConfigurationException("Invoice-item page size must be from 1 to 100");
     std::string query;
-    append_form_value(query, "limit", std::to_string(request.limit));
+    append_form_value(query, /*name=*/"limit", /*value=*/std::to_string(request.limit));
     if (!request.starting_after.empty())
-        append_form_value(query, "starting_after", request.starting_after);
-    if (!request.customer_id.empty()) append_form_value(query, "customer", request.customer_id);
-    if (!request.invoice_id.empty()) append_form_value(query, "invoice", request.invoice_id);
+        append_form_value(query, /*name=*/"starting_after", /*value=*/request.starting_after);
+    if (!request.customer_id.empty())
+        append_form_value(query, /*name=*/"customer", /*value=*/request.customer_id);
+    if (!request.invoice_id.empty())
+        append_form_value(query, /*name=*/"invoice", /*value=*/request.invoice_id);
     if (request.pending.has_value())
-        append_form_value(query, "pending", *request.pending ? "true" : "false");
+        append_form_value(query, /*name=*/"pending", /*value=*/*request.pending ? "true" : "false");
     return "/v1/invoiceitems?" + query;
 }
 
@@ -211,7 +213,7 @@ std::string subscription_path(const std::string& id, const RetrieveSubscriptionR
     std::string query;
     for (const auto& field : request.expand) {
         if (field.empty()) throw ConfigurationException("A subscription expansion cannot be empty");
-        append_form_value(query, "expand[]", field);
+        append_form_value(query, /*name=*/"expand[]", /*value=*/field);
     }
     return query.empty() ? path : path + "?" + query;
 }
@@ -221,11 +223,11 @@ std::string checkout_sessions_path(const ListCheckoutSessionsRequest& request) {
     if (request.limit < 1 || request.limit > 100)
         throw ConfigurationException("Checkout session page size must be from 1 to 100");
     std::string query;
-    append_form_value(query, "limit", std::to_string(request.limit));
+    append_form_value(query, /*name=*/"limit", /*value=*/std::to_string(request.limit));
     if (!request.payment_intent_id.empty())
-        append_form_value(query, "payment_intent", request.payment_intent_id);
+        append_form_value(query, /*name=*/"payment_intent", /*value=*/request.payment_intent_id);
     if (!request.starting_after.empty())
-        append_form_value(query, "starting_after", request.starting_after);
+        append_form_value(query, /*name=*/"starting_after", /*value=*/request.starting_after);
     return "/v1/checkout/sessions?" + query;
 }
 
@@ -237,9 +239,9 @@ std::string checkout_line_items_path(const std::string& session_id,
     if (request.limit < 1 || request.limit > 100)
         throw ConfigurationException("Checkout line-item page size must be from 1 to 100");
     std::string query;
-    append_form_value(query, "limit", std::to_string(request.limit));
+    append_form_value(query, /*name=*/"limit", /*value=*/std::to_string(request.limit));
     if (!request.starting_after.empty())
-        append_form_value(query, "starting_after", request.starting_after);
+        append_form_value(query, /*name=*/"starting_after", /*value=*/request.starting_after);
     return "/v1/checkout/sessions/" + url_encode(session_id) + "/line_items?" + query;
 }
 
@@ -251,9 +253,9 @@ std::string invoice_line_items_path(const std::string& invoice_id,
     if (request.limit < 1 || request.limit > 100)
         throw ConfigurationException("Invoice line-item page size must be from 1 to 100");
     std::string query;
-    append_form_value(query, "limit", std::to_string(request.limit));
+    append_form_value(query, /*name=*/"limit", /*value=*/std::to_string(request.limit));
     if (!request.starting_after.empty())
-        append_form_value(query, "starting_after", request.starting_after);
+        append_form_value(query, /*name=*/"starting_after", /*value=*/request.starting_after);
     return "/v1/invoices/" + url_encode(invoice_id) + "/lines?" + query;
 }
 
@@ -261,10 +263,11 @@ std::string invoice_line_items_path(const std::string& invoice_id,
 std::string product_body(const CreateProductRequest& request) {
     if (request.name.empty()) throw ConfigurationException("A product name is required");
     std::string body;
-    if (!request.id.empty()) append_form_value(body, "id", request.id);
-    append_form_value(body, "name", request.name);
-    if (!request.description.empty()) append_form_value(body, "description", request.description);
-    append_form_value(body, "active", request.active ? "true" : "false");
+    if (!request.id.empty()) append_form_value(body, /*name=*/"id", /*value=*/request.id);
+    append_form_value(body, /*name=*/"name", /*value=*/request.name);
+    if (!request.description.empty())
+        append_form_value(body, /*name=*/"description", /*value=*/request.description);
+    append_form_value(body, /*name=*/"active", /*value=*/request.active ? "true" : "false");
     append_metadata(body, request.metadata);
     return body;
 }
@@ -274,13 +277,15 @@ std::string product_body(const UpdateProductRequest& request) {
     if (request.name && request.name->empty())
         throw ConfigurationException("An updated product name cannot be empty");
     std::string body;
-    if (request.name) append_form_value(body, "name", *request.name);
-    if (request.description) append_form_value(body, "description", *request.description);
-    if (request.active) append_form_value(body, "active", *request.active ? "true" : "false");
+    if (request.name) append_form_value(body, /*name=*/"name", /*value=*/*request.name);
+    if (request.description)
+        append_form_value(body, /*name=*/"description", /*value=*/*request.description);
+    if (request.active)
+        append_form_value(body, /*name=*/"active", /*value=*/*request.active ? "true" : "false");
     if (request.default_price_id) {
         if (request.default_price_id->empty())
             throw ConfigurationException("A default price ID cannot be empty");
-        append_form_value(body, "default_price", *request.default_price_id);
+        append_form_value(body, /*name=*/"default_price", /*value=*/*request.default_price_id);
     }
     append_metadata(body, request.metadata);
     return body;
@@ -292,12 +297,15 @@ std::string price_body(const UpdatePriceRequest& request) {
         (!request.lookup_key || request.lookup_key->empty()))
         throw ConfigurationException("Transferring a lookup key requires a nonempty lookup key");
     std::string body;
-    if (request.active) append_form_value(body, "active", *request.active ? "true" : "false");
-    if (request.nickname) append_form_value(body, "nickname", *request.nickname);
-    if (request.lookup_key) append_form_value(body, "lookup_key", *request.lookup_key);
+    if (request.active)
+        append_form_value(body, /*name=*/"active", /*value=*/*request.active ? "true" : "false");
+    if (request.nickname) append_form_value(body, /*name=*/"nickname", /*value=*/*request.nickname);
+    if (request.lookup_key)
+        append_form_value(body, /*name=*/"lookup_key", /*value=*/*request.lookup_key);
     if (request.transfer_lookup_key)
-        append_form_value(
-            body, "transfer_lookup_key", *request.transfer_lookup_key ? "true" : "false");
+        append_form_value(body,
+                          /*name=*/"transfer_lookup_key",
+                          /*value=*/*request.transfer_lookup_key ? "true" : "false");
     append_metadata(body, request.metadata);
     return body;
 }
@@ -323,7 +331,7 @@ void append_policy(std::string& body,
     if (value.empty()) return;
     if (std::find(choices.begin(), choices.end(), value) == choices.end())
         throw ConfigurationException("Invalid " + key);
-    append_form_value(body, key, value);
+    append_form_value(body, /*name=*/key, /*value=*/value);
 }
 
 /** Append billing choices using the endpoint's name for the pause time. */
@@ -373,11 +381,14 @@ std::string subscription_resume_body(const ResumeSubscriptionRequest& request) {
                   request.payment_behavior,
                   { "resume_on_payment_attempt", "resume_on_payment_success" });
     if (request.proration_behavior)
-        append_form_value(body, "proration_behavior", proration_value(*request.proration_behavior));
+        append_form_value(body,
+                          /*name=*/"proration_behavior",
+                          /*value=*/proration_value(*request.proration_behavior));
     if (request.proration_date) {
         if (*request.proration_date <= 0)
             throw ConfigurationException("A proration date must be positive");
-        append_form_value(body, "proration_date", std::to_string(*request.proration_date));
+        append_form_value(
+            body, /*name=*/"proration_date", /*value=*/std::to_string(*request.proration_date));
     }
     return body;
 }
@@ -387,7 +398,7 @@ std::string subscription_migrate_body(const MigrateSubscriptionRequest& request)
     if (request.billing_mode.type != "flexible")
         throw ConfigurationException("Subscription migration requires flexible billing mode");
     std::string body;
-    append_form_value(body, "billing_mode[type]", request.billing_mode.type);
+    append_form_value(body, /*name=*/"billing_mode[type]", /*value=*/request.billing_mode.type);
     return body;
 }
 
@@ -402,9 +413,10 @@ void append_pause_time(std::string& body,
         timestamp != time.timestamp.has_value() || duration != time.duration.has_value() ||
         (time.timestamp && *time.timestamp <= 0))
         throw ConfigurationException("Invalid pause schedule action time");
-    append_form_value(body, prefix + "[type]", time.type);
+    append_form_value(body, /*name=*/prefix + "[type]", /*value=*/time.type);
     if (time.timestamp)
-        append_form_value(body, prefix + "[timestamp]", std::to_string(*time.timestamp));
+        append_form_value(
+            body, /*name=*/prefix + "[timestamp]", /*value=*/std::to_string(*time.timestamp));
     if (time.duration) {
         if (time.duration->interval.empty() || time.duration->interval_count <= 0)
             throw ConfigurationException("A resume duration requires a positive interval count");
@@ -413,8 +425,8 @@ void append_pause_time(std::string& body,
                       time.duration->interval,
                       { "day", "week", "month", "year" });
         append_form_value(body,
-                          prefix + "[duration][interval_count]",
-                          std::to_string(time.duration->interval_count));
+                          /*name=*/prefix + "[duration][interval_count]",
+                          /*value=*/std::to_string(time.duration->interval_count));
     }
 }
 
@@ -424,7 +436,7 @@ void append_pause_schedules(std::string& body,
     if (entries.size() > 1)
         throw ConfigurationException("A subscription schedule accepts only one pause schedule");
     if (entries.empty()) {
-        append_form_value(body, "pause_schedules", "");
+        append_form_value(body, /*name=*/"pause_schedules", /*value=*/"");
         return;
     }
     const auto& entry = entries.front();
@@ -441,7 +453,7 @@ void append_pause_schedules(std::string& body,
             throw ConfigurationException("The resume date must be after the pause date");
     }
     const std::string prefix = "pause_schedules[0]";
-    if (!entry.key.empty()) append_form_value(body, prefix + "[key]", entry.key);
+    if (!entry.key.empty()) append_form_value(body, /*name=*/prefix + "[key]", /*value=*/entry.key);
     if (entry.pause) {
         if (!entry.pause->pause_at && !entry.pause->settings)
             throw ConfigurationException("A scheduled pause requires a date or settings");
@@ -471,7 +483,7 @@ void append_pause_schedules(std::string& body,
                           { "create_prorations", "always_invoice", "none" });
         }
     }
-    if (entry.clear_resume) append_form_value(body, prefix + "[resume]", "");
+    if (entry.clear_resume) append_form_value(body, /*name=*/prefix + "[resume]", /*value=*/"");
 }
 
 /** Build the request body for creating a schedule from an existing subscription.
@@ -486,7 +498,7 @@ std::string schedule_create_body(const CreateSubscriptionScheduleRequest& reques
     if (request.from_subscription.empty())
         throw ConfigurationException("Schedule creation requires a subscription ID");
     std::string body;
-    append_form_value(body, "from_subscription", request.from_subscription);
+    append_form_value(body, /*name=*/"from_subscription", /*value=*/request.from_subscription);
     if (!request.pause_schedules.empty()) append_pause_schedules(body, request.pause_schedules);
     return body;
 }
@@ -501,10 +513,11 @@ void append_schedule_discount(std::string& body,
         throw ConfigurationException(
             "A schedule discount requires one reusable discount, coupon, or promotion-code ID");
     if (!discount.promotion_code_id.empty())
-        append_form_value(body, prefix + "[promotion_code]", discount.promotion_code_id);
+        append_form_value(
+            body, /*name=*/prefix + "[promotion_code]", /*value=*/discount.promotion_code_id);
     else if (!discount.coupon_id.empty())
-        append_form_value(body, prefix + "[coupon]", discount.coupon_id);
-    else append_form_value(body, prefix + "[discount]", discount.discount_id);
+        append_form_value(body, /*name=*/prefix + "[coupon]", /*value=*/discount.coupon_id);
+    else append_form_value(body, /*name=*/prefix + "[discount]", /*value=*/discount.discount_id);
 }
 
 /** Build the request body for replacing a schedule's current and future phases.
@@ -532,17 +545,18 @@ std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& reques
     }
     std::string body;
     if (request.end_behavior || !request.phases.empty())
-        append_form_value(body, "end_behavior", end);
+        append_form_value(body, /*name=*/"end_behavior", /*value=*/end);
     if (request.proration_behavior || !request.phases.empty())
         append_form_value(
             body,
-            "proration_behavior",
+            /*name=*/"proration_behavior",
+            /*value=*/
             proration_value(request.proration_behavior.value_or(ProrationBehavior::None)));
     append_metadata(body, request.metadata);
     if (request.default_automatic_tax_enabled)
         append_form_value(body,
-                          "default_settings[automatic_tax][enabled]",
-                          *request.default_automatic_tax_enabled ? "true" : "false");
+                          /*name=*/"default_settings[automatic_tax][enabled]",
+                          /*value=*/*request.default_automatic_tax_enabled ? "true" : "false");
     if (request.default_collection_method) {
         if (request.default_collection_method->empty())
             throw ConfigurationException("A collection method cannot be empty");
@@ -569,17 +583,21 @@ std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& reques
                 throw ConfigurationException("Schedule phase dates must be ordered and contiguous");
         }
         const auto prefix = "phases[" + std::to_string(i) + "]";
-        append_form_value(body, prefix + "[start_date]", std::to_string(phase.start_date));
-        if (phase.end_date)
-            append_form_value(body, prefix + "[end_date]", std::to_string(*phase.end_date));
-        if (phase.duration) {
-            append_form_value(body, prefix + "[duration][interval]", phase.duration->interval);
-            append_form_value(body,
-                              prefix + "[duration][interval_count]",
-                              std::to_string(phase.duration->interval_count));
-        }
         append_form_value(
-            body, prefix + "[proration_behavior]", proration_value(phase.proration_behavior));
+            body, /*name=*/prefix + "[start_date]", /*value=*/std::to_string(phase.start_date));
+        if (phase.end_date)
+            append_form_value(
+                body, /*name=*/prefix + "[end_date]", /*value=*/std::to_string(*phase.end_date));
+        if (phase.duration) {
+            append_form_value(
+                body, /*name=*/prefix + "[duration][interval]", /*value=*/phase.duration->interval);
+            append_form_value(body,
+                              /*name=*/prefix + "[duration][interval_count]",
+                              /*value=*/std::to_string(phase.duration->interval_count));
+        }
+        append_form_value(body,
+                          /*name=*/prefix + "[proration_behavior]",
+                          /*value=*/proration_value(phase.proration_behavior));
         if (phase.collection_method) {
             if (phase.collection_method->empty())
                 throw ConfigurationException("A phase collection method cannot be empty");
@@ -590,10 +608,10 @@ std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& reques
         }
         if (phase.automatic_tax_enabled)
             append_form_value(body,
-                              prefix + "[automatic_tax][enabled]",
-                              *phase.automatic_tax_enabled ? "true" : "false");
+                              /*name=*/prefix + "[automatic_tax][enabled]",
+                              /*value=*/*phase.automatic_tax_enabled ? "true" : "false");
         for (const auto& [key, value] : phase.metadata)
-            append_form_value(body, prefix + "[metadata][" + key + "]", value);
+            append_form_value(body, /*name=*/prefix + "[metadata][" + key + "]", /*value=*/value);
         for (std::size_t j = 0; j < phase.discounts.size(); ++j)
             append_schedule_discount(
                 body, prefix + "[discounts][" + std::to_string(j) + "]", phase.discounts[j]);
@@ -603,9 +621,11 @@ std::string schedule_update_body(const UpdateSubscriptionScheduleRequest& reques
                 throw ConfigurationException(
                     "Schedule items require a price and positive quantity when supplied");
             const auto item_prefix = prefix + "[items][" + std::to_string(j) + "]";
-            append_form_value(body, item_prefix + "[price]", item.price_id);
+            append_form_value(body, /*name=*/item_prefix + "[price]", /*value=*/item.price_id);
             if (item.quantity)
-                append_form_value(body, item_prefix + "[quantity]", std::to_string(*item.quantity));
+                append_form_value(body,
+                                  /*name=*/item_prefix + "[quantity]",
+                                  /*value=*/std::to_string(*item.quantity));
             for (std::size_t k = 0; k < item.discounts.size(); ++k)
                 append_schedule_discount(body,
                                          item_prefix + "[discounts][" + std::to_string(k) + "]",
@@ -664,17 +684,23 @@ std::string subscription_body(const UpdateSubscriptionRequest& request) {
                       { "charge_automatically", "send_invoice" });
     }
     if (request.proration_behavior)
-        append_form_value(body, "proration_behavior", proration_value(*request.proration_behavior));
+        append_form_value(body,
+                          /*name=*/"proration_behavior",
+                          /*value=*/proration_value(*request.proration_behavior));
     if (request.payment_behavior)
-        append_form_value(body, "payment_behavior", payment_value(*request.payment_behavior));
+        append_form_value(
+            body, /*name=*/"payment_behavior", /*value=*/payment_value(*request.payment_behavior));
     if (request.automatic_tax_enabled)
-        append_form_value(
-            body, "automatic_tax[enabled]", *request.automatic_tax_enabled ? "true" : "false");
+        append_form_value(body,
+                          /*name=*/"automatic_tax[enabled]",
+                          /*value=*/*request.automatic_tax_enabled ? "true" : "false");
     if (request.cancel_at)
-        append_form_value(body, "cancel_at", cancellation_date_value(*request.cancel_at));
-    if (request.cancel_at_period_end)
         append_form_value(
-            body, "cancel_at_period_end", *request.cancel_at_period_end ? "true" : "false");
+            body, /*name=*/"cancel_at", /*value=*/cancellation_date_value(*request.cancel_at));
+    if (request.cancel_at_period_end)
+        append_form_value(body,
+                          /*name=*/"cancel_at_period_end",
+                          /*value=*/*request.cancel_at_period_end ? "true" : "false");
     append_metadata(body, request.metadata);
     std::unordered_set<std::string> ids;
     for (std::size_t index = 0; index < request.items.size(); ++index) {
@@ -684,9 +710,10 @@ std::string subscription_body(const UpdateSubscriptionRequest& request) {
             throw ConfigurationException(
                 "Each subscription item needs a unique ID, price, and positive quantity");
         const auto prefix = "items[" + std::to_string(index) + "]";
-        append_form_value(body, prefix + "[id]", item.item_id);
-        append_form_value(body, prefix + "[price]", item.price_id);
-        append_form_value(body, prefix + "[quantity]", std::to_string(item.quantity));
+        append_form_value(body, /*name=*/prefix + "[id]", /*value=*/item.item_id);
+        append_form_value(body, /*name=*/prefix + "[price]", /*value=*/item.price_id);
+        append_form_value(
+            body, /*name=*/prefix + "[quantity]", /*value=*/std::to_string(item.quantity));
     }
     return body;
 }
@@ -706,18 +733,20 @@ std::string price_body(const CreatePriceRequest& request) {
          request.tax_behavior != "exclusive" && request.tax_behavior != "unspecified"))
         throw ConfigurationException("Invalid fixed-price creation request");
     std::string body;
-    append_form_value(body, "product", request.product_id);
-    append_form_value(body, "currency", request.currency);
-    append_form_value(body, "unit_amount", std::to_string(request.unit_amount));
+    append_form_value(body, /*name=*/"product", /*value=*/request.product_id);
+    append_form_value(body, /*name=*/"currency", /*value=*/request.currency);
+    append_form_value(body, /*name=*/"unit_amount", /*value=*/std::to_string(request.unit_amount));
     if (!interval.empty()) {
-        append_form_value(body, "recurring[interval]", interval);
-        append_form_value(
-            body, "recurring[interval_count]", std::to_string(request.recurring_interval_count));
-        append_form_value(body, "recurring[usage_type]", "licensed");
+        append_form_value(body, /*name=*/"recurring[interval]", /*value=*/interval);
+        append_form_value(body,
+                          /*name=*/"recurring[interval_count]",
+                          /*value=*/std::to_string(request.recurring_interval_count));
+        append_form_value(body, /*name=*/"recurring[usage_type]", /*value=*/"licensed");
     }
-    if (!request.lookup_key.empty()) append_form_value(body, "lookup_key", request.lookup_key);
+    if (!request.lookup_key.empty())
+        append_form_value(body, /*name=*/"lookup_key", /*value=*/request.lookup_key);
     if (!request.tax_behavior.empty())
-        append_form_value(body, "tax_behavior", request.tax_behavior);
+        append_form_value(body, /*name=*/"tax_behavior", /*value=*/request.tax_behavior);
     append_metadata(body, request.metadata);
     return body;
 }
@@ -727,8 +756,9 @@ std::string payment_page_query(std::int64_t limit, const std::string& starting_a
     if (limit < 1 || limit > 100)
         throw ConfigurationException("Payment page size must be from 1 to 100");
     std::string query;
-    append_form_value(query, "limit", std::to_string(limit));
-    if (!starting_after.empty()) append_form_value(query, "starting_after", starting_after);
+    append_form_value(query, /*name=*/"limit", /*value=*/std::to_string(limit));
+    if (!starting_after.empty())
+        append_form_value(query, /*name=*/"starting_after", /*value=*/starting_after);
     return query;
 }
 
@@ -738,8 +768,9 @@ std::string refund_body(const CreateRefundRequest& request) {
         throw ConfigurationException(
             "Refund requires a charge and a positive amount when supplied");
     std::string body;
-    append_form_value(body, "charge", request.charge_id);
-    if (request.amount) append_form_value(body, "amount", std::to_string(*request.amount));
+    append_form_value(body, /*name=*/"charge", /*value=*/request.charge_id);
+    if (request.amount)
+        append_form_value(body, /*name=*/"amount", /*value=*/std::to_string(*request.amount));
     append_metadata(body, request.metadata);
     return body;
 }
@@ -747,7 +778,8 @@ std::string refund_body(const CreateRefundRequest& request) {
 /** Build a refund history URL with an optional charge filter. */
 std::string refunds_path(const ListRefundsRequest& request) {
     auto query = payment_page_query(request.limit, request.starting_after);
-    if (!request.charge_id.empty()) append_form_value(query, "charge", request.charge_id);
+    if (!request.charge_id.empty())
+        append_form_value(query, /*name=*/"charge", /*value=*/request.charge_id);
     return "/v1/refunds?" + query;
 }
 
@@ -755,7 +787,7 @@ std::string refunds_path(const ListRefundsRequest& request) {
 std::string invoices_path(const ListInvoicesRequest& request) {
     auto query = payment_page_query(request.limit, request.starting_after);
     if (!request.subscription_id.empty())
-        append_form_value(query, "subscription", request.subscription_id);
+        append_form_value(query, /*name=*/"subscription", /*value=*/request.subscription_id);
     return "/v1/invoices?" + query;
 }
 
@@ -764,7 +796,7 @@ std::string invoice_preview_body(const CreateInvoicePreviewRequest& request) {
     if (request.subscription_id.empty())
         throw ConfigurationException("Invoice preview requires a subscription ID");
     std::string body;
-    append_form_value(body, "subscription", request.subscription_id);
+    append_form_value(body, /*name=*/"subscription", /*value=*/request.subscription_id);
     return body;
 }
 
@@ -787,19 +819,21 @@ std::string pause_collection_body(const PauseSubscriptionCollectionRequest& requ
     if (request.resumes_at && *request.resumes_at <= 0)
         throw ConfigurationException("Collection resume timestamp must be positive");
     std::string body;
-    append_form_value(body, "pause_collection[behavior]", behavior);
+    append_form_value(body, /*name=*/"pause_collection[behavior]", /*value=*/behavior);
     if (request.resumes_at)
-        append_form_value(
-            body, "pause_collection[resumes_at]", std::to_string(*request.resumes_at));
+        append_form_value(body,
+                          /*name=*/"pause_collection[resumes_at]",
+                          /*value=*/std::to_string(*request.resumes_at));
     return body;
 }
 
 /** Build a charge list URL with optional customer and PaymentIntent filters. */
 std::string charges_path(const ListChargesRequest& request) {
     auto query = payment_page_query(request.limit, request.starting_after);
-    if (!request.customer_id.empty()) append_form_value(query, "customer", request.customer_id);
+    if (!request.customer_id.empty())
+        append_form_value(query, /*name=*/"customer", /*value=*/request.customer_id);
     if (!request.payment_intent_id.empty())
-        append_form_value(query, "payment_intent", request.payment_intent_id);
+        append_form_value(query, /*name=*/"payment_intent", /*value=*/request.payment_intent_id);
     return "/v1/charges?" + query;
 }
 
@@ -807,8 +841,9 @@ std::string charges_path(const ListChargesRequest& request) {
 std::string invoice_payments_path(const ListInvoicePaymentsRequest& request) {
     auto query = payment_page_query(request.limit, request.starting_after);
     if (!request.payment_intent_id.empty()) {
-        append_form_value(query, "payment[type]", "payment_intent");
-        append_form_value(query, "payment[payment_intent]", request.payment_intent_id);
+        append_form_value(query, /*name=*/"payment[type]", /*value=*/"payment_intent");
+        append_form_value(
+            query, /*name=*/"payment[payment_intent]", /*value=*/request.payment_intent_id);
     }
     return "/v1/invoice_payments?" + query;
 }
@@ -818,14 +853,16 @@ std::string prices_path(const ListPricesRequest& request) {
     if (request.limit < 1 || request.limit > 100 || request.lookup_keys.size() > 10)
         throw ConfigurationException("Invalid price-list limit or lookup-key count");
     std::string query;
-    append_form_value(query, "limit", std::to_string(request.limit));
-    if (!request.product_id.empty()) append_form_value(query, "product", request.product_id);
-    if (request.active) append_form_value(query, "active", *request.active ? "true" : "false");
+    append_form_value(query, /*name=*/"limit", /*value=*/std::to_string(request.limit));
+    if (!request.product_id.empty())
+        append_form_value(query, /*name=*/"product", /*value=*/request.product_id);
+    if (request.active)
+        append_form_value(query, /*name=*/"active", /*value=*/*request.active ? "true" : "false");
     if (!request.starting_after.empty())
-        append_form_value(query, "starting_after", request.starting_after);
+        append_form_value(query, /*name=*/"starting_after", /*value=*/request.starting_after);
     for (const auto& key : request.lookup_keys) {
         if (key.empty()) throw ConfigurationException("Price lookup keys cannot be empty");
-        append_form_value(query, "lookup_keys[]", key);
+        append_form_value(query, /*name=*/"lookup_keys[]", /*value=*/key);
     }
     return "/v1/prices?" + query;
 }
@@ -917,58 +954,72 @@ std::string checkout_session_body(const CreateCheckoutSessionRequest& request) {
                       request.subscription_billing_mode->type,
                       { "classic", "flexible" });
     }
-    append_form_value(body, "mode", session_mode);
+    append_form_value(body, /*name=*/"mode", /*value=*/session_mode);
     if (!request.customer_id.empty()) {
-        append_form_value(body, "customer", request.customer_id);
+        append_form_value(body, /*name=*/"customer", /*value=*/request.customer_id);
     }
     if (!request.price_id.empty()) {
-        append_form_value(body, "line_items[0][price]", request.price_id);
+        append_form_value(body, /*name=*/"line_items[0][price]", /*value=*/request.price_id);
     } else {
-        append_form_value(body, "line_items[0][price_data][currency]", request.currency);
         append_form_value(
-            body, "line_items[0][price_data][unit_amount]", std::to_string(request.unit_amount));
+            body, /*name=*/"line_items[0][price_data][currency]", /*value=*/request.currency);
+        append_form_value(body,
+                          /*name=*/"line_items[0][price_data][unit_amount]",
+                          /*value=*/std::to_string(request.unit_amount));
         if (session_mode == "subscription" && !request.recurring_interval.empty()) {
-            append_form_value(
-                body, "line_items[0][price_data][recurring][interval]", request.recurring_interval);
+            append_form_value(body,
+                              /*name=*/"line_items[0][price_data][recurring][interval]",
+                              /*value=*/request.recurring_interval);
         }
-        append_form_value(
-            body, "line_items[0][price_data][product_data][name]", request.product_name);
+        append_form_value(body,
+                          /*name=*/"line_items[0][price_data][product_data][name]",
+                          /*value=*/request.product_name);
     }
-    append_form_value(body, "line_items[0][quantity]", std::to_string(request.quantity));
-    append_form_value(body, "success_url", request.success_url);
-    append_form_value(body, "cancel_url", request.cancel_url);
+    append_form_value(
+        body, /*name=*/"line_items[0][quantity]", /*value=*/std::to_string(request.quantity));
+    append_form_value(body, /*name=*/"success_url", /*value=*/request.success_url);
+    append_form_value(body, /*name=*/"cancel_url", /*value=*/request.cancel_url);
     append_metadata(body, request.metadata);
     if (!request.customer_email.empty())
-        append_form_value(body, "customer_email", request.customer_email);
+        append_form_value(body, /*name=*/"customer_email", /*value=*/request.customer_email);
     if (request.trial_period_days.has_value())
         append_form_value(body,
-                          "subscription_data[trial_period_days]",
-                          std::to_string(*request.trial_period_days));
+                          /*name=*/"subscription_data[trial_period_days]",
+                          /*value=*/std::to_string(*request.trial_period_days));
     for (const auto& [key, value] : request.subscription_metadata)
-        append_form_value(body, "subscription_data[metadata][" + key + "]", value);
+        append_form_value(
+            body, /*name=*/"subscription_data[metadata][" + key + "]", /*value=*/value);
     if (!request.payment_method_collection.empty())
-        append_form_value(body, "payment_method_collection", request.payment_method_collection);
+        append_form_value(body,
+                          /*name=*/"payment_method_collection",
+                          /*value=*/request.payment_method_collection);
     for (std::size_t i = 0; i < request.payment_method_types.size(); ++i)
         append_form_value(body,
-                          "allowed_payment_method_types[" + std::to_string(i) + "]",
-                          request.payment_method_types[i]);
+                          /*name=*/"allowed_payment_method_types[" + std::to_string(i) + "]",
+                          /*value=*/request.payment_method_types[i]);
     if (request.expires_at.has_value())
-        append_form_value(body, "expires_at", std::to_string(*request.expires_at));
+        append_form_value(
+            body, /*name=*/"expires_at", /*value=*/std::to_string(*request.expires_at));
     if (request.automatic_tax_enabled)
-        append_form_value(
-            body, "automatic_tax[enabled]", *request.automatic_tax_enabled ? "true" : "false");
+        append_form_value(body,
+                          /*name=*/"automatic_tax[enabled]",
+                          /*value=*/*request.automatic_tax_enabled ? "true" : "false");
     if (!request.billing_address_collection.empty())
-        append_form_value(body, "billing_address_collection", request.billing_address_collection);
+        append_form_value(body,
+                          /*name=*/"billing_address_collection",
+                          /*value=*/request.billing_address_collection);
     if (request.customer_update_address)
-        append_form_value(
-            body, "customer_update[address]", *request.customer_update_address ? "auto" : "never");
+        append_form_value(body,
+                          /*name=*/"customer_update[address]",
+                          /*value=*/*request.customer_update_address ? "auto" : "never");
     if (request.customer_update_name)
-        append_form_value(
-            body, "customer_update[name]", *request.customer_update_name ? "auto" : "never");
+        append_form_value(body,
+                          /*name=*/"customer_update[name]",
+                          /*value=*/*request.customer_update_name ? "auto" : "never");
     if (request.tax_id_collection_enabled)
         append_form_value(body,
-                          "tax_id_collection[enabled]",
-                          *request.tax_id_collection_enabled ? "true" : "false");
+                          /*name=*/"tax_id_collection[enabled]",
+                          /*value=*/*request.tax_id_collection_enabled ? "true" : "false");
     return body;
 }
 
@@ -978,18 +1029,20 @@ std::string invoice_update_body(const UpdateInvoiceRequest& request) {
         throw ConfigurationException("Invoice updates require at least one setting");
     std::string body;
     if (request.automatic_tax_enabled)
-        append_form_value(
-            body, "automatic_tax[enabled]", *request.automatic_tax_enabled ? "true" : "false");
+        append_form_value(body,
+                          /*name=*/"automatic_tax[enabled]",
+                          /*value=*/*request.automatic_tax_enabled ? "true" : "false");
     if (request.auto_advance)
-        append_form_value(body, "auto_advance", *request.auto_advance ? "true" : "false");
+        append_form_value(
+            body, /*name=*/"auto_advance", /*value=*/*request.auto_advance ? "true" : "false");
     return body;
 }
 
 /** Serialize customer fields without changing address fields the caller omitted. */
 std::string customer_update_body(const UpdateCustomerRequest& request) {
     std::string body;
-    if (request.email) append_form_value(body, "email", *request.email);
-    if (request.name) append_form_value(body, "name", *request.name);
+    if (request.email) append_form_value(body, /*name=*/"email", /*value=*/*request.email);
+    if (request.name) append_form_value(body, /*name=*/"name", /*value=*/*request.name);
     if (request.validate_tax_location) {
         std::string validation;
         switch (*request.validate_tax_location) {
@@ -1005,7 +1058,7 @@ std::string customer_update_body(const UpdateCustomerRequest& request) {
         default:
             throw ConfigurationException("Invalid customer tax-location validation policy");
         }
-        append_form_value(body, "tax[validate_location]", validation);
+        append_form_value(body, /*name=*/"tax[validate_location]", /*value=*/validation);
     }
     if (request.address) {
         if (request.address->country && !request.address->country->empty() &&
@@ -1015,7 +1068,9 @@ std::string customer_update_body(const UpdateCustomerRequest& request) {
                           [](unsigned char ch) { return std::isalpha(ch) != 0; })))
             throw ConfigurationException("Customer address country must be a two-letter code");
         const auto append = [&](const char* key, const std::optional<std::string>& value) {
-            if (value) append_form_value(body, std::string("address[") + key + "]", *value);
+            if (value)
+                append_form_value(
+                    body, /*name=*/std::string("address[") + key + "]", /*value=*/*value);
         };
         append("line1", request.address->line1);
         append("line2", request.address->line2);
@@ -1073,9 +1128,10 @@ void append_portal_flow(std::string& body, const BillingPortalFlow& flow) {
     if (confirm != !flow.items.empty())
         throw ConfigurationException(
             "Only a subscription update confirm flow takes subscription items");
-    append_form_value(body, "flow_data[type]", type);
+    append_form_value(body, /*name=*/"flow_data[type]", /*value=*/type);
     if (needs_subscription)
-        append_form_value(body, "flow_data[" + type + "][subscription]", flow.subscription_id);
+        append_form_value(
+            body, /*name=*/"flow_data[" + type + "][subscription]", /*value=*/flow.subscription_id);
     if (confirm) {
         if (flow.items.size() != 1)
             throw ConfigurationException("Stripe can confirm a change to only one item");
@@ -1085,10 +1141,12 @@ void append_portal_flow(std::string& body, const BillingPortalFlow& flow) {
             throw ConfigurationException(
                 "The confirmed item needs an ID and a new price or positive quantity");
         const std::string prefix = "flow_data[subscription_update_confirm][items][0]";
-        append_form_value(body, prefix + "[id]", item.item_id);
-        if (!item.price_id.empty()) append_form_value(body, prefix + "[price]", item.price_id);
+        append_form_value(body, /*name=*/prefix + "[id]", /*value=*/item.item_id);
+        if (!item.price_id.empty())
+            append_form_value(body, /*name=*/prefix + "[price]", /*value=*/item.price_id);
         if (item.quantity)
-            append_form_value(body, prefix + "[quantity]", std::to_string(*item.quantity));
+            append_form_value(
+                body, /*name=*/prefix + "[quantity]", /*value=*/std::to_string(*item.quantity));
     }
 
     const auto after = flow.after_completion;
@@ -1103,15 +1161,18 @@ void append_portal_flow(std::string& body, const BillingPortalFlow& flow) {
     if (flow.confirmation_message.size() > 500)
         throw ConfigurationException("A confirmation message is limited to 500 characters");
     if (!after) return;
-    append_form_value(
-        body, "flow_data[after_completion][type]", portal_after_completion_value(*after));
+    append_form_value(body,
+                      /*name=*/"flow_data[after_completion][type]",
+                      /*value=*/portal_after_completion_value(*after));
     if (redirect)
-        append_form_value(
-            body, "flow_data[after_completion][redirect][return_url]", flow.redirect_url);
-    if (!flow.confirmation_message.empty())
         append_form_value(body,
-                          "flow_data[after_completion][hosted_confirmation][custom_message]",
-                          flow.confirmation_message);
+                          /*name=*/"flow_data[after_completion][redirect][return_url]",
+                          /*value=*/flow.redirect_url);
+    if (!flow.confirmation_message.empty())
+        append_form_value(
+            body,
+            /*name=*/"flow_data[after_completion][hosted_confirmation][custom_message]",
+            /*value=*/flow.confirmation_message);
 }
 
 /** Validate and encode a portal session, including any configuration, locale, and flow. */
@@ -1119,11 +1180,13 @@ std::string billing_portal_session_body(const CreateBillingPortalSessionRequest&
     if (request.customer_id.empty())
         throw ConfigurationException("A billing portal session requires a customer ID");
     std::string body;
-    append_form_value(body, "customer", request.customer_id);
-    if (!request.return_url.empty()) append_form_value(body, "return_url", request.return_url);
+    append_form_value(body, /*name=*/"customer", /*value=*/request.customer_id);
+    if (!request.return_url.empty())
+        append_form_value(body, /*name=*/"return_url", /*value=*/request.return_url);
     if (!request.configuration_id.empty())
-        append_form_value(body, "configuration", request.configuration_id);
-    if (!request.locale.empty()) append_form_value(body, "locale", request.locale);
+        append_form_value(body, /*name=*/"configuration", /*value=*/request.configuration_id);
+    if (!request.locale.empty())
+        append_form_value(body, /*name=*/"locale", /*value=*/request.locale);
     if (request.flow) append_portal_flow(body, *request.flow);
     return body;
 }
@@ -1145,9 +1208,9 @@ void append_portal_list(std::string& body,
                         const std::string& name,
                         const std::vector<std::string>& values,
                         bool clear_when_empty) {
-    if (values.empty() && clear_when_empty) append_form_value(body, name, "");
+    if (values.empty() && clear_when_empty) append_form_value(body, /*name=*/name, /*value=*/"");
     for (const auto& value : values)
-        append_form_value(body, name + "[]", value);
+        append_form_value(body, /*name=*/name + "[]", /*value=*/value);
 }
 
 /** Validate and encode every portal feature, so unset features are turned off. */
@@ -1160,15 +1223,17 @@ void append_portal_features(std::string& body,
         require_one_of(value,
                        { "address", "email", "name", "phone", "shipping", "tax_id" },
                        "customer update");
-    append_form_value(body, "features[customer_update][enabled]", enabled(customer.enabled));
+    append_form_value(
+        body, /*name=*/"features[customer_update][enabled]", /*value=*/enabled(customer.enabled));
     if (customer.enabled || !customer.allowed_updates.empty())
         append_portal_list(
             body, "features[customer_update][allowed_updates]", customer.allowed_updates, updating);
-    append_form_value(
-        body, "features[invoice_history][enabled]", enabled(features.invoice_history_enabled));
     append_form_value(body,
-                      "features[payment_method_update][enabled]",
-                      enabled(features.payment_method_update_enabled));
+                      /*name=*/"features[invoice_history][enabled]",
+                      /*value=*/enabled(features.invoice_history_enabled));
+    append_form_value(body,
+                      /*name=*/"features[payment_method_update][enabled]",
+                      /*value=*/enabled(features.payment_method_update_enabled));
 
     const auto& cancel = features.subscription_cancel;
     if (!cancel.mode.empty())
@@ -1177,12 +1242,15 @@ void append_portal_features(std::string& body,
         require_one_of(cancel.proration_behavior,
                        { "none", "create_prorations" },
                        "cancellation proration behavior");
-    append_form_value(body, "features[subscription_cancel][enabled]", enabled(cancel.enabled));
+    append_form_value(
+        body, /*name=*/"features[subscription_cancel][enabled]", /*value=*/enabled(cancel.enabled));
     if (!cancel.mode.empty())
-        append_form_value(body, "features[subscription_cancel][mode]", cancel.mode);
-    if (!cancel.proration_behavior.empty())
         append_form_value(
-            body, "features[subscription_cancel][proration_behavior]", cancel.proration_behavior);
+            body, /*name=*/"features[subscription_cancel][mode]", /*value=*/cancel.mode);
+    if (!cancel.proration_behavior.empty())
+        append_form_value(body,
+                          /*name=*/"features[subscription_cancel][proration_behavior]",
+                          /*value=*/cancel.proration_behavior);
 
     const auto& update = features.subscription_update;
     for (const auto& value : update.default_allowed_updates)
@@ -1206,24 +1274,27 @@ void append_portal_features(std::string& body,
     if (update.enabled && !features.payment_method_update_enabled)
         throw ConfigurationException(
             "Billing portal plan changes require payment method updates to be enabled");
-    append_form_value(body, "features[subscription_update][enabled]", enabled(update.enabled));
+    append_form_value(
+        body, /*name=*/"features[subscription_update][enabled]", /*value=*/enabled(update.enabled));
     if (update.enabled || !update.default_allowed_updates.empty())
         append_portal_list(body,
                            "features[subscription_update][default_allowed_updates]",
                            update.default_allowed_updates,
                            updating);
     if (update.products.empty() && updating && update.enabled)
-        append_form_value(body, "features[subscription_update][products]", "");
+        append_form_value(body, /*name=*/"features[subscription_update][products]", /*value=*/"");
     for (std::size_t index = 0; index < update.products.size(); ++index) {
         const auto prefix =
             "features[subscription_update][products][" + std::to_string(index) + "]";
-        append_form_value(body, prefix + "[product]", update.products[index].product_id);
+        append_form_value(
+            body, /*name=*/prefix + "[product]", /*value=*/update.products[index].product_id);
         for (const auto& price : update.products[index].price_ids)
-            append_form_value(body, prefix + "[prices][]", price);
+            append_form_value(body, /*name=*/prefix + "[prices][]", /*value=*/price);
     }
     if (!update.proration_behavior.empty())
-        append_form_value(
-            body, "features[subscription_update][proration_behavior]", update.proration_behavior);
+        append_form_value(body,
+                          /*name=*/"features[subscription_update][proration_behavior]",
+                          /*value=*/update.proration_behavior);
 }
 
 /** Reject portal configuration names Stripe would refuse. */
@@ -1238,7 +1309,8 @@ void require_portal_name(const std::string& name) {
  * leaves out of portal configuration responses.
  */
 void append_portal_products_expansion(std::string& encoded) {
-    append_form_value(encoded, "expand[]", "features.subscription_update.products");
+    append_form_value(
+        encoded, /*name=*/"expand[]", /*value=*/"features.subscription_update.products");
 }
 
 /** Build the retrieval path for a portal configuration, including its product list. */
@@ -1254,11 +1326,12 @@ std::string portal_configuration_body(const CreateBillingPortalConfigurationRequ
     std::string body;
     append_portal_products_expansion(body);
     append_portal_features(body, request.features, false);
-    if (!request.name.empty()) append_form_value(body, "name", request.name);
+    if (!request.name.empty()) append_form_value(body, /*name=*/"name", /*value=*/request.name);
     if (!request.headline.empty())
-        append_form_value(body, "business_profile[headline]", request.headline);
+        append_form_value(body, /*name=*/"business_profile[headline]", /*value=*/request.headline);
     if (!request.default_return_url.empty())
-        append_form_value(body, "default_return_url", request.default_return_url);
+        append_form_value(
+            body, /*name=*/"default_return_url", /*value=*/request.default_return_url);
     append_metadata(body, request.metadata);
     return body;
 }
@@ -1267,15 +1340,18 @@ std::string portal_configuration_body(const CreateBillingPortalConfigurationRequ
 std::string portal_configuration_body(const UpdateBillingPortalConfigurationRequest& request) {
     std::string body;
     append_portal_products_expansion(body);
-    if (request.active) append_form_value(body, "active", *request.active ? "true" : "false");
+    if (request.active)
+        append_form_value(body, /*name=*/"active", /*value=*/*request.active ? "true" : "false");
     if (request.features) append_portal_features(body, *request.features, true);
     if (request.name) {
         require_portal_name(*request.name);
-        append_form_value(body, "name", *request.name);
+        append_form_value(body, /*name=*/"name", /*value=*/*request.name);
     }
-    if (request.headline) append_form_value(body, "business_profile[headline]", *request.headline);
+    if (request.headline)
+        append_form_value(body, /*name=*/"business_profile[headline]", /*value=*/*request.headline);
     if (request.default_return_url)
-        append_form_value(body, "default_return_url", *request.default_return_url);
+        append_form_value(
+            body, /*name=*/"default_return_url", /*value=*/*request.default_return_url);
     append_metadata(body, request.metadata);
     return body;
 }
@@ -2400,8 +2476,8 @@ Task<Customer>
 StripeApiClient::CustomerOperations::create_async(const CreateCustomerRequest& request,
                                                   const RequestOptions& options) {
     std::string body;
-    append_form_value(body, "email", request.email);
-    append_form_value(body, "name", request.name);
+    append_form_value(body, /*name=*/"email", /*value=*/request.email);
+    append_form_value(body, /*name=*/"name", /*value=*/request.name);
     append_metadata(body, request.metadata);
     return send_and_parse_async<Customer>(
         owner.http_client,
@@ -2416,8 +2492,8 @@ void StripeApiClient::CustomerOperations::create(const CreateCustomerRequest& re
                                                  const RequestOptions& options,
                                                  CreateCompletion completion) {
     std::string body;
-    append_form_value(body, "email", request.email);
-    append_form_value(body, "name", request.name);
+    append_form_value(body, /*name=*/"email", /*value=*/request.email);
+    append_form_value(body, /*name=*/"name", /*value=*/request.name);
     append_metadata(body, request.metadata);
     send_and_parse<Customer>(
         owner.http_client,

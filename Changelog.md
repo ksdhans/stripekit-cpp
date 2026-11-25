@@ -5,6 +5,10 @@ version section when a release is tagged.
 
 ## Unreleased
 
+- Redact secrets in messages written through the Drogon log bridge.
+- Report invalid or deeply nested JSON as a StripeKit error instead of a JsonCpp exception.
+- Verify dependency downloads against pinned hashes and commits.
+
 ## 0.10.1 2026-11-20
 
 - Added the ability to filter charges by PaymentIntent

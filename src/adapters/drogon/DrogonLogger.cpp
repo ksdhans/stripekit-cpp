@@ -51,7 +51,9 @@ void LogBridge::log(LogLevel level, std::string_view message, const LogContext& 
         return;
     }
 
-    const auto formatted = log_message(message, context);
+    // Redact here as well as at call sites: callers may forget, and an
+    // unredacted API key or signing secret must not reach Drogon's log.
+    const auto formatted = log_message(redact_sensitive_text(message), context);
     switch (level) {
     case LogLevel::Trace:
         LOG_TRACE << formatted;

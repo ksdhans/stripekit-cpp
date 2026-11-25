@@ -93,6 +93,7 @@ if(NOT stripekit_libsodium_target)
 
     ExternalProject_Add(stripekit_libsodium_external
         URL https://download.libsodium.org/libsodium/releases/libsodium-${STRIPEKIT_LIBSODIUM_VERSION}.tar.gz
+        URL_HASH SHA256=ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19
         CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --disable-shared --enable-static --disable-dependency-tracking
         BUILD_COMMAND make
         INSTALL_COMMAND make install
@@ -160,6 +161,7 @@ if(NOT stripekit_jsoncpp_target)
     FetchContent_Declare(
         jsoncpp
         URL https://github.com/open-source-parsers/jsoncpp/archive/refs/tags/${STRIPEKIT_JSONCPP_VERSION}.tar.gz
+        URL_HASH SHA256=f409856e5920c18d0c2fb85276e24ee607d2a09b5e7d5f0a371368903c275da2
     )
     set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
     set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
@@ -207,10 +209,12 @@ if(STRIPEKIT_BUILD_DROGON_ADAPTER)
         if(USE_EXTERNAL_DROGON)
             message(FATAL_ERROR "USE_EXTERNAL_DROGON is ON, but StripeKit could not find Drogon. Add Drogon before StripeKit, or set CMAKE_PREFIX_PATH to its installation.")
         endif()
+        # Pinned to the commit the v1.9.10 tag points to, not the tag itself,
+        # so a re-pointed tag cannot change what gets fetched.
         FetchContent_Declare(
             Drogon
             GIT_REPOSITORY https://github.com/drogonframework/drogon.git
-            GIT_TAG v${STRIPEKIT_DROGON_VERSION}
+            GIT_TAG cbf63f8fc4d849bbb82eeb1c83fcf8ff953f19f3 # v1.9.10
             GIT_SUBMODULES_RECURSE TRUE
         )
         set(BUILD_CTL ${STRIPEKIT_BUILD_EXAMPLES} CACHE BOOL "" FORCE)

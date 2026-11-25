@@ -299,3 +299,17 @@ TEST_F(ModelsAndParserTest, MalformedErrorResponsesPreserveStatusAndRequestId) {
         EXPECT_EQ(error.message.find("Bad gateway"), std::string::npos);
     }
 }
+
+TEST_F(ModelsAndParserTest, OverlyNestedErrorBodyIsTreatedAsInvalidJson) {
+    // JsonCpp enforces a nesting limit and throws when it is exceeded, rather
+    // than reporting the failure through its return value.
+    const std::string body = std::string(1100, '[') + std::string(1100, ']');
+    const HttpResponse response{ .status_code = 502, .headers = {}, .body = body };
+
+    StripeErrorPayload error;
+    EXPECT_NO_THROW({ error = parser.parse_error(response); });
+    EXPECT_EQ(error.type, StripeErrorType::Unknown);
+    EXPECT_EQ(error.http_status, 502);
+    EXPECT_TRUE(error.retryable);
+    EXPECT_EQ(error.message, "Stripe API request failed with an invalid JSON error response");
+}
