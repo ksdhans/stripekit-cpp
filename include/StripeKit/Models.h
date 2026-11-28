@@ -519,6 +519,24 @@ struct SubscriptionStatusDetails {
 };
 
 /**
+ * Why a subscription was cancelled, as reported by Stripe.
+ *
+ * Stripe reports a cancellation as requested even when access continues to the
+ * end of the trial or billing period. Treat `canceled_at` as the request time,
+ * not as the time access ends.
+ */
+struct SubscriptionCancellationDetails {
+    /** Machine-readable reason, such as cancellation_requested or payment_failed. */
+    std::string reason;
+    /** Optional structured feedback, such as too_expensive or unused. */
+    std::string feedback;
+    /** Optional feedback choice for the "other" feedback, such as onetime or recurring. */
+    std::string feedback_option;
+    /** Optional free-text comment supplied by the customer. */
+    std::string comment;
+};
+
+/**
  * A Stripe subscription: a customer's recurring agreement to pay.
  *
  * Use `status` with payment webhooks and your access policy. "past_due" means
@@ -550,6 +568,16 @@ struct Subscription {
     bool cancel_at_period_end = false;
     /** Explicit cancellation timestamp, absent when no date is scheduled. */
     std::optional<std::int64_t> cancel_at_unix;
+
+    /**
+     * Unix seconds when the subscription was cancelled or cancellation was
+     * requested. Stripe sets this even while access continues, so it is not the
+     * time access ends.
+     */
+    std::optional<std::int64_t> canceled_at_unix;
+
+    /** Cancellation reason and customer feedback, present when Stripe reports them. */
+    std::optional<SubscriptionCancellationDetails> cancellation_details;
 
     /** True when the object belongs to a live Stripe account. */
     bool livemode = false;

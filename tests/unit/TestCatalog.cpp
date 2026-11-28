@@ -873,6 +873,50 @@ TEST(CatalogParser, SubscriptionCancellationDatesRemainOptionalAndRejectMalforme
             ConfigurationException);
 }
 
+// Stripe reports when a cancellation was requested and why. These are optional, and
+// malformed values must fail instead of appearing as a confirmed cancellation.
+TEST(CatalogParser, SubscriptionCancellationDetailsAreOptionalAndRejectMalformedValues) {
+    JsonStripeResponseParser parser;
+    const auto absent =
+        parser.parse_subscription({ .body = R"({"id":"sub_test","status":"active"})" });
+    EXPECT_FALSE(absent.canceled_at_unix.has_value());
+    EXPECT_FALSE(absent.cancellation_details.has_value());
+
+    const auto reported = parser.parse_subscription(
+        { .body = R"({"id":"sub_test","status":"trialing","canceled_at":1795786010,)"
+                  R"("cancellation_details":{"comment":"Testing the live site",)"
+                  R"("feedback":"other","feedback_option":null,)"
+                  R"("reason":"cancellation_requested"}})" });
+    ASSERT_TRUE(reported.canceled_at_unix.has_value());
+    EXPECT_EQ(*reported.canceled_at_unix, 1795786010);
+    ASSERT_TRUE(reported.cancellation_details.has_value());
+    EXPECT_EQ(reported.cancellation_details->reason, "cancellation_requested");
+    EXPECT_EQ(reported.cancellation_details->feedback, "other");
+    EXPECT_TRUE(reported.cancellation_details->feedback_option.empty());
+    EXPECT_EQ(reported.cancellation_details->comment, "Testing the live site");
+
+    // Stripe sends the object with null fields when nothing was reported.
+    const auto empty = parser.parse_subscription(
+        { .body = R"({"id":"sub_test","status":"active","cancellation_details":)"
+                  R"({"comment":null,"feedback":null,"feedback_option":null,"reason":null}})" });
+    EXPECT_FALSE(empty.cancellation_details.has_value());
+
+    for (const std::string value : { R"("tomorrow")", "-1", "true", "1.5", "{}" })
+        EXPECT_THROW(
+            parser.parse_subscription(
+                { .body = R"({"id":"sub_test","status":"active","canceled_at":)" + value + "}" }),
+            ConfigurationException);
+    for (const std::string value : { R"("text")", "[]", "7" }) {
+        EXPECT_THROW(parser.parse_subscription(
+                         { .body = R"({"id":"sub_test","status":"active","cancellation_details":)" +
+                                   value + "}" }),
+                     ConfigurationException);
+    }
+    EXPECT_THROW(parser.parse_subscription({ .body = R"({"id":"sub_test","status":"active",)"
+                                                     R"("cancellation_details":{"reason":7}})" }),
+                 ConfigurationException);
+}
+
 TEST_F(CatalogTest, SubscriptionPendingUpdatesAreNotReportedAsAppliedPrices) {
     const auto body = replacing(subscription_json,
                                 R"("pending_update":null)",

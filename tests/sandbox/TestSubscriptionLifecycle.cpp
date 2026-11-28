@@ -141,6 +141,12 @@ TEST_F(SandboxSubscriptionTest, PaidSubscriptionEmitsInvoicePaid) {
     const Subscription canceled =
         environment->stripe_client().subscriptions().cancel_async(subscription_id).result();
     EXPECT_EQ(canceled.status, "canceled");
+    // Stripe reports when the cancellation was requested, and the reason when it has one.
+    // Neither field is required, but a cancel must not lose the reported request time.
+    ASSERT_TRUE(canceled.canceled_at_unix.has_value());
+    EXPECT_GE(*canceled.canceled_at_unix, 1);
+    if (canceled.cancellation_details.has_value())
+        EXPECT_FALSE(canceled.cancellation_details->reason.empty());
 }
 
 TEST_F(SandboxSubscriptionTest, TrialSubscriptionRetrievalIncludesTrialAndItemPeriodDates) {

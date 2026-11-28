@@ -1441,6 +1441,24 @@ std::string optional_string(const Json::Value& value) {
     return value.asString();
 }
 
+/** Read Stripe's cancellation details, treating an all-empty object as absent. */
+std::optional<SubscriptionCancellationDetails>
+cancellation_details_value(const Json::Value& value) {
+    if (value.isNull()) return std::nullopt;
+    if (!value.isObject())
+        throw ConfigurationException("Stripe returned malformed cancellation details");
+    SubscriptionCancellationDetails details{
+        .reason = optional_string(value["reason"]),
+        .feedback = optional_string(value["feedback"]),
+        .feedback_option = optional_string(value["feedback_option"]),
+        .comment = optional_string(value["comment"]),
+    };
+    if (details.reason.empty() && details.feedback.empty() && details.feedback_option.empty() &&
+        details.comment.empty())
+        return std::nullopt;
+    return details;
+}
+
 /** Read a billing mode, preserving unknown types and accepting Stripe's string or object forms. */
 std::optional<SubscriptionBillingMode> billing_mode_value(const Json::Value& value) {
     if (value.isNull()) return std::nullopt;
@@ -2208,6 +2226,8 @@ Subscription JsonStripeResponseParser::parse_subscription(const HttpResponse& re
                       .metadata = metadata_value(object) };
     subscription.trial_end_unix = optional_unix_timestamp(object["trial_end"]);
     subscription.cancel_at_unix = optional_unix_timestamp(object["cancel_at"]);
+    subscription.canceled_at_unix = optional_unix_timestamp(object["canceled_at"]);
+    subscription.cancellation_details = cancellation_details_value(object["cancellation_details"]);
     subscription.schedule_id = reference_id(object["schedule"]);
     subscription.billing_mode = billing_mode_value(object["billing_mode"]);
     subscription.collection_method = optional_string(object["collection_method"]);
