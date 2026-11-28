@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(StripeKit
-    VERSION 0.10.2
+    VERSION 0.10.3
     DESCRIPTION "Stripe integration toolkit for C++"
     LANGUAGES CXX
 )

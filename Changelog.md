@@ -5,6 +5,8 @@ version section when a release is tagged.
 
 ## Unreleased
 
+## 0.10.3 2026-11-28
+
 - Parse a subscription's `canceled_at` and `cancellation_details` (`reason`, `feedback`, `feedback_option`, `comment`) so applications can record when and why a cancellation was requested.
 
 ## 0.10.2 2026-11-25
